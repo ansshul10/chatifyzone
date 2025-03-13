@@ -13,7 +13,7 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
-  cors: { origin: process.env.CLIENT_URL || 'http://localhost:3000', methods: ['GET', 'POST'] },
+  cors: { origin: process.env.CLIENT_URL || 'https://chatify10.netlify.app', methods: ['GET', 'POST'] },
 });
 
 connectDB();
