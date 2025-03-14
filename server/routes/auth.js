@@ -206,7 +206,7 @@ router.post('/forgot-password', async (req, res) => {
               If you didn't request this reset, please ignore this email or contact our support team.</p>
           </div>
           <div class="footer">
-            <p>© ${new Date().getFullYear()} Your Application. All rights reserved.</p>
+            <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
             <p>Having issues? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
           </div>
         </div>
