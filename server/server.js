@@ -116,6 +116,11 @@ io.on('connection', (socket) => {
 
       const senderExists = sender.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: sender }) : await User.findById(sender);
       const receiverExists = receiver.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: receiver }) : await User.findById(receiver);
+      
+      // Prevent anonymous users from sending messages to registered users
+    if (sender.startsWith('anon-') && !receiver.startsWith('anon-')) {
+      return socket.emit('error', { msg: 'Anonymous users cannot send messages to registered users' });
+    }
 
       if (!senderExists || !receiverExists) {
         return socket.emit('error', { msg: 'User not found' });
