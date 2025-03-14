@@ -13,7 +13,10 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
   };
 
   useEffect(() => {
-    console.log('UserList received users:', users); // Debug log
+    console.log('UserList received users:', users);
+    users.forEach(user => {
+      if (!user.username) console.error('User with no username:', user);
+    });
   }, [users]);
 
   return (
@@ -31,7 +34,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
           <li className="text-gray-400 text-center text-sm sm:text-base">No users available yet 🌐</li>
         ) : (
           users
-            .filter((user) => user.id !== currentUserId && user.username && user.id) // Exclude current user and undefined entries
+            .filter((user) => user.id !== currentUserId && user.username && user.id)
             .map((user) => (
               <motion.li
                 key={user.id}
