@@ -1,7 +1,6 @@
 import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
-// Import the verified.png image (adjust the path based on your project structure)
-import verifiedIcon from '../assets/verified.png'; // If in src/assets/
+import verifiedIcon from '../assets/verified.png'; // Adjust path as needed
 
 const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) => {
   const itemVariants = {
@@ -32,22 +31,25 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) =
       variants={listVariants}
       initial="hidden"
       animate="visible"
-      className="w-full max-w-md mx-auto bg-gradient-to-b from-gray-800 to-black bg-opacity-90 backdrop-blur-md rounded-xl shadow-xl border border-gray-700 p-4 sm:p-6 h-[60vh] overflow-y-auto scrollbar-thin scrollbar-thumb-red-500 scrollbar-track-gray-800"
+      className="w-full max-w-md mx-auto bg-gradient-to-b from-black to-black bg-opacity-90 backdrop-blur-md shadow-xl border border-gray-700 p-6 sm:p-4 h-full flex flex-col"
+      // Changed 'h-[60vh]' to 'h-full' to inherit the parent height from ChatWindow.js
     >
+      {/* Header */}
       <h2 className="text-lg sm:text-xl lg:text-2xl font-bold mb-4 text-center text-white bg-gradient-to-r from-red-500 to-purple-500 bg-clip-text text-transparent">
         Users 👥
       </h2>
-      <ul className="space-y-2 sm:space-y-3">
+
+      {/* User List (Scrollable Content) */}
+      <div className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-red-500 scrollbar-track-gray-800 space-y-2 sm:space-y-3">
         {users.length === 0 ? (
-          <li className="text-gray-400 text-center text-sm sm:text-base">No users available yet 🌐</li>
+          <div className="text-gray-400 text-center text-sm sm:text-base">No users available yet 🌐</div>
         ) : (
           users
             .filter((user) => user.id !== currentUserId && user.username && user.id)
             .map((user) => (
-              <motion.li
+              <motion.div
                 key={user.id}
                 variants={itemVariants}
-                whileHover="hover"
                 whileTap="tap"
                 className="p-2 sm:p-3 rounded-lg cursor-pointer text-gray-200 bg-gray-900 hover:bg-gray-700 transition-colors duration-300 flex items-center justify-between"
                 onClick={() => setSelectedUserId(user.id)}
@@ -58,14 +60,13 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) =
                   </span>
                   <span className="text-sm sm:text-base truncate flex items-center">
                     {user.username}{' '}
-                    {/* Replace (Anon) and (Reg) with text or image */}
                     {user.isAnonymous ? (
                       <span className="text-xs text-gray-400 ml-1">(Anon)</span>
                     ) : (
                       <img
                         src={verifiedIcon}
                         alt="Verified"
-                        className="w-4 h-4 ml-1" // Adjust size as needed
+                        className="w-4 h-4 ml-1"
                       />
                     )}
                   </span>
@@ -85,10 +86,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) =
                     {user.online ? 'Online' : 'Offline'}
                   </span>
                 </div>
-              </motion.li>
+              </motion.div>
             ))
         )}
-      </ul>
+      </div>
+      {/* Footer - Updated to match the login page snippet */}
+      <div className="mt-4 pt-4 border-gray-700 text-center text-xs sm:text-sm text-gray-400">
+        © 2025 Chatify | All Rights Reserved
+      </div>
     </motion.div>
   );
 };
