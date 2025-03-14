@@ -28,9 +28,9 @@ const AnonymousEntry = () => {
     try {
       const { data } = await api.post('/chat/anonymous-session', { username });
       localStorage.setItem('anonymousId', data.anonymousId);
-      localStorage.setItem('anonymousUsername', username); // Store the entered username
+      localStorage.setItem('anonymousUsername', username);
       api.defaults.headers.common['x-anonymous-id'] = data.anonymousId;
-      console.log('Anonymous login successful:', { anonymousId: data.anonymousId, username }); // Debug log
+      console.log('Anonymous login successful:', { anonymousId: data.anonymousId, username });
       setSuccess(true);
       setTimeout(() => navigate('/chat'), 2000);
     } catch (err) {
@@ -38,7 +38,7 @@ const AnonymousEntry = () => {
     }
   };
 
-  // Animation Variants (unchanged)
+  // Animation Variants
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { opacity: 1, transition: { staggerChildren: 0.2, delayChildren: 0.3 } },
@@ -83,40 +83,74 @@ const AnonymousEntry = () => {
     >
       <Navbar />
       <div className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Side - Text Content (unchanged) */}
+        {/* Left Side - Updated Text Content */}
         <motion.div
           variants={textVariants}
           className="w-full lg:w-1/2 flex flex-col justify-center space-y-6 lg:space-y-8 px-4 sm:px-0"
         >
           <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-center lg:text-left">
-            Join Anonymously
+            Join Chatify
           </h1>
           <p className="text-base sm:text-lg text-gray-300 leading-relaxed text-center lg:text-left">
-            Dive into Chatify anonymously! Pick a username and start chatting instantly—no account required.
+            Chat instantly as a guest or unlock more with a full account!
           </p>
+
+          {/* Anonymous Features */}
           <div className="space-y-4 sm:space-y-6">
+            <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-red-500">
+              Anonymous Entry Features
+            </h2>
             <motion.div
               whileHover={{ x: 10, color: '#FF0000' }}
               className="flex items-center space-x-4 justify-center lg:justify-start"
             >
               <FaCheckCircle className="text-red-500" />
-              <span>Quick and easy entry</span>
+              <span>Quick chat without signup</span>
             </motion.div>
             <motion.div
               whileHover={{ x: 10, color: '#FF0000' }}
               className="flex items-center space-x-4 justify-center lg:justify-start"
             >
               <FaCheckCircle className="text-red-500" />
-              <span>No personal info needed</span>
+              <span>No personal info required</span>
             </motion.div>
             <motion.div
               whileHover={{ x: 10, color: '#FF0000' }}
               className="flex items-center space-x-4 justify-center lg:justify-start"
             >
               <FaCheckCircle className="text-red-500" />
-              <span>Chat with others instantly</span>
+              <span>Basic messaging with others</span>
             </motion.div>
           </div>
+
+          {/* Logged-In Features */}
+          <div className="space-y-4 sm:space-y-6">
+            <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-green-500">
+              Logged-In Features
+            </h2>
+            <motion.div
+              whileHover={{ x: 10, color: '#00FF00' }}
+              className="flex items-center space-x-4 justify-center lg:justify-start"
+            >
+              <FaCheckCircle className="text-green-500" />
+              <span>Block or report users</span>
+            </motion.div>
+            <motion.div
+              whileHover={{ x: 10, color: '#00FF00' }}
+              className="flex items-center space-x-4 justify-center lg:justify-start"
+            >
+              <FaCheckCircle className="text-green-500" />
+              <span>Add friends for quick access</span>
+            </motion.div>
+            <motion.div
+              whileHover={{ x: 10, color: '#00FF00' }}
+              className="flex items-center space-x-4 justify-center lg:justify-start"
+            >
+              <FaCheckCircle className="text-green-500" />
+              <span>Persistent chat history</span>
+            </motion.div>
+          </div>
+
           <motion.div
             whileHover={{ scale: 1.05 }}
             className="mt-6 flex items-center space-x-4 justify-center lg:justify-start"
@@ -131,7 +165,7 @@ const AnonymousEntry = () => {
           />
         </motion.div>
 
-        {/* Right Side - Form (unchanged except debug log) */}
+        {/* Right Side - Form */}
         <motion.div
           variants={formVariants}
           className="w-full lg:w-1/2 flex items-start justify-center px-4 sm:px-0 pt-16"
@@ -222,7 +256,7 @@ const AnonymousEntry = () => {
         </motion.div>
       </div>
 
-      {/* Footer (unchanged) */}
+      {/* Footer */}
       <motion.footer
         variants={footerVariants}
         initial="hidden"
@@ -241,7 +275,7 @@ const AnonymousEntry = () => {
         </div>
       </motion.footer>
 
-      {/* Decorative Elements (unchanged) */}
+      {/* Decorative Elements */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 0.1 }}
