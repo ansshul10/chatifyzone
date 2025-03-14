@@ -132,7 +132,7 @@ io.on('connection', (socket) => {
       await message.save();
       io.to(receiver).emit('receiveMessage', message);
       io.to(sender).emit('receiveMessage', message);
-      io.to(receiver).emit('notification', { text: `New message from ${senderExists.username}` });
+      io.to(receiver).emit('notification', { text: `New message from ${senderExists.username}`, senderId: sender });
     } catch (err) {
       console.error('Error sending message:', err);
       socket.emit('error', { msg: 'Failed to send message' });
