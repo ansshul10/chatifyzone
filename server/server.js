@@ -14,7 +14,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'https://chatify10.netlify.app',
+    origin: process.env.CLIENT_URL || 'https://chatify-10.vercel.app',
     methods: ['GET', 'POST'],
   },
 });
@@ -22,7 +22,7 @@ const io = socketIo(server, {
 // Connect to MongoDB
 connectDB();
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'https://chatify10.netlify.app' }));
+app.use(cors({ origin: process.env.CLIENT_URL || 'https://chatify-10.vercel.app' }));
 app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
