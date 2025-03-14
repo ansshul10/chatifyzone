@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
 
-const UserList = ({ users, setSelectedUserId, currentUserId }) => {
+const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) => {
   const itemVariants = {
     hover: { scale: 1.05, backgroundColor: '#374151', transition: { duration: 0.3 } },
     tap: { scale: 0.95 },
@@ -12,12 +12,18 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
     visible: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: 'easeOut' } },
   };
 
+  const notificationVariants = {
+    hidden: { opacity: 0, scale: 0.8 },
+    visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } },
+  };
+
   useEffect(() => {
     console.log('UserList received users:', users);
+    console.log('Unread messages:', unreadMessages);
     users.forEach(user => {
       if (!user.username) console.error('User with no username:', user);
     });
-  }, [users]);
+  }, [users, unreadMessages]);
 
   return (
     <motion.div
@@ -55,9 +61,21 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
                     </span>
                   </span>
                 </div>
-                <span className="text-xs text-gray-400">
-                  {user.online ? 'Online' : 'Offline'}
-                </span>
+                <div className="flex items-center space-x-2">
+                  {unreadMessages[user.id] > 0 && (
+                    <motion.span
+                      variants={notificationVariants}
+                      initial="hidden"
+                      animate="visible"
+                      className="text-xs text-white bg-red-600 px-2 py-1 rounded-full"
+                    >
+                      New Message ({unreadMessages[user.id]})
+                    </motion.span>
+                  )}
+                  <span className="text-xs text-gray-400">
+                    {user.online ? 'Online' : 'Offline'}
+                  </span>
+                </div>
               </motion.li>
             ))
         )}
