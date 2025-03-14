@@ -28,7 +28,9 @@ const AnonymousEntry = () => {
     try {
       const { data } = await api.post('/chat/anonymous-session', { username });
       localStorage.setItem('anonymousId', data.anonymousId);
+      localStorage.setItem('anonymousUsername', username); // Store the entered username
       api.defaults.headers.common['x-anonymous-id'] = data.anonymousId;
+      console.log('Anonymous login successful:', { anonymousId: data.anonymousId, username }); // Debug log
       setSuccess(true);
       setTimeout(() => navigate('/chat'), 2000);
     } catch (err) {
@@ -36,7 +38,7 @@ const AnonymousEntry = () => {
     }
   };
 
-  // Animation Variants
+  // Animation Variants (unchanged)
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { opacity: 1, transition: { staggerChildren: 0.2, delayChildren: 0.3 } },
@@ -81,7 +83,7 @@ const AnonymousEntry = () => {
     >
       <Navbar />
       <div className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Side - Text Content */}
+        {/* Left Side - Text Content (unchanged) */}
         <motion.div
           variants={textVariants}
           className="w-full lg:w-1/2 flex flex-col justify-center space-y-6 lg:space-y-8 px-4 sm:px-0"
@@ -129,7 +131,7 @@ const AnonymousEntry = () => {
           />
         </motion.div>
 
-        {/* Right Side - Form */}
+        {/* Right Side - Form (unchanged except debug log) */}
         <motion.div
           variants={formVariants}
           className="w-full lg:w-1/2 flex items-start justify-center px-4 sm:px-0 pt-16"
@@ -220,7 +222,7 @@ const AnonymousEntry = () => {
         </motion.div>
       </div>
 
-      {/* Footer */}
+      {/* Footer (unchanged) */}
       <motion.footer
         variants={footerVariants}
         initial="hidden"
@@ -239,7 +241,7 @@ const AnonymousEntry = () => {
         </div>
       </motion.footer>
 
-      {/* Decorative Elements */}
+      {/* Decorative Elements (unchanged) */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 0.1 }}
