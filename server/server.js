@@ -14,7 +14,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'https://chatify-10.vercel.app',
+    origin: process.env.CLIENT_URL || 'https://chatifyx-neon.vercel.app',
     methods: ['GET', 'POST'],
   },
 });
