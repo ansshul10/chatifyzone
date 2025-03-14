@@ -249,4 +249,36 @@ router.post('/reset-password/:token', async (req, res) => {
   }
 });
 
+// Get user's friends
+router.get('/friends', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).populate('friends', 'username online');
+    res.json(user.friends);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Add a friend
+router.post('/add-friend', auth, async (req, res) => {
+  const { friendUsername } = req.body;
+  try {
+    const friend = await User.findOne({ username: friendUsername });
+    if (!friend) return res.status(404).json({ msg: 'User not found' });
+    if (friend._id.toString() === req.user.userId) return res.status(400).json({ msg: 'Cannot add yourself' });
+
+    const user = await User.findById(req.user.userId);
+    if (user.friends.includes(friend._id)) return res.status(400).json({ msg: 'Already friends' });
+
+    user.friends.push(friend._id);
+    await user.save();
+    const updatedFriends = await User.findById(req.user.userId).populate('friends', 'username online');
+    res.json(updatedFriends.friends);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 module.exports = router;
