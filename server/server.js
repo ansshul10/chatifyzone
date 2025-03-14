@@ -22,7 +22,7 @@ const io = socketIo(server, {
 // Connect to MongoDB
 connectDB();
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'https://chatify-10.vercel.app' }));
+app.use(cors({ origin: process.env.CLIENT_URL || 'https://chatifyx-neon.vercel.app' }));
 app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
