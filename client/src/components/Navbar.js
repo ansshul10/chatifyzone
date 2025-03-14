@@ -182,7 +182,7 @@ const Navbar = () => {
             animate="open"
             exit="closed"
             variants={menuVariants}
-            className="md:hidden bg-black border-t border-gray-800 px-4 py-6"
+            className="md:hidden bg-black border-t border-gray-800 px-6 py-6"
           >
             <div className="flex flex-col space-y-6">
               <motion.div whileHover="hover" whileTap="tap" variants={linkVariants}>
