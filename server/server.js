@@ -13,12 +13,16 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
-  cors: { origin: process.env.CLIENT_URL || 'https://chatify10.netlify.app', methods: ['GET', 'POST'] },
+  cors: {
+    origin: process.env.CLIENT_URL || 'https://chatify10.netlify.app',
+    methods: ['GET', 'POST'],
+  },
 });
 
+// Connect to MongoDB
 connectDB();
 
-app.use(cors());
+app.use(cors({ origin: process.env.CLIENT_URL || 'https://chatify10.netlify.app' }));
 app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
@@ -61,7 +65,7 @@ io.on('connection', (socket) => {
     try {
       if (!userId) return;
       socket.join(userId);
-      userSocketMap.set(userId, socket.id); // Map userId to socketId
+      userSocketMap.set(userId, socket.id);
 
       if (userId.startsWith('anon-')) {
         const session = await AnonymousSession.findOne({ anonymousId: userId });
@@ -74,7 +78,6 @@ io.on('connection', (socket) => {
       }
 
       io.emit('userStatus', { userId, status: 'online' });
-
       const previousMessages = await getPreviousMessages(userId);
       socket.emit('loadPreviousMessages', previousMessages);
 
