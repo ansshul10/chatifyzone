@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
 
-const sendEmail = async (to, subject, text) => {
+const sendEmail = async (to, subject, html) => {
   try {
     const transporter = nodemailer.createTransport({
       service: 'gmail', // Use your email service
@@ -11,10 +11,10 @@ const sendEmail = async (to, subject, text) => {
     });
 
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+      from: `"Chatify" <${process.env.EMAIL_USER}>`,
       to,
       subject,
-      text,
+      html, // Changed from text to html to support HTML content
     });
     console.log(`Email sent to ${to}`);
   } catch (err) {
