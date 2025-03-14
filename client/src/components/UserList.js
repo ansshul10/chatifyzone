@@ -1,5 +1,7 @@
 import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
+// Import the verified.png image (adjust the path based on your project structure)
+import verifiedIcon from '../assets/verified.png'; // If in src/assets/
 
 const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) => {
   const itemVariants = {
@@ -20,7 +22,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) =
   useEffect(() => {
     console.log('UserList received users:', users);
     console.log('Unread messages:', unreadMessages);
-    users.forEach(user => {
+    users.forEach((user) => {
       if (!user.username) console.error('User with no username:', user);
     });
   }, [users, unreadMessages]);
@@ -54,11 +56,18 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) =
                   <span className={`text-xs sm:text-sm ${user.online ? 'text-green-500' : 'text-gray-500'}`}>
                     ●
                   </span>
-                  <span className="text-sm sm:text-base truncate">
+                  <span className="text-sm sm:text-base truncate flex items-center">
                     {user.username}{' '}
-                    <span className="text-xs text-gray-400">
-                      {user.isAnonymous ? '(Anon)' : '(Reg)'}
-                    </span>
+                    {/* Replace (Anon) and (Reg) with text or image */}
+                    {user.isAnonymous ? (
+                      <span className="text-xs text-gray-400 ml-1">(Anon)</span>
+                    ) : (
+                      <img
+                        src={verifiedIcon}
+                        alt="Verified"
+                        className="w-4 h-4 ml-1" // Adjust size as needed
+                      />
+                    )}
                   </span>
                 </div>
                 <div className="flex items-center space-x-2">
