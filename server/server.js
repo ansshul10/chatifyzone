@@ -31,17 +31,17 @@ const getOnlineUsers = async () => {
   const allUsers = [
     ...registeredUsers.map((user) => ({
       id: user._id.toString(),
-      username: user.username || 'Unknown', // Fallback for undefined username
+      username: user.username,
       isAnonymous: false,
       online: user.online,
     })),
     ...anonymousUsers.map((session) => ({
       id: session.anonymousId,
-      username: session.username || `Guest_${Math.random().toString(36).substr(2, 5)}`, // Ensure username is always set
+      username: session.username, // Use the stored username from the session
       isAnonymous: true,
       online: session.status === 'online',
     })),
-  ].filter(user => user.id && user.username); // Filter out any undefined entries
+  ].filter(user => user.id && user.username); // Filter out invalid entries
   console.log('getOnlineUsers result:', allUsers);
   return allUsers;
 };
@@ -62,10 +62,10 @@ io.on('connection', (socket) => {
       socket.join(userId);
       userSocketMap.set(userId, socket.id);
 
-      let username = socket.handshake.query.username;
+      const username = socket.handshake.query.username;
       if (!username) {
-        username = `Guest_${Math.random().toString(36).substr(2, 5)}`; // Fallback if username is missing
-        console.log('No username provided, assigned:', username);
+        console.log('No username provided in query');
+        return socket.emit('error', { msg: 'Username is required' });
       }
 
       if (userId.startsWith('anon-')) {
@@ -76,9 +76,14 @@ io.on('connection', (socket) => {
           console.log('New anonymous session created:', session);
         } else {
           session.status = 'online';
-          session.username = username; // Update username if changed
-          await session.save();
-          console.log('Anonymous user updated to online:', session);
+          if (session.username !== username) {
+            session.username = username; // Update with registered username if different
+            await session.save();
+            console.log('Anonymous user username updated:', session);
+          } else {
+            await session.save();
+            console.log('Anonymous user updated to online:', session);
+          }
         }
       } else {
         const user = await User.findByIdAndUpdate(userId, { online: true }, { new: true });
