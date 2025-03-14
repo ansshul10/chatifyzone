@@ -6,7 +6,6 @@ import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
 
-// Initialize Socket.IO inside useEffect to ensure localStorage is ready
 const ChatWindow = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
@@ -16,6 +15,7 @@ const ChatWindow = () => {
   const [typingUser, setTypingUser] = useState(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState([]);
+  const [unreadMessages, setUnreadMessages] = useState({});
   const isAnonymous = !!localStorage.getItem('anonymousId');
   const userId = isAnonymous ? localStorage.getItem('anonymousId') : JSON.parse(localStorage.getItem('user'))?.id;
   const username = isAnonymous ? localStorage.getItem('anonymousUsername') : JSON.parse(localStorage.getItem('user'))?.username;
@@ -30,7 +30,6 @@ const ChatWindow = () => {
       return;
     }
 
-    // Initialize Socket.IO
     socketRef.current = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
       query: { username: username },
     });
@@ -41,12 +40,16 @@ const ChatWindow = () => {
 
     socket.on('loadPreviousMessages', (previousMessages) => {
       setMessages(previousMessages);
+      updateUnreadMessages(previousMessages);
     });
 
     socket.on('receiveMessage', (message) => {
       setMessages((prev) => [...prev, message]);
-      if (message.receiver === userId && !message.readAt) {
-        socket.emit('messageRead', { messageId: message._id, userId });
+      if (message.receiver === userId && !message.readAt && message.sender !== selectedUserId) {
+        setUnreadMessages((prev) => ({
+          ...prev,
+          [message.sender]: (prev[message.sender] || 0) + 1,
+        }));
       }
     });
 
@@ -61,6 +64,7 @@ const ChatWindow = () => {
 
     socket.on('messageDeleted', (deletedMessageId) => {
       setMessages((prev) => prev.filter((msg) => msg._id !== deletedMessageId));
+      updateUnreadMessages(messages.filter((msg) => msg._id !== deletedMessageId));
     });
 
     socket.on('userTyping', ({ sender }) => {
@@ -71,6 +75,16 @@ const ChatWindow = () => {
 
     socket.on('messageRead', (updatedMessage) => {
       setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
+      if (updatedMessage.receiver === userId) {
+        setUnreadMessages((prev) => {
+          const newUnread = { ...prev };
+          if (newUnread[updatedMessage.sender] > 0) {
+            newUnread[updatedMessage.sender]--;
+            if (newUnread[updatedMessage.sender] === 0) delete newUnread[updatedMessage.sender];
+          }
+          return newUnread;
+        });
+      }
     });
 
     socket.on('error', ({ msg }) => {
@@ -114,6 +128,32 @@ const ChatWindow = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (selectedUserId) {
+      const unreadFromSelected = messages.filter(
+        (msg) => msg.sender === selectedUserId && msg.receiver === userId && !msg.readAt
+      );
+      unreadFromSelected.forEach((msg) => {
+        socketRef.current.emit('messageRead', { messageId: msg._id, userId });
+      });
+      setUnreadMessages((prev) => {
+        const newUnread = { ...prev };
+        delete newUnread[selectedUserId];
+        return newUnread;
+      });
+    }
+  }, [selectedUserId, messages]);
+
+  const updateUnreadMessages = (msgList) => {
+    const unread = {};
+    msgList.forEach((msg) => {
+      if (msg.receiver === userId && !msg.readAt && msg.sender !== selectedUserId) {
+        unread[msg.sender] = (unread[msg.sender] || 0) + 1;
+      }
+    });
+    setUnreadMessages(unread);
+  };
 
   const handleSendMessage = (e) => {
     e.preventDefault();
@@ -201,7 +241,12 @@ const ChatWindow = () => {
               transition={{ duration: 0.5, ease: 'easeOut' }}
               className="w-full lg:w-1/2 mx-auto mt-16"
             >
-              <UserList users={users} setSelectedUserId={setSelectedUserId} currentUserId={userId} />
+              <UserList
+                users={users}
+                setSelectedUserId={setSelectedUserId}
+                currentUserId={userId}
+                unreadMessages={unreadMessages}
+              />
             </motion.div>
           )}
         </AnimatePresence>
