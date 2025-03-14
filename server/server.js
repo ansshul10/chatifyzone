@@ -13,7 +13,7 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
-  cors: { origin: process.env.CLIENT_URL || 'http://localhost:3000', methods: ['GET', 'POST'] },
+  cors: { origin: process.env.CLIENT_URL || 'http://localhost:5000', methods: ['GET', 'POST'] },
 });
 
 connectDB();
@@ -37,11 +37,11 @@ const getOnlineUsers = async () => {
     })),
     ...anonymousUsers.map((session) => ({
       id: session.anonymousId,
-      username: session.username, // Use the stored username from the session
+      username: session.username,
       isAnonymous: true,
       online: session.status === 'online',
     })),
-  ].filter(user => user.id && user.username); // Filter out invalid entries
+  ].filter(user => user.id && user.username);
   console.log('getOnlineUsers result:', allUsers);
   return allUsers;
 };
@@ -77,7 +77,7 @@ io.on('connection', (socket) => {
         } else {
           session.status = 'online';
           if (session.username !== username) {
-            session.username = username; // Update with registered username if different
+            session.username = username;
             await session.save();
             console.log('Anonymous user username updated:', session);
           } else {
