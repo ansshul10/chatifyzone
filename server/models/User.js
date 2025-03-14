@@ -2,37 +2,15 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  email: {
-    type: String,
-    required: true,
-    unique: true,
-    lowercase: true,
-  },
-  username: {
-    type: String,
-    required: true,
-    unique: true,
-    minlength: 3,
-    maxlength: 20,
-  },
-  password: {
-    type: String,
-    required: true,
-  },
-  online: {
-    type: Boolean,
-    default: false,
-  },
-  resetPasswordToken: {
-    type: String,
-  },
-  resetPasswordExpires: {
-    type: Date,
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  username: { type: String, required: true, unique: true, minlength: 3, maxlength: 20 },
+  password: { type: String, required: true },
+  online: { type: Boolean, default: false },
+  resetPasswordToken: { type: String },
+  resetPasswordExpires: { type: Date },
+  createdAt: { type: Date, default: Date.now },
+  friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  blockedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 });
 
 userSchema.pre('save', async function(next) {
