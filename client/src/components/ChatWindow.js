@@ -6,8 +6,11 @@ import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
 
+// Ensure username is always passed from localStorage
 const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
-  query: { username: localStorage.getItem('anonymousUsername') || JSON.parse(localStorage.getItem('user'))?.username },
+  query: { 
+    username: localStorage.getItem('anonymousUsername') || JSON.parse(localStorage.getItem('user'))?.username || 'Guest_Default'
+  },
 });
 
 const ChatWindow = () => {
