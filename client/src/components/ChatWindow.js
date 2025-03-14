@@ -6,13 +6,7 @@ import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
 
-// Ensure username is always passed from localStorage
-const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
-  query: { 
-    username: localStorage.getItem('anonymousUsername') || JSON.parse(localStorage.getItem('user'))?.username || 'Guest_Default'
-  },
-});
-
+// Initialize Socket.IO inside useEffect to ensure localStorage is ready
 const ChatWindow = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
@@ -26,12 +20,22 @@ const ChatWindow = () => {
   const userId = isAnonymous ? localStorage.getItem('anonymousId') : JSON.parse(localStorage.getItem('user'))?.id;
   const username = isAnonymous ? localStorage.getItem('anonymousUsername') : JSON.parse(localStorage.getItem('user'))?.username;
   const messagesEndRef = useRef(null);
+  const socketRef = useRef(null);
 
   useEffect(() => {
-    if (!userId) {
+    console.log('ChatWindow loaded with userId:', userId, 'username:', username);
+    if (!userId || !username) {
+      console.error('Missing userId or username, redirecting to login');
       window.location.href = '/';
       return;
     }
+
+    // Initialize Socket.IO
+    socketRef.current = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
+      query: { username: username },
+    });
+
+    const socket = socketRef.current;
 
     socket.emit('join', userId);
 
@@ -75,12 +79,12 @@ const ChatWindow = () => {
     });
 
     socket.on('blockedUsersUpdate', (blockedList) => {
-      console.log('Blocked users updated:', blockedList); // Debug log
+      console.log('Blocked users updated:', blockedList);
       setBlockedUsers(blockedList);
     });
 
     socket.on('actionResponse', ({ type, success, msg }) => {
-      console.log('Action response:', { type, success, msg }); // Debug log
+      console.log('Action response:', { type, success, msg });
       setError(msg);
       setTimeout(() => setError(''), 3000);
       if (type === 'block' && success) {
@@ -92,6 +96,7 @@ const ChatWindow = () => {
     });
 
     return () => {
+      socket.disconnect();
       socket.off('loadPreviousMessages');
       socket.off('receiveMessage');
       socket.off('userListUpdate');
@@ -122,17 +127,17 @@ const ChatWindow = () => {
     }
     const messageData = { sender: userId, receiver: selectedUserId, content: newMessage };
     console.log('Sending message:', messageData);
-    socket.emit('sendMessage', messageData);
+    socketRef.current.emit('sendMessage', messageData);
     setNewMessage('');
   };
 
   const handleTyping = (e) => {
     setNewMessage(e.target.value);
     if (e.target.value.trim()) {
-      socket.emit('typing', { sender: userId, receiver: selectedUserId });
+      socketRef.current.emit('typing', { sender: userId, receiver: selectedUserId });
       clearTimeout(window.typingTimeout);
       window.typingTimeout = setTimeout(() => {
-        socket.emit('stopTyping', { sender: userId, receiver: selectedUserId });
+        socketRef.current.emit('stopTyping', { sender: userId, receiver: selectedUserId });
       }, 1000);
     }
   };
@@ -149,22 +154,22 @@ const ChatWindow = () => {
 
   const handleBlockUser = () => {
     if (!selectedUserId) return;
-    socket.emit('blockUser', { userId, targetId: selectedUserId });
+    socketRef.current.emit('blockUser', { userId, targetId: selectedUserId });
   };
 
   const handleUnblockUser = () => {
     if (!selectedUserId) return;
-    socket.emit('unblockUser', { userId, targetId: selectedUserId });
+    socketRef.current.emit('unblockUser', { userId, targetId: selectedUserId });
   };
 
   const handleAddFriend = () => {
     if (!selectedUserId) return;
-    socket.emit('addFriend', { userId, friendId: selectedUserId });
+    socketRef.current.emit('addFriend', { userId, friendId: selectedUserId });
   };
 
   const handleReportUser = () => {
     if (!selectedUserId) return;
-    socket.emit('reportUser', { userId, targetId: selectedUserId });
+    socketRef.current.emit('reportUser', { userId, targetId: selectedUserId });
   };
 
   const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { duration: 0.5 } } };
