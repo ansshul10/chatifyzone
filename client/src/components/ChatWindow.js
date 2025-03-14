@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock } from 'react-icons/fa';
+import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon } from 'react-icons/fa';
 import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
@@ -16,11 +16,13 @@ const ChatWindow = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [unreadMessages, setUnreadMessages] = useState({});
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const isAnonymous = !!localStorage.getItem('anonymousId');
   const userId = isAnonymous ? localStorage.getItem('anonymousId') : JSON.parse(localStorage.getItem('user'))?.id;
   const username = isAnonymous ? localStorage.getItem('anonymousUsername') : JSON.parse(localStorage.getItem('user'))?.username;
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
+  const messageInputRef = useRef(null);
 
   useEffect(() => {
     console.log('ChatWindow loaded with userId:', userId, 'username:', username);
@@ -212,12 +214,22 @@ const ChatWindow = () => {
     socketRef.current.emit('reportUser', { userId, targetId: selectedUserId });
   };
 
+  const handleInputFocus = () => {
+    if (window.innerWidth <= 768) {
+      setTimeout(() => {
+        window.scrollTo({
+          top: messageInputRef.current?.offsetTop - 50,
+          behavior: 'smooth',
+        });
+      }, 300);
+    }
+  };
+
   const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { duration: 0.5 } } };
   const chatVariants = { hidden: { opacity: 0, x: 50 }, visible: { opacity: 1, x: 0, transition: { duration: 0.5, ease: 'easeOut' } } };
   const messageVariants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.3 } } };
-  const inputVariants = { hover: { scale: 1.02, borderColor: '#FF1A1A' }, focus: { scale: 1.05, boxShadow: '0 0 10px rgba(255, 26, 26, 0.5)' } };
-  const buttonVariants = { hover: { scale: 1.1, backgroundColor: '#FF1A1A' }, tap: { scale: 0.95 } };
-  const footerVariants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.5, delay: 0.5 } } };
+  const inputVariants = { hover: { scale: 1.02, borderColor: '#FF0000' }, focus: { scale: 1.05, boxShadow: '0 0 10px rgba(255, 0, 0, 0.5)' } };
+  const buttonVariants = { hover: { scale: 1.1, backgroundColor: isDarkMode ? '#1A1A1A' : '#d1d5db' }, tap: { scale: 0.95 } };
   const dropdownVariants = {
     hidden: { opacity: 0, scale: 0.8, y: -10 },
     visible: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.3, type: 'spring', stiffness: 200, damping: 15 } },
@@ -228,10 +240,15 @@ const ChatWindow = () => {
       initial="hidden"
       animate="visible"
       variants={containerVariants}
-      className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col pt-11"
+      className={`flex flex-col min-h-screen ${isDarkMode ? 'bg-black text-white' : 'bg-white text-black'}`}
     >
-      <Navbar />
-      <div className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col lg:flex-row gap-4 lg:gap-6">
+      {/* Navbar */}
+      <div className="w-full z-10 pt-16">
+        <Navbar />
+      </div>
+
+      {/* Main Content */}
+      <div className="w-full flex-grow flex flex-col h-[100vh] ">
         <AnimatePresence>
           {!selectedUserId && (
             <motion.div
@@ -239,7 +256,10 @@ const ChatWindow = () => {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
-              className="w-full lg:w-1/2 mx-auto mt-16"
+              className="w-full h-[94vh] flex flex-col"
+              // EDIT HERE FOR USERLIST WIDTH AND HEIGHT:
+              // - Change 'w-full' to 'w-[80%]', 'w-[500px]', etc., to adjust width
+              // - Change 'h-full' to 'h-[80vh]', 'h-[500px]', etc., to adjust height
             >
               <UserList
                 users={users}
@@ -258,22 +278,44 @@ const ChatWindow = () => {
               initial="hidden"
               animate="visible"
               exit="hidden"
-              className="w-full flex flex-col bg-gradient-to-br from-gray-800 to-black bg-opacity-90 backdrop-blur-xl rounded-xl shadow-2xl border border-gray-700 p-4 sm:p-6 mt-16 lg:mt-0"
+              className={`flex flex-col flex-grow ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'}`}
             >
-              <div className="flex items-center justify-between border-b border-gray-600 pb-2 mb-4">
+              <div className={`flex items-center justify-between border-b ${isDarkMode ? 'border-gray-600' : 'border-gray-400'} p-4`}>
                 <div className="flex items-center space-x-2">
-                  <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} onClick={handleBackToUserList} className="text-gray-300 hover:text-red-400">
+                  <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={handleBackToUserList}
+                    className={`${isDarkMode ? 'text-gray-300 hover:text-red-400' : 'text-gray-600 hover:text-red-500'}`}
+                  >
                     <FaArrowLeft className="text-xl sm:text-2xl" />
                   </motion.button>
                   {isAnonymous ? <FaUserSecret className="text-purple-500 text-xl" /> : <FaUser className="text-red-500 text-xl" />}
-                  <span className="text-lg sm:text-xl font-semibold text-gray-100">
+                  <span className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>
                     {isAnonymous ? 'Guest Chat' : 'Chat'} <span className="text-red-400">with {getUsername(selectedUserId)}</span>
                   </span>
                 </div>
                 <div className="relative flex items-center space-x-2">
-                  {isAnonymous && <span className="text-yellow-400 text-xs sm:text-sm bg-yellow-900 bg-opacity-30 px-2 py-1 rounded-full">Anonymous Mode</span>}
+                  {/* Dark/Light Mode Toggle */}
+                  <motion.div whileHover={{ scale: 1.1 }}>
+                    <button
+                      onClick={() => setIsDarkMode(!isDarkMode)}
+                      className={`p-2 rounded-full ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-300'}`}
+                    >
+                      {isDarkMode ? <FaSun className="text-yellow-400" /> : <FaMoon className="text-gray-700" />}
+                    </button>
+                  </motion.div>
+                  {isAnonymous && (
+                    <span className={`text-yellow-400 text-xs sm:text-sm ${isDarkMode ? 'bg-yellow-900' : 'bg-yellow-200'} bg-opacity-30 px-2 py-1 rounded-full`}>
+                      Anonymous Mode
+                    </span>
+                  )}
                   {!isAnonymous && (
-                    <motion.button whileHover={{ scale: 1.1 }} onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="text-gray-300 hover:text-red-400">
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                      className={`${isDarkMode ? 'text-gray-300 hover:text-red-400' : 'text-gray-600 hover:text-red-500'}`}
+                    >
                       <FaEllipsisV className="text-xl" />
                     </motion.button>
                   )}
@@ -284,39 +326,39 @@ const ChatWindow = () => {
                         animate="visible"
                         exit="hidden"
                         variants={dropdownVariants}
-                        className="absolute right-0 top-10 w-52 bg-black border border-gray-600 rounded-lg shadow-2xl p-3 z-10"
+                        className={`absolute right-4 top-12 w-52 ${isDarkMode ? 'bg-black border-gray-600' : 'bg-gray-200 border-gray-400'} border rounded-lg shadow-2xl p-3 z-10`}
                       >
                         {blockedUsers.includes(selectedUserId) ? (
                           <motion.div
-                            whileHover={{ backgroundColor: '#1F2937', scale: 1.05 }}
+                            whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
                             onClick={handleUnblockUser}
-                            className="flex items-center space-x-2 p-2 text-sm text-red-500 cursor-pointer rounded-md"
+                            className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
                           >
                             <FaUnlock />
                             <span>Unblock User</span>
                           </motion.div>
                         ) : (
                           <motion.div
-                            whileHover={{ backgroundColor: '#1F2937', scale: 1.05 }}
+                            whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
                             onClick={handleBlockUser}
-                            className="flex items-center space-x-2 p-2 text-sm text-red-500 cursor-pointer rounded-md"
+                            className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
                           >
                             <FaBan />
                             <span>Block User</span>
                           </motion.div>
                         )}
                         <motion.div
-                          whileHover={{ backgroundColor: '#1F2937', scale: 1.05 }}
+                          whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
                           onClick={handleAddFriend}
-                          className="flex items-center space-x-2 p-2 text-sm text-red-500 cursor-pointer rounded-md"
+                          className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
                         >
                           <FaUserPlus />
                           <span>Add Friend</span>
                         </motion.div>
                         <motion.div
-                          whileHover={{ backgroundColor: '#1F2937', scale: 1.05 }}
+                          whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
                           onClick={handleReportUser}
-                          className="flex items-center space-x-2 p-2 text-sm text-red-500 cursor-pointer rounded-md"
+                          className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
                         >
                           <FaFlag />
                           <span>Report</span>
@@ -327,10 +369,17 @@ const ChatWindow = () => {
                 </div>
               </div>
 
-              <div className="flex-grow overflow-y-auto h-[50vh] sm:h-[60vh] lg:h-[70vh] space-y-4 px-2 scrollbar-thin scrollbar-thumb-red-500 scrollbar-track-gray-800">
+              <div
+                className={`flex-grow overflow-y-auto space-y-4 px-4 pt-6 scrollbar-thin ${isDarkMode ? 'scrollbar-thumb-red-500 scrollbar-track-gray-800' : 'scrollbar-thumb-red-400 scrollbar-track-gray-300'}`}
+              >
                 <AnimatePresence>
                   {messages.length === 0 && !error && (
-                    <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-gray-400 text-center text-sm sm:text-base">
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-center text-sm sm:text-base`}
+                    >
                       No messages yet. Start chatting! 💬
                     </motion.p>
                   )}
@@ -347,13 +396,19 @@ const ChatWindow = () => {
                       >
                         <div
                           className={`max-w-[80%] sm:max-w-xs lg:max-w-md p-3 rounded-lg shadow-md ${
-                            msg.sender === userId ? 'bg-gradient-to-r from-black-600 to-red-800 text-white' : 'bg-gradient-to-r from-black-700 to-gray-600 text-gray-200'
+                            msg.sender === userId
+                              ? isDarkMode
+                                ? 'bg-gray-800 text-white'
+                                : 'bg-gray-300 text-gray-900'
+                              : isDarkMode
+                                ? 'bg-gray-700 text-gray-200'
+                                : 'bg-gray-400 text-gray-800'
                           }`}
                         >
                           <p className="text-sm sm:text-base">
                             <span className="font-bold">{getUsername(msg.sender)}:</span> {msg.content}
                           </p>
-                          <span className="text-xs text-gray-300 block mt-1">
+                          <span className={`text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} block mt-1`}>
                             {new Date(msg.createdAt).toLocaleTimeString()}
                             {msg.edited && ' (Edited)'}
                             {msg.sender === userId && <> - {msg.readAt ? 'Read' : msg.deliveredAt ? 'Delivered' : 'Sent'}</>}
@@ -366,19 +421,32 @@ const ChatWindow = () => {
                 <div ref={messagesEndRef} />
               </div>
 
-              <div className="pt-2 flex flex-col space-y-2">
-                {typingUser && <p className="text-gray-400 text-sm text-left">{typingUser} is typing...</p>}
-                {error && <p className="text-red-400 text-center text-sm sm:text-base bg-red-900 bg-opacity-20 p-2 rounded">{error} ⚠️</p>}
+              <div className="p-4 flex flex-col space-y-2">
+                {typingUser && (
+                  <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm text-left`}>{typingUser} is typing...</p>
+                )}
+                {error && (
+                  <p className={`text-red-400 text-center text-sm sm:text-base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
+                    {error} ⚠️
+                  </p>
+                )}
               </div>
 
-              <form onSubmit={handleSendMessage} className="flex items-center pt-4 border-t border-gray-600 gap-2">
-                <motion.div whileHover="hover" whileFocus="focus" variants={inputVariants} className="flex-grow flex items-center border border-gray-600 rounded-lg bg-gray-900 p-2 sm:p-3">
+              <form onSubmit={handleSendMessage} className={`flex items-center p-4 border-t ${isDarkMode ? 'border-gray-600' : 'border-gray-400'} gap-2`}>
+                <motion.div
+                  whileHover="hover"
+                  whileFocus="focus"
+                  variants={inputVariants}
+                  className={`flex-grow flex items-center border ${isDarkMode ? 'border-gray-600 bg-gray-800' : 'border-gray-400 bg-gray-100'} rounded-lg p-2 sm:p-3`}
+                >
                   <input
+                    ref={messageInputRef}
                     type="text"
                     value={newMessage}
                     onChange={handleTyping}
+                    onFocus={handleInputFocus}
                     placeholder="Type a message..."
-                    className="w-full bg-transparent text-white text-sm sm:text-base placeholder-gray-500 focus:outline-none"
+                    className={`w-full bg-transparent ${isDarkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'} text-sm sm:text-base focus:outline-none`}
                     disabled={blockedUsers.includes(selectedUserId)}
                   />
                 </motion.div>
@@ -387,7 +455,7 @@ const ChatWindow = () => {
                   whileHover="hover"
                   whileTap="tap"
                   variants={buttonVariants}
-                  className="bg-gradient-to-r from-red-600 to-red-800 text-white p-2 sm:p-3 rounded-lg shadow-lg"
+                  className={`${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
                   disabled={!newMessage.trim() || blockedUsers.includes(selectedUserId)}
                 >
                   <FaPaperPlane className="text-lg sm:text-xl" />
@@ -397,19 +465,6 @@ const ChatWindow = () => {
           )}
         </AnimatePresence>
       </div>
-
-      <motion.footer variants={footerVariants} initial="hidden" animate="visible" className="bg-gradient-to-t from-black to-gray-900 py-4 sm:py-6 border-t border-gray-700 shadow-lg">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center text-gray-400 text-xs sm:text-sm">
-          <div className="mb-2 sm:mb-0">
-            <span className="font-semibold text-white">Chatify</span> © {new Date().getFullYear()} All rights reserved.
-          </div>
-          <div className="flex flex-wrap justify-center sm:justify-end space-x-4 sm:space-x-6">
-            <motion.a href="/terms" whileHover={{ y: -2, color: '#FF1A1A' }} className="transition-all duration-300">Terms of Service</motion.a>
-            <motion.a href="/privacy" whileHover={{ y: -2, color: '#FF1A1A' }} className="transition-all duration-300">Privacy Policy</motion.a>
-            <motion.a href="/contact" whileHover={{ y: -2, color: '#FF1A1A' }} className="transition-all duration-300">Contact Us</motion.a>
-          </div>
-        </div>
-      </motion.footer>
     </motion.div>
   );
 };
