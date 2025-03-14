@@ -37,6 +37,7 @@ const Navbar = () => {
     setIsProfileDropdownOpen(false);
     setIsMobileMenuOpen(false);
     navigate('/');
+    window.location.reload();
   };
 
   const navbarVariants = {
