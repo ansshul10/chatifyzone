@@ -7,8 +7,10 @@ const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
 const MessageActions = ({ messageId, content, setMessages }) => {
   const [editMode, setEditMode] = useState(false);
   const [newContent, setNewContent] = useState(content);
+  const [isDarkMode, setIsDarkMode] = useState(true); // Local theme state (can be inherited from parent)
   const userId = localStorage.getItem('anonymousId') || JSON.parse(localStorage.getItem('user'))?.id;
 
+  // Handle edit message
   const handleEdit = () => {
     if (!newContent.trim()) {
       alert('Message content cannot be empty');
@@ -21,32 +23,42 @@ const MessageActions = ({ messageId, content, setMessages }) => {
     setEditMode(false);
   };
 
+  // Handle delete message
   const handleDelete = () => {
     socket.emit('deleteMessage', { messageId, sender: userId });
     setMessages((prev) => prev.filter((msg) => msg._id !== messageId));
   };
 
+  // Animation variants
   const buttonVariants = {
     hover: { scale: 1.1, transition: { duration: 0.3 } },
     tap: { scale: 0.95 },
+  };
+
+  const inputVariants = {
+    hover: { scale: 1.02, borderColor: '#FF0000', transition: { duration: 0.3 } },
+    focus: { scale: 1.05, boxShadow: '0 0 10px rgba(255, 0, 0, 0.5)', transition: { duration: 0.3 } },
   };
 
   return (
     <div className="flex space-x-2 mt-2">
       {editMode ? (
         <>
-          <input
+          <motion.input
             type="text"
             value={newContent}
             onChange={(e) => setNewContent(e.target.value)}
-            className="p-1 border rounded bg-gray-800 border-gray-600 text-white"
+            variants={inputVariants}
+            whileHover="hover"
+            whileFocus="focus"
+            className={`p-1 border rounded w-full ${isDarkMode ? 'bg-gray-800 border-gray-600 text-white' : 'bg-gray-100 border-gray-400 text-gray-900'} focus:outline-none`}
           />
           <motion.button
             onClick={handleEdit}
             variants={buttonVariants}
             whileHover="hover"
             whileTap="tap"
-            className="text-green-500 hover:underline"
+            className={`px-2 py-1 rounded ${isDarkMode ? 'bg-green-600 text-white' : 'bg-green-500 text-white'} hover:bg-green-700`}
           >
             Save
           </motion.button>
@@ -55,7 +67,7 @@ const MessageActions = ({ messageId, content, setMessages }) => {
             variants={buttonVariants}
             whileHover="hover"
             whileTap="tap"
-            className="text-red-500 hover:underline"
+            className={`px-2 py-1 rounded ${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} hover:bg-red-700`}
           >
             Cancel
           </motion.button>
@@ -67,7 +79,7 @@ const MessageActions = ({ messageId, content, setMessages }) => {
             variants={buttonVariants}
             whileHover="hover"
             whileTap="tap"
-            className="text-blue-500 hover:underline"
+            className={`${isDarkMode ? 'text-blue-400' : 'text-blue-600'} hover:underline`}
           >
             Edit
           </motion.button>
@@ -76,7 +88,7 @@ const MessageActions = ({ messageId, content, setMessages }) => {
             variants={buttonVariants}
             whileHover="hover"
             whileTap="tap"
-            className="text-red-500 hover:underline"
+            className={`${isDarkMode ? 'text-red-400' : 'text-red-600'} hover:underline`}
           >
             Delete
           </motion.button>
