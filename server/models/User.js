@@ -10,7 +10,21 @@ const userSchema = new mongoose.Schema({
   resetPasswordExpires: { type: Date },
   createdAt: { type: Date, default: Date.now },
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  friendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Add this
   blockedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  groups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Group' }],
+  bio: { type: String, default: '', maxlength: 150 },
+  age: { type: Number, min: 13, max: 120 },
+  status: { type: String, default: 'Available', maxlength: 30 }, // Custom Status Message
+  privacy: {
+    showOnlineStatus: { type: Boolean, default: true }, // Privacy Settings
+    allowFriendRequests: { type: Boolean, default: true },
+  },
+  activityLog: [{ action: String, timestamp: { type: Date, default: Date.now } }], // Activity Log
+  stats: {
+    messagesSent: { type: Number, default: 0 }, // Account Statistics
+    friendsAdded: { type: Number, default: 0 },
+  },
 });
 
 userSchema.pre('save', async function(next) {
