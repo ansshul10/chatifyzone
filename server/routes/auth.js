@@ -281,4 +281,191 @@ router.post('/add-friend', auth, async (req, res) => {
   }
 });
 
+router.post('/remove-friend', auth, async (req, res) => {
+  const { friendId } = req.body;
+  try {
+    if (!req.user) return res.status(401).json({ msg: 'Only registered users can remove friends' });
+
+    const user = await User.findById(req.user);
+    const friend = await User.findById(friendId);
+    if (!friend) return res.status(404).json({ msg: 'Friend not found' });
+    if (!user.friends.includes(friendId)) return res.status(400).json({ msg: 'Not friends' });
+
+    user.friends = user.friends.filter(id => id.toString() !== friendId);
+    user.activityLog.push({ action: `Removed ${friend.username} as a friend` });
+    await user.save();
+
+    const updatedFriends = await User.findById(req.user).populate('friends', 'username online status');
+    res.json(updatedFriends.friends);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Update profile with status and privacy settings
+router.put('/profile', auth, async (req, res) => {
+  const { bio, age, status, showOnlineStatus, allowFriendRequests } = req.body;
+
+  try {
+    if (!req.user) return res.status(401).json({ msg: 'Only registered users can update profiles' });
+
+    const user = await User.findById(req.user);
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+
+    if (bio !== undefined) user.bio = bio.substring(0, 150);
+    if (age !== undefined) {
+      if (!Number.isInteger(age) || age < 13 || age > 120) {
+        return res.status(400).json({ msg: 'Age must be an integer between 13 and 120' });
+      }
+      user.age = age;
+    }
+    if (status !== undefined) user.status = status.substring(0, 30);
+    if (showOnlineStatus !== undefined) user.privacy.showOnlineStatus = showOnlineStatus;
+    if (allowFriendRequests !== undefined) user.privacy.allowFriendRequests = allowFriendRequests;
+
+    await user.save();
+    res.json({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      bio: user.bio,
+      age: user.age,
+      status: user.status,
+      privacy: user.privacy,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get profile with all new fields
+router.get('/profile', auth, async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ msg: 'Only registered users have profiles' });
+
+    const user = await User.findById(req.user)
+      .select('-password')
+      .populate('friends', 'username online status')
+      .populate('friendRequests', 'username') // If friend requests are used
+      .populate('blockedUsers', 'username'); // Populate blockedUsers
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+
+    res.json({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      bio: user.bio || '',
+      age: user.age || null,
+      status: user.status,
+      privacy: user.privacy,
+      friends: user.friends,
+      friendRequests: user.friendRequests, // Added for consistency
+      blockedUsers: user.blockedUsers,
+      activityLog: user.activityLog.slice(-5), // Last 5 actions
+      stats: user.stats,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.put('/change-password', auth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  try {
+    const user = await User.findById(req.user);
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) return res.status(400).json({ msg: 'Current password is incorrect' });
+
+    user.password = newPassword;
+    await user.save();
+    res.json({ msg: 'Password changed successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.delete('/delete-account', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user);
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+
+    await User.deleteOne({ _id: req.user });
+    res.json({ msg: 'Account deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Block a user
+router.post('/block-user', auth, async (req, res) => {
+  const { username } = req.body;
+  try {
+    const userToBlock = await User.findOne({ username });
+    if (!userToBlock) return res.status(404).json({ msg: 'User not found' });
+    if (userToBlock._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot block yourself' });
+
+    const user = await User.findById(req.user);
+    if (user.blockedUsers.includes(userToBlock._id)) return res.status(400).json({ msg: 'User already blocked' });
+
+    user.blockedUsers.push(userToBlock._id);
+    user.activityLog.push({ action: `Blocked ${username}` });
+    await user.save();
+    res.json({ blockedUsers: user.blockedUsers });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Unblock a user
+router.post('/unblock-user', auth, async (req, res) => {
+  const { userId } = req.body;
+  try {
+    const user = await User.findById(req.user);
+    if (!user.blockedUsers.includes(userId)) return res.status(400).json({ msg: 'User not blocked' });
+
+    user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
+    const unblockedUser = await User.findById(userId);
+    user.activityLog.push({ action: `Unblocked ${unblockedUser.username}` });
+    await user.save();
+    res.json({ blockedUsers: user.blockedUsers });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get blocked users with details
+router.get('/blocked-users', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user).populate('blockedUsers', 'username');
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+
+    res.json(user.blockedUsers);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+router.post('/increment-messages', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user);
+    user.stats.messagesSent += 1;
+    user.activityLog.push({ action: 'Sent a message' });
+    await user.save();
+    res.json(user.stats);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 module.exports = router;
