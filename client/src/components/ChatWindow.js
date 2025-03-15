@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon } from 'react-icons/fa';
+import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus } from 'react-icons/fa';
 import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
@@ -17,12 +17,19 @@ const ChatWindow = () => {
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [unreadMessages, setUnreadMessages] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [activeMessageId, setActiveMessageId] = useState(null);
+  const [menuMessageId, setMenuMessageId] = useState(null);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [backCount, setBackCount] = useState(0);
+  const [friends, setFriends] = useState([]); // Store friend IDs
   const isAnonymous = !!localStorage.getItem('anonymousId');
   const userId = isAnonymous ? localStorage.getItem('anonymousId') : JSON.parse(localStorage.getItem('user'))?.id;
   const username = isAnonymous ? localStorage.getItem('anonymousUsername') : JSON.parse(localStorage.getItem('user'))?.username;
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
   const messageInputRef = useRef(null);
+  const longPressTimer = useRef(null);
+  const hoverTimeout = useRef(null);
 
   useEffect(() => {
     console.log('ChatWindow loaded with userId:', userId, 'username:', username);
@@ -41,11 +48,13 @@ const ChatWindow = () => {
     socket.emit('join', userId);
 
     socket.on('loadPreviousMessages', (previousMessages) => {
+      console.log('Loaded previous messages:', previousMessages);
       setMessages(previousMessages);
       updateUnreadMessages(previousMessages);
     });
 
     socket.on('receiveMessage', (message) => {
+      console.log('Received message:', message);
       setMessages((prev) => [...prev, message]);
       if (message.receiver === userId && !message.readAt && message.sender !== selectedUserId) {
         setUnreadMessages((prev) => ({
@@ -61,10 +70,12 @@ const ChatWindow = () => {
     });
 
     socket.on('messageEdited', (updatedMessage) => {
+      console.log('Message edited:', updatedMessage);
       setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
     });
 
     socket.on('messageDeleted', (deletedMessageId) => {
+      console.log('Message deleted:', deletedMessageId);
       setMessages((prev) => prev.filter((msg) => msg._id !== deletedMessageId));
       updateUnreadMessages(messages.filter((msg) => msg._id !== deletedMessageId));
     });
@@ -76,6 +87,7 @@ const ChatWindow = () => {
     socket.on('userStoppedTyping', () => setTypingUser(null));
 
     socket.on('messageRead', (updatedMessage) => {
+      console.log('Message read:', updatedMessage);
       setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
       if (updatedMessage.receiver === userId) {
         setUnreadMessages((prev) => {
@@ -89,7 +101,15 @@ const ChatWindow = () => {
       }
     });
 
+    socket.on('reactionUpdate', ({ messageId, reactions }) => {
+      console.log('Reaction update received:', { messageId, reactions });
+      setMessages((prev) =>
+        prev.map((msg) => (msg._id === messageId ? { ...msg, reactions } : msg))
+      );
+    });
+
     socket.on('error', ({ msg }) => {
+      console.log('Error received:', msg);
       setError(msg);
       setTimeout(() => setError(''), 3000);
     });
@@ -99,17 +119,46 @@ const ChatWindow = () => {
       setBlockedUsers(blockedList);
     });
 
+    socket.on('friendsUpdate', (friendList) => {
+      console.log('Friends updated:', friendList);
+      setFriends(friendList.map(friend => friend._id)); // Store friend IDs
+    });
+
     socket.on('actionResponse', ({ type, success, msg }) => {
       console.log('Action response:', { type, success, msg });
-      setError(msg);
+      setError(msg); // Display the error or success message
       setTimeout(() => setError(''), 3000);
       if (type === 'block' && success) {
         setBlockedUsers((prev) => [...prev, selectedUserId]);
       } else if (type === 'unblock' && success) {
         setBlockedUsers((prev) => prev.filter((id) => id !== selectedUserId));
+      } else if (type === 'acceptFriendRequest' && success) {
+        setFriends((prev) => [...prev, selectedUserId]);
+      } else if (type === 'unfriend' && success) {
+        setFriends((prev) => prev.filter((id) => id !== selectedUserId));
       }
       setIsDropdownOpen(false);
     });
+
+    // Fetch initial friends list on mount
+    if (!isAnonymous) {
+      socket.emit('getFriends', userId);
+    }
+
+    window.history.pushState({ page: 'chat' }, null, window.location.pathname);
+    const handlePopState = (event) => {
+      event.preventDefault();
+      if (selectedUserId) {
+        setSelectedUserId(null);
+        setBackCount(1);
+        window.history.pushState({ page: 'userlist' }, null, window.location.pathname);
+      } else if (backCount === 1) {
+        setShowLogoutModal(true);
+        setBackCount(2);
+        window.history.pushState({ page: 'modal' }, null, window.location.pathname);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
 
     return () => {
       socket.disconnect();
@@ -121,11 +170,20 @@ const ChatWindow = () => {
       socket.off('userTyping');
       socket.off('userStoppedTyping');
       socket.off('messageRead');
+      socket.off('reactionUpdate');
       socket.off('error');
       socket.off('blockedUsersUpdate');
+      socket.off('friendsUpdate');
       socket.off('actionResponse');
+      window.removeEventListener('popstate', handlePopState);
     };
-  }, [userId, selectedUserId]);
+  }, [userId, username, isAnonymous]);
+
+  useEffect(() => {
+    if (!isAnonymous && selectedUserId) {
+      socketRef.current.emit('getFriends', userId);
+    }
+  }, [selectedUserId, userId, isAnonymous]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -145,7 +203,7 @@ const ChatWindow = () => {
         return newUnread;
       });
     }
-  }, [selectedUserId, messages]);
+  }, [selectedUserId, messages, userId]);
 
   const updateUnreadMessages = (msgList) => {
     const unread = {};
@@ -184,8 +242,55 @@ const ChatWindow = () => {
     }
   };
 
+  const handleDoubleClick = (messageId) => {
+    setActiveMessageId(activeMessageId === messageId ? null : messageId);
+    setMenuMessageId(null);
+  };
+
+  const handleLongPressStart = (messageId, isSender) => {
+    clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => {
+      if (isSender) {
+        setMenuMessageId((prev) => (prev === messageId ? null : messageId));
+      } else {
+        setActiveMessageId(messageId);
+      }
+    }, 500);
+  };
+
+  const handleLongPressEnd = () => {
+    clearTimeout(longPressTimer.current);
+  };
+
+  const handleHoverStart = (messageId) => {
+    clearTimeout(hoverTimeout.current);
+    setMenuMessageId(messageId);
+  };
+
+  const handleHoverEnd = (messageId) => {
+    hoverTimeout.current = setTimeout(() => {
+      setMenuMessageId(null);
+    }, 1500);
+  };
+
   const handleBackToUserList = () => {
     setSelectedUserId(null);
+    setBackCount(1);
+    window.history.pushState({ page: 'userlist' }, null, window.location.pathname);
+  };
+
+  const handleLogout = () => {
+    socketRef.current.emit('logout', userId);
+    localStorage.removeItem('anonymousId');
+    localStorage.removeItem('anonymousUsername');
+    localStorage.removeItem('user');
+    window.location.href = '/';
+  };
+
+  const handleStayHere = () => {
+    setShowLogoutModal(false);
+    setBackCount(0);
+    window.history.pushState({ page: 'userlist' }, null, window.location.pathname);
   };
 
   const getUsername = (id) => {
@@ -204,9 +309,19 @@ const ChatWindow = () => {
     socketRef.current.emit('unblockUser', { userId, targetId: selectedUserId });
   };
 
-  const handleAddFriend = () => {
+  const handleSendFriendRequest = () => {
+    if (!selectedUserId) {
+      console.log('No user selected for friend request');
+      setError('Please select a user to send a friend request');
+      return;
+    }
+    console.log('Sending friend request from', userId, 'to', selectedUserId);
+    socketRef.current.emit('sendFriendRequest', { userId, friendId: selectedUserId });
+  };
+
+  const handleUnfriend = () => {
     if (!selectedUserId) return;
-    socketRef.current.emit('addFriend', { userId, friendId: selectedUserId });
+    socketRef.current.emit('unfriend', { userId, friendId: selectedUserId });
   };
 
   const handleReportUser = () => {
@@ -234,6 +349,12 @@ const ChatWindow = () => {
     hidden: { opacity: 0, scale: 0.8, y: -10 },
     visible: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.3, type: 'spring', stiffness: 200, damping: 15 } },
   };
+  const modalVariants = {
+    hidden: { opacity: 0, scale: 0.8 },
+    visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } },
+  };
+
+  const isFriend = selectedUserId && friends.includes(selectedUserId);
 
   return (
     <motion.div
@@ -242,13 +363,10 @@ const ChatWindow = () => {
       variants={containerVariants}
       className={`flex flex-col min-h-screen ${isDarkMode ? 'bg-black text-white' : 'bg-white text-black'}`}
     >
-      {/* Navbar */}
       <div className="w-full z-10 pt-16">
         <Navbar />
       </div>
-
-      {/* Main Content */}
-      <div className="w-full flex-grow flex flex-col h-[100vh] ">
+      <div className="w-full flex-grow flex flex-col h-[100vh]">
         <AnimatePresence>
           {!selectedUserId && (
             <motion.div
@@ -257,9 +375,6 @@ const ChatWindow = () => {
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
               className="w-full h-[94vh] flex flex-col"
-              // EDIT HERE FOR USERLIST WIDTH AND HEIGHT:
-              // - Change 'w-full' to 'w-[80%]', 'w-[500px]', etc., to adjust width
-              // - Change 'h-full' to 'h-[80vh]', 'h-[500px]', etc., to adjust height
             >
               <UserList
                 users={users}
@@ -296,7 +411,6 @@ const ChatWindow = () => {
                   </span>
                 </div>
                 <div className="relative flex items-center space-x-2">
-                  {/* Dark/Light Mode Toggle */}
                   <motion.div whileHover={{ scale: 1.1 }}>
                     <button
                       onClick={() => setIsDarkMode(!isDarkMode)}
@@ -347,126 +461,191 @@ const ChatWindow = () => {
                             <span>Block User</span>
                           </motion.div>
                         )}
-                        <motion.div
-                          whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
-                          onClick={handleAddFriend}
-                          className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
-                        >
-                          <FaUserPlus />
-                          <span>Add Friend</span>
-                        </motion.div>
+                        {isFriend ? (
+                          <motion.div
+                            whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
+                            onClick={handleUnfriend}
+                            className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
+                          >
+                            <FaUserMinus />
+                            <span>Unfriend</span>
+                          </motion.div>
+                        ) : (
+                          <motion.div
+                            whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
+                            onClick={handleSendFriendRequest}
+                            className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
+                          >
+                            <FaUserPlus />
+                            <span>Send Friend Request</span>
+                          </motion.div>
+                        )}
                         <motion.div
                           whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
                           onClick={handleReportUser}
                           className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
-                        >
-                          <FaFlag />
-                          <span>Report</span>
+                          >
+                            <FaFlag />
+                            <span>Report</span>
+                          </motion.div>
                         </motion.div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
-              </div>
 
-              <div
-                className={`flex-grow overflow-y-auto space-y-4 px-4 pt-6 scrollbar-thin ${isDarkMode ? 'scrollbar-thumb-red-500 scrollbar-track-gray-800' : 'scrollbar-thumb-red-400 scrollbar-track-gray-300'}`}
-              >
-                <AnimatePresence>
-                  {messages.length === 0 && !error && (
-                    <motion.p
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-center text-sm sm:text-base`}
-                    >
-                      No messages yet. Start chatting! 💬
-                    </motion.p>
-                  )}
-                  {messages
-                    .filter((msg) => msg.sender === selectedUserId || msg.receiver === selectedUserId)
-                    .map((msg) => (
-                      <motion.div
-                        key={msg._id}
-                        variants={messageVariants}
-                        initial="hidden"
-                        animate="visible"
-                        exit="hidden"
-                        className={`flex ${msg.sender === userId ? 'justify-end' : 'justify-start'}`}
+                <div
+                  className={`flex-grow overflow-y-auto space-y-4 px-4 pt-6 scrollbar-thin ${isDarkMode ? 'scrollbar-thumb-red-500 scrollbar-track-gray-800' : 'scrollbar-thumb-red-400 scrollbar-track-gray-300'}`}
+                >
+                  <AnimatePresence>
+                    {messages.length === 0 && !error && (
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-center text-sm sm:text-base`}
                       >
-                        <div
-                          className={`max-w-[80%] sm:max-w-xs lg:max-w-md p-3 rounded-lg shadow-md ${
-                            msg.sender === userId
-                              ? isDarkMode
-                                ? 'bg-gray-800 text-white'
-                                : 'bg-gray-300 text-gray-900'
-                              : isDarkMode
+                        No messages yet. Start chatting! 💬
+                      </motion.p>
+                    )}
+                    {messages
+                      .filter((msg) => msg.sender === selectedUserId || msg.receiver === selectedUserId)
+                      .map((msg) => (
+                        <motion.div
+                          key={msg._id}
+                          variants={messageVariants}
+                          initial="hidden"
+                          animate="visible"
+                          exit="hidden"
+                          className={`flex ${msg.sender === userId ? 'justify-end' : 'justify-start'} relative`}
+                          onDoubleClick={() => handleDoubleClick(msg._id)}
+                        >
+                          <div
+                            className={`max-w-[80%] sm:max-w-xs lg:max-w-md p-3 rounded-lg shadow-md ${
+                              msg.sender === userId
+                                ? isDarkMode
+                                  ? 'bg-gray-800 text-white'
+                                  : 'bg-gray-300 text-gray-900'
+                                : isDarkMode
                                 ? 'bg-gray-700 text-gray-200'
                                 : 'bg-gray-400 text-gray-800'
-                          }`}
-                        >
-                          <p className="text-sm sm:text-base">
-                            <span className="font-bold">{getUsername(msg.sender)}:</span> {msg.content}
-                          </p>
-                          <span className={`text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} block mt-1`}>
-                            {new Date(msg.createdAt).toLocaleTimeString()}
-                            {msg.edited && ' (Edited)'}
-                            {msg.sender === userId && <> - {msg.readAt ? 'Read' : msg.deliveredAt ? 'Delivered' : 'Sent'}</>}
-                          </span>
-                          {msg.sender === userId && <MessageActions messageId={msg._id} content={msg.content} setMessages={setMessages} />}
-                        </div>
-                      </motion.div>
-                    ))}
-                </AnimatePresence>
-                <div ref={messagesEndRef} />
-              </div>
+                            }`}
+                          >
+                            <p
+                              className="text-sm sm:text-base"
+                              onMouseEnter={msg.sender === userId ? () => handleHoverStart(msg._id) : null}
+                              onMouseLeave={msg.sender === userId ? () => handleHoverEnd(msg._id) : null}
+                              onTouchStart={
+                                msg.sender === userId
+                                  ? () => handleLongPressStart(msg._id, true)
+                                  : () => handleLongPressStart(msg._id, false)
+                              }
+                              onTouchEnd={handleLongPressEnd}
+                              onTouchMove={handleLongPressEnd}
+                            >
+                              <span className="font-bold">{getUsername(msg.sender)}:</span> {msg.content}
+                            </p>
+                            <span className={`text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} block mt-1`}>
+                              {new Date(msg.createdAt).toLocaleTimeString()}
+                              {msg.edited && ' (Edited)'}
+                              {msg.sender === userId && <> - {msg.readAt ? 'Read' : msg.deliveredAt ? 'Delivered' : 'Sent'}</>}
+                            </span>
+                            <MessageActions
+                              messageId={msg._id}
+                              content={msg.content}
+                              setMessages={setMessages}
+                              reactions={msg.reactions || {}}
+                              showReactions={activeMessageId === msg._id}
+                              isSender={msg.sender === userId}
+                              showMenu={menuMessageId === msg._id}
+                            />
+                          </div>
+                        </motion.div>
+                      ))}
+                  </AnimatePresence>
+                  <div ref={messagesEndRef} />
+                </div>
 
-              <div className="p-4 flex flex-col space-y-2">
-                {typingUser && (
-                  <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm text-left`}>{typingUser} is typing...</p>
-                )}
-                {error && (
-                  <p className={`text-red-400 text-center text-sm sm:text-base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
-                    {error} ⚠️
-                  </p>
-                )}
-              </div>
+                <div className="p-4 flex flex-col space-y-2">
+                  {typingUser && (
+                    <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm text-left`}>{typingUser} is typing...</p>
+                  )}
+                  {error && (
+                    <p className={`text-red-400 text-center text-sm sm:text-base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
+                      {error} ⚠️
+                    </p>
+                  )}
+                </div>
 
-              <form onSubmit={handleSendMessage} className={`flex items-center p-4 border-t ${isDarkMode ? 'border-gray-600' : 'border-gray-400'} gap-2`}>
-                <motion.div
-                  whileHover="hover"
-                  whileFocus="focus"
-                  variants={inputVariants}
-                  className={`flex-grow flex items-center border ${isDarkMode ? 'border-gray-600 bg-gray-800' : 'border-gray-400 bg-gray-100'} rounded-lg p-2 sm:p-3`}
-                >
-                  <input
-                    ref={messageInputRef}
-                    type="text"
-                    value={newMessage}
-                    onChange={handleTyping}
-                    onFocus={handleInputFocus}
-                    placeholder="Type a message..."
-                    className={`w-full bg-transparent ${isDarkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'} text-sm sm:text-base focus:outline-none`}
-                    disabled={blockedUsers.includes(selectedUserId)}
-                  />
-                </motion.div>
-                <motion.button
-                  type="submit"
-                  whileHover="hover"
-                  whileTap="tap"
-                  variants={buttonVariants}
-                  className={`${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
-                  disabled={!newMessage.trim() || blockedUsers.includes(selectedUserId)}
-                >
-                  <FaPaperPlane className="text-lg sm:text-xl" />
-                </motion.button>
-              </form>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </motion.div>
-  );
-};
+                <form onSubmit={handleSendMessage} className={`flex items-center p-4 border-t ${isDarkMode ? 'border-gray-600' : 'border-gray-400'} gap-2`}>
+                  <motion.div
+                    whileHover="hover"
+                    whileFocus="focus"
+                    variants={inputVariants}
+                    className={`flex-grow flex items-center border ${isDarkMode ? 'border-gray-600 bg-gray-800' : 'border-gray-400 bg-gray-100'} rounded-lg p-2 sm:p-3`}
+                  >
+                    <input
+                      ref={messageInputRef}
+                      type="text"
+                      value={newMessage}
+                      onChange={handleTyping}
+                      onFocus={handleInputFocus}
+                      placeholder="Type a message..."
+                      className={`w-full bg-transparent ${isDarkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'} text-sm sm:text-base focus:outline-none`}
+                      disabled={blockedUsers.includes(selectedUserId)}
+                    />
+                  </motion.div>
+                  <motion.button
+                    type="submit"
+                    whileHover="hover"
+                    whileTap="tap"
+                    variants={buttonVariants}
+                    className={`${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
+                    disabled={!newMessage.trim() || blockedUsers.includes(selectedUserId)}
+                  >
+                    <FaPaperPlane className="text-lg sm:text-xl" />
+                  </motion.button>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-export default ChatWindow;
+          <AnimatePresence>
+            {showLogoutModal && (
+              <motion.div
+                initial="hidden"
+                animate="visible"
+                exit="hidden"
+                variants={modalVariants}
+                className={`fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50`}
+              >
+                <div className={`p-6 rounded-lg ${isDarkMode ? 'bg-gray-800 text-white' : 'bg-gray-200 text-black'} shadow-lg`}>
+                  <p className="text-lg mb-4">Are you sure you want to logout?</p>
+                  <div className="flex space-x-4">
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={handleLogout}
+                      className={`px-4 py-2 rounded ${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'}`}
+                    >
+                      Logout
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={handleStayHere}
+                      className={`px-4 py-2 rounded ${isDarkMode ? 'bg-gray-600 text-white' : 'bg-gray-400 text-black'}`}
+                    >
+                      Stay Here
+                    </motion.button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    );
+  };
+  
+  export default ChatWindow;
