@@ -37,7 +37,7 @@ const Home = () => {
       setIsAuthenticated(true);
     } else if (anonymousId) {
       // Anonymous user with anonymousId but no token
-      navigate('/'); // Redirect to chat immediately
+      navigate('/chat'); // Redirect to chat immediately
     } else {
       // Unauthenticated user (no token or anonymousId)
       setIsAuthenticated(false);
