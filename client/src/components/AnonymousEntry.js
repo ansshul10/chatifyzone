@@ -16,6 +16,11 @@ import {
   FaSun,
   FaMoon,
   FaDice,
+  FaUsers,
+  FaHistory,
+  FaUserPlus,
+  FaBan,
+  FaUserEdit,
 } from 'react-icons/fa';
 import api from '../utils/api';
 import Navbar from './Navbar';
@@ -58,7 +63,7 @@ const AnonymousEntry = () => {
       api.defaults.headers.common['x-anonymous-id'] = data.anonymousId;
       console.log('Anonymous login successful:', { anonymousId: data.anonymousId, username });
       setSuccess(true);
-      setTimeout(() => navigate('/chat'), 2000);
+      setTimeout(() => navigate('/'), 2000);
     } catch (err) {
       setError(err.response?.data.msg || 'Failed to start anonymous chat');
     }
@@ -113,32 +118,29 @@ const AnonymousEntry = () => {
     { icon: <FaGlobe className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Global Reach', desc: 'Connect with users worldwide.' },
   ];
 
-  // Anonymous Entry Features Data
+  // Anonymous User Features
   const anonymousFeatures = [
-    { icon: <FaRocket className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Quick Chat', desc: 'Quick chat without signup' },
+    { icon: <FaRocket className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Quick Chat', desc: 'Instant messaging without signup' },
     { icon: <FaShieldAlt className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Privacy First', desc: 'No personal info required' },
-    { icon: <FaComment className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Basic Messaging', desc: 'Basic messaging with others' },
+    { icon: <FaComment className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Basic Messaging', desc: 'Chat with others simply' },
+    { icon: <FaUsers className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Group Chat', desc: 'Join public groups' },
   ];
 
-  // Logged-In Features Data
-  const loggedInFeatures = [
-    { icon: <FaCheckCircle className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Block Users', desc: 'Block or report users' },
-    { icon: <FaCheckCircle className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Add Friends', desc: 'Add friends for quick access' },
-    { icon: <FaCheckCircle className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Chat History', desc: 'Persistent chat history' },
+  // Signed-Up User Features
+  const signedUpFeatures = [
+    { icon: <FaHistory className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Chat History', desc: 'Persistent messages across sessions' },
+    { icon: <FaUserPlus className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Add Friends', desc: 'Build a friend list' },
+    { icon: <FaBan className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Block/Report', desc: 'Control who you chat with' },
+    { icon: <FaUsers className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Create Groups', desc: 'Start and manage groups' },
+    { icon: <FaUserEdit className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Profile', desc: 'Customize your identity' },
   ];
 
-  // Testimonial Data
-  const testimonials = [
-    { quote: 'Love the anonymity—chatting without worry is amazing!', author: 'Hidden User' },
-    { quote: 'Super fast and easy to use, perfect for quick chats.', author: 'Ghost V.' },
-    { quote: 'The privacy features make this my go-to app!', author: 'Secret K.' },
-  ];
 
   // FAQ Data
   const faqs = [
     { question: 'What is anonymous entry?', answer: 'Chat without an account using just a username.' },
-    { question: 'Is it secure?', answer: 'Yes, your chats are encrypted and no personal info is stored.' },
-    { question: 'Can I switch to a full account?', answer: 'Absolutely, sign up anytime for more features!' },
+    { question: 'What do signed-up users get?', answer: 'Chat history, friends, group creation, and more!' },
+    { question: 'Is it secure?', answer: 'Yes, chats are encrypted, and no personal data is stored for anonymous users.' },
   ];
 
   return (
@@ -157,22 +159,22 @@ const AnonymousEntry = () => {
             className="w-full lg:w-1/2 flex flex-col justify-center space-y-6 lg:space-y-8 px-4 sm:px-0"
           >
             <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-center lg:text-left bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-red-500">
-              Join Chatify Anonymously
+              Join Chatify Your Way
             </h1>
             <p className={`text-base sm:text-lg ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} leading-relaxed text-center lg:text-left`}>
-              Chat instantly as a guest or unlock more with a full account—your privacy, your choice!
+              Chat anonymously for free or sign up for premium features—your choice, your experience!
             </p>
 
-            {/* Anonymous Entry Features with Tilt */}
-            <div className="space-y-4 sm:space-y-6">
-              <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-red-500">Anonymous Entry Features</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* Anonymous Features */}
+            <div className="space-y-4 sm:space-y-10">
+              <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-red-500">Anonymous Users Get</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-5">
                 {anonymousFeatures.map((feature, index) => (
                   <Tilt key={index} tiltMaxAngleX={15} tiltMaxAngleY={15} perspective={1000}>
                     <motion.div
                       variants={cardVariants}
                       whileHover={{ scale: 1.05 }}
-                      className={`p-4 rounded-lg shadow-md border h-40 flex flex-col items-center justify-center ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.2),-10px_0_20px_rgba(255,0,0,0.2)] transition-all duration-300`}
+                      className={`p-2 rounded-lg shadow-md border h-40 flex flex-col items-center justify-center ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.2),-10px_0_20px_rgba(255,0,0,0.2)] transition-all duration-300`}
                     >
                       {feature.icon}
                       <h3 className={`text-lg font-semibold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{feature.title}</h3>
@@ -183,11 +185,11 @@ const AnonymousEntry = () => {
               </div>
             </div>
 
-            {/* Logged-In Features with Tilt */}
-            <div className="space-y-4 sm:space-y-6">
-              <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-green-500">Logged-In Features</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {loggedInFeatures.map((feature, index) => (
+            {/* Signed-Up Features */}
+            <div className="space-y-4 sm:space-y-10">
+              <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-green-500">Signed-Up Users Unlock</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-5">
+                {signedUpFeatures.map((feature, index) => (
                   <Tilt key={index} tiltMaxAngleX={15} tiltMaxAngleY={15} perspective={1000}>
                     <motion.div
                       variants={cardVariants}
@@ -209,7 +211,7 @@ const AnonymousEntry = () => {
             </motion.div>
           </motion.div>
 
-          {/* Right Side - Form with Tilt */}
+          {/* Form Section */}
           <motion.div variants={formVariants} className="w-full lg:w-1/2 flex items-start justify-center px-4 sm:px-0 pt-16">
             <Tilt tiltMaxAngleX={20} tiltMaxAngleY={20} perspective={1000} className="w-full max-w-md">
               <div className={`p-6 sm:p-8 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.3),-10px_0_20px_rgba(255,0,0,0.3)] transition-all duration-300`}>
@@ -337,26 +339,6 @@ const AnonymousEntry = () => {
           </div>
         </section>
 
-        {/* Testimonials Section */}
-        <section className="w-full flex flex-col items-center space-y-12 py-12">
-          <motion.h2 variants={textVariants} className={`text-3xl sm:text-4xl font-extrabold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-            What Users Say 💬
-          </motion.h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
-            {testimonials.map((testimonial, index) => (
-              <motion.div
-                key={index}
-                variants={cardVariants}
-                className={`p-6 rounded-lg shadow-md border ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-200 border-gray-400'}`}
-              >
-                <FaStar className="text-yellow-400 text-2xl mb-4 mx-auto" />
-                <p className={`text-center italic ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>"{testimonial.quote}"</p>
-                <p className="text-red-500 font-semibold text-center mt-4">— {testimonial.author}</p>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-
         {/* FAQ Section */}
         <section className="w-full flex flex-col items-center space-y-12 py-12">
           <motion.h2 variants={textVariants} className={`text-3xl sm:text-4xl font-extrabold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -388,7 +370,7 @@ const AnonymousEntry = () => {
         {/* Stats Section */}
         <section className="w-full flex flex-col items-center space-y-12 py-12">
           <motion.h2 variants={textVariants} className={`text-3xl sm:text-4xl font-extrabold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-            Anonymous Chat Stats 📊
+            Chatify Stats 📊
           </motion.h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 w-full">
             <motion.div variants={cardVariants} className="text-center">
