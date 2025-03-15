@@ -30,7 +30,7 @@ const Login = () => {
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
       setSuccess(true);
-      setTimeout(() => navigate('/chat'), 2000);
+      setTimeout(() => navigate('/'), 2000);
     } catch (err) {
       setError(err.response?.data.msg || 'Invalid credentials');
     }
