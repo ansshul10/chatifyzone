@@ -63,7 +63,7 @@ const AnonymousEntry = () => {
       api.defaults.headers.common['x-anonymous-id'] = data.anonymousId;
       console.log('Anonymous login successful:', { anonymousId: data.anonymousId, username });
       setSuccess(true);
-      setTimeout(() => navigate('/'), 2000);
+      setTimeout(() => navigate('/chat'), 2000);
     } catch (err) {
       setError(err.response?.data.msg || 'Failed to start anonymous chat');
     }
