@@ -21,7 +21,7 @@ const ChatWindow = () => {
   const [menuMessageId, setMenuMessageId] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [backCount, setBackCount] = useState(0);
-  const [friends, setFriends] = useState([]); // Store friend IDs
+  const [friends, setFriends] = useState([]);
   const isAnonymous = !!localStorage.getItem('anonymousId');
   const userId = isAnonymous ? localStorage.getItem('anonymousId') : JSON.parse(localStorage.getItem('user'))?.id;
   const username = isAnonymous ? localStorage.getItem('anonymousUsername') : JSON.parse(localStorage.getItem('user'))?.username;
@@ -32,15 +32,13 @@ const ChatWindow = () => {
   const hoverTimeout = useRef(null);
 
   useEffect(() => {
-    console.log('ChatWindow loaded with userId:', userId, 'username:', username);
     if (!userId || !username) {
-      console.error('Missing userId or username, redirecting to login');
       window.location.href = '/';
       return;
     }
 
     socketRef.current = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
-      query: { username: username },
+      query: { username },
     });
 
     const socket = socketRef.current;
@@ -48,99 +46,118 @@ const ChatWindow = () => {
     socket.emit('join', userId);
 
     socket.on('loadPreviousMessages', (previousMessages) => {
-      console.log('Loaded previous messages:', previousMessages);
-      setMessages(previousMessages);
-      updateUnreadMessages(previousMessages);
+      const validMessages = Array.isArray(previousMessages) ? previousMessages.filter(msg => msg && msg._id) : [];
+      setMessages(validMessages);
+      updateUnreadMessages(validMessages);
     });
 
     socket.on('receiveMessage', (message) => {
-      console.log('Received message:', message);
-      setMessages((prev) => [...prev, message]);
-      if (message.receiver === userId && !message.readAt && message.sender !== selectedUserId) {
-        setUnreadMessages((prev) => ({
-          ...prev,
-          [message.sender]: (prev[message.sender] || 0) + 1,
-        }));
+      if (message && message._id) {
+        setMessages((prev) => [...prev, message]);
+        if (message.receiver === userId && !message.readAt && message.sender !== selectedUserId) {
+          setUnreadMessages((prev) => ({
+            ...prev,
+            [message.sender]: (prev[message.sender] || 0) + 1,
+          }));
+        }
+      } else {
+        console.error('Invalid message received:', message);
       }
     });
 
     socket.on('userListUpdate', (onlineUsers) => {
-      console.log('Received user list:', onlineUsers);
-      setUsers(onlineUsers);
+      const validUsers = Array.isArray(onlineUsers) ? onlineUsers.filter(user => user && user.id) : [];
+      setUsers(validUsers);
     });
 
     socket.on('messageEdited', (updatedMessage) => {
-      console.log('Message edited:', updatedMessage);
-      setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
+      if (updatedMessage && updatedMessage._id) {
+        setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
+      } else {
+        console.error('Invalid updated message:', updatedMessage);
+      }
     });
 
     socket.on('messageDeleted', (deletedMessageId) => {
-      console.log('Message deleted:', deletedMessageId);
-      setMessages((prev) => prev.filter((msg) => msg._id !== deletedMessageId));
-      updateUnreadMessages(messages.filter((msg) => msg._id !== deletedMessageId));
+      if (deletedMessageId) {
+        setMessages((prev) => prev.filter((msg) => msg._id !== deletedMessageId));
+        updateUnreadMessages(messages.filter((msg) => msg._id !== deletedMessageId));
+      } else {
+        console.error('Invalid deleted message ID:', deletedMessageId);
+      }
     });
 
-    socket.on('userTyping', ({ sender }) => {
-      if (sender === selectedUserId) setTypingUser(getUsername(sender));
+    socket.on('userTyping', ({ sender, username }) => {
+      if (sender === selectedUserId) setTypingUser(username);
     });
 
-    socket.on('userStoppedTyping', () => setTypingUser(null));
+    socket.on('userStoppedTyping', ({ sender }) => {
+      if (sender === selectedUserId) setTypingUser(null);
+    });
 
-    socket.on('messageRead', (updatedMessage) => {
-      console.log('Message read:', updatedMessage);
-      setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
-      if (updatedMessage.receiver === userId) {
-        setUnreadMessages((prev) => {
-          const newUnread = { ...prev };
-          if (newUnread[updatedMessage.sender] > 0) {
-            newUnread[updatedMessage.sender]--;
-            if (newUnread[updatedMessage.sender] === 0) delete newUnread[updatedMessage.sender];
-          }
-          return newUnread;
-        });
+    socket.on('messageStatusUpdate', (updatedMessage) => {
+      if (updatedMessage && updatedMessage._id) {
+        setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
+        if (updatedMessage.receiver === userId && updatedMessage.readAt) {
+          setUnreadMessages((prev) => {
+            const newUnread = { ...prev };
+            if (newUnread[updatedMessage.sender] > 0) {
+              newUnread[updatedMessage.sender]--;
+              if (newUnread[updatedMessage.sender] === 0) delete newUnread[updatedMessage.sender];
+            }
+            return newUnread;
+          });
+        }
+      } else {
+        console.error('Invalid message status update:', updatedMessage);
       }
     });
 
     socket.on('reactionUpdate', ({ messageId, reactions }) => {
-      console.log('Reaction update received:', { messageId, reactions });
-      setMessages((prev) =>
-        prev.map((msg) => (msg._id === messageId ? { ...msg, reactions } : msg))
-      );
+      if (messageId) {
+        setMessages((prev) =>
+          prev.map((msg) => (msg._id === messageId ? { ...msg, reactions } : msg))
+        );
+      } else {
+        console.error('Invalid reaction update:', { messageId, reactions });
+      }
     });
 
     socket.on('error', ({ msg }) => {
-      console.log('Error received:', msg);
       setError(msg);
+      console.error('Socket error:', msg);
       setTimeout(() => setError(''), 3000);
     });
 
     socket.on('blockedUsersUpdate', (blockedList) => {
-      console.log('Blocked users updated:', blockedList);
-      setBlockedUsers(blockedList);
+      const validBlocked = Array.isArray(blockedList) ? blockedList.filter(id => id).map(id => id.toString()) : [];
+      setBlockedUsers(validBlocked);
     });
 
     socket.on('friendsUpdate', (friendList) => {
-      console.log('Friends updated:', friendList);
-      setFriends(friendList.map(friend => friend._id)); // Store friend IDs
+      const validFriends = Array.isArray(friendList) ? friendList.filter(friend => friend && friend._id).map(friend => friend._id.toString()) : [];
+      setFriends(validFriends);
     });
 
-    socket.on('actionResponse', ({ type, success, msg }) => {
-      console.log('Action response:', { type, success, msg });
-      setError(msg); // Display the error or success message
+    socket.on('actionResponse', ({ type, success, msg, targetId }) => {
+      setError(success ? '' : msg); // Show error only on failure
       setTimeout(() => setError(''), 3000);
-      if (type === 'block' && success) {
-        setBlockedUsers((prev) => [...prev, selectedUserId]);
-      } else if (type === 'unblock' && success) {
-        setBlockedUsers((prev) => prev.filter((id) => id !== selectedUserId));
-      } else if (type === 'acceptFriendRequest' && success) {
-        setFriends((prev) => [...prev, selectedUserId]);
-      } else if (type === 'unfriend' && success) {
-        setFriends((prev) => prev.filter((id) => id !== selectedUserId));
+      if (success && selectedUserId) {
+        if (type === 'block') {
+          setBlockedUsers((prev) => [...prev, selectedUserId.toString()]);
+        } else if (type === 'unblock') {
+          setBlockedUsers((prev) => prev.filter((id) => id !== selectedUserId.toString()));
+        } else if (type === 'acceptFriendRequest') {
+          setFriends((prev) => [...prev, selectedUserId.toString()]);
+        } else if (type === 'unfriend') {
+          setFriends((prev) => prev.filter((id) => id !== selectedUserId.toString()));
+        } else if (type === 'sendFriendRequest') {
+          setError(''); // Clear any previous error on success
+        }
       }
       setIsDropdownOpen(false);
     });
 
-    // Fetch initial friends list on mount
     if (!isAnonymous) {
       socket.emit('getFriends', userId);
     }
@@ -162,19 +179,6 @@ const ChatWindow = () => {
 
     return () => {
       socket.disconnect();
-      socket.off('loadPreviousMessages');
-      socket.off('receiveMessage');
-      socket.off('userListUpdate');
-      socket.off('messageEdited');
-      socket.off('messageDeleted');
-      socket.off('userTyping');
-      socket.off('userStoppedTyping');
-      socket.off('messageRead');
-      socket.off('reactionUpdate');
-      socket.off('error');
-      socket.off('blockedUsersUpdate');
-      socket.off('friendsUpdate');
-      socket.off('actionResponse');
       window.removeEventListener('popstate', handlePopState);
     };
   }, [userId, username, isAnonymous]);
@@ -195,7 +199,7 @@ const ChatWindow = () => {
         (msg) => msg.sender === selectedUserId && msg.receiver === userId && !msg.readAt
       );
       unreadFromSelected.forEach((msg) => {
-        socketRef.current.emit('messageRead', { messageId: msg._id, userId });
+        socketRef.current.emit('updateMessageStatus', { messageId: msg._id, userId, status: 'read' });
       });
       setUnreadMessages((prev) => {
         const newUnread = { ...prev };
@@ -226,15 +230,14 @@ const ChatWindow = () => {
       return;
     }
     const messageData = { sender: userId, receiver: selectedUserId, content: newMessage };
-    console.log('Sending message:', messageData);
     socketRef.current.emit('sendMessage', messageData);
     setNewMessage('');
   };
 
   const handleTyping = (e) => {
     setNewMessage(e.target.value);
-    if (e.target.value.trim()) {
-      socketRef.current.emit('typing', { sender: userId, receiver: selectedUserId });
+    if (e.target.value.trim() && selectedUserId) {
+      socketRef.current.emit('typing', { sender: userId, receiver: selectedUserId, username });
       clearTimeout(window.typingTimeout);
       window.typingTimeout = setTimeout(() => {
         socketRef.current.emit('stopTyping', { sender: userId, receiver: selectedUserId });
@@ -267,7 +270,7 @@ const ChatWindow = () => {
     setMenuMessageId(messageId);
   };
 
-  const handleHoverEnd = (messageId) => {
+  const handleHoverEnd = () => {
     hoverTimeout.current = setTimeout(() => {
       setMenuMessageId(null);
     }, 1500);
@@ -311,11 +314,15 @@ const ChatWindow = () => {
 
   const handleSendFriendRequest = () => {
     if (!selectedUserId) {
-      console.log('No user selected for friend request');
       setError('Please select a user to send a friend request');
+      setTimeout(() => setError(''), 3000);
       return;
     }
-    console.log('Sending friend request from', userId, 'to', selectedUserId);
+    if (isAnonymous) {
+      setError('Anonymous users cannot send friend requests');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
     socketRef.current.emit('sendFriendRequest', { userId, friendId: selectedUserId });
   };
 
@@ -354,7 +361,8 @@ const ChatWindow = () => {
     visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } },
   };
 
-  const isFriend = selectedUserId && friends.includes(selectedUserId);
+  const isFriend = selectedUserId && friends.includes(selectedUserId.toString());
+  const isBlocked = selectedUserId && blockedUsers.includes(selectedUserId.toString());
 
   return (
     <motion.div
@@ -442,25 +450,14 @@ const ChatWindow = () => {
                         variants={dropdownVariants}
                         className={`absolute right-4 top-12 w-52 ${isDarkMode ? 'bg-black border-gray-600' : 'bg-gray-200 border-gray-400'} border rounded-lg shadow-2xl p-3 z-10`}
                       >
-                        {blockedUsers.includes(selectedUserId) ? (
-                          <motion.div
-                            whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
-                            onClick={handleUnblockUser}
-                            className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
-                          >
-                            <FaUnlock />
-                            <span>Unblock User</span>
-                          </motion.div>
-                        ) : (
-                          <motion.div
-                            whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
-                            onClick={handleBlockUser}
-                            className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
-                          >
-                            <FaBan />
-                            <span>Block User</span>
-                          </motion.div>
-                        )}
+                        <motion.div
+                          whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
+                          onClick={isBlocked ? handleUnblockUser : handleBlockUser}
+                          className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
+                        >
+                          {isBlocked ? <FaUnlock /> : <FaBan />}
+                          <span>{isBlocked ? 'Unblock User' : 'Block User'}</span>
+                        </motion.div>
                         {isFriend ? (
                           <motion.div
                             whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
@@ -548,7 +545,9 @@ const ChatWindow = () => {
                             <span className={`text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} block mt-1`}>
                               {new Date(msg.createdAt).toLocaleTimeString()}
                               {msg.edited && ' (Edited)'}
-                              {msg.sender === userId && <> - {msg.readAt ? 'Read' : msg.deliveredAt ? 'Delivered' : 'Sent'}</>}
+                              {msg.sender === userId && (
+                                <> - {msg.readAt ? 'Seen' : msg.deliveredAt ? 'Delivered' : 'Sent'}</>
+                              )}
                             </span>
                             <MessageActions
                               messageId={msg._id}
@@ -558,6 +557,7 @@ const ChatWindow = () => {
                               showReactions={activeMessageId === msg._id}
                               isSender={msg.sender === userId}
                               showMenu={menuMessageId === msg._id}
+                              userId={userId}
                             />
                           </div>
                         </motion.div>
@@ -568,7 +568,9 @@ const ChatWindow = () => {
 
                 <div className="p-4 flex flex-col space-y-2">
                   {typingUser && (
-                    <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm text-left`}>{typingUser} is typing...</p>
+                    <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm text-left`}>
+                      {typingUser} is typing...
+                    </p>
                   )}
                   {error && (
                     <p className={`text-red-400 text-center text-sm sm:text-base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
@@ -647,5 +649,5 @@ const ChatWindow = () => {
       </motion.div>
     );
   };
-  
+
   export default ChatWindow;
