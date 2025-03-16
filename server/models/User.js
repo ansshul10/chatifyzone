@@ -17,13 +17,7 @@ const userSchema = new mongoose.Schema({
   age: { type: Number, min: 13, max: 120 },
   status: { type: String, default: 'Available', maxlength: 30 }, // Custom Status Message
   privacy: {
-    showOnlineStatus: { type: Boolean, default: true }, // Privacy Settings
     allowFriendRequests: { type: Boolean, default: true },
-  },
-  activityLog: [{ action: String, timestamp: { type: Date, default: Date.now } }], // Activity Log
-  stats: {
-    messagesSent: { type: Number, default: 0 }, // Account Statistics
-    friendsAdded: { type: Number, default: 0 },
   },
 });
 
