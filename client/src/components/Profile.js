@@ -30,6 +30,7 @@ const Profile = () => {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
   const socketRef = React.useRef(null);
@@ -69,6 +70,7 @@ const Profile = () => {
         }
       } finally {
         setLoading(false);
+        setIsInitialLoad(false);
       }
     };
     fetchProfile();
@@ -79,35 +81,51 @@ const Profile = () => {
     socket.on('connect', () => {
       console.log('Socket connected:', socket.id);
       socket.emit('join', userId);
-      socket.emit('getFriendRequests', userId);
     });
 
     socket.on('friendRequestsUpdate', (friendRequests) => {
-      console.log('Received friendRequestsUpdate:', friendRequests);
-      setFriendRequests(friendRequests);
-    });
-
-    socket.on('getFriendRequestsResponse', (friendRequests) => {
-      console.log('Received getFriendRequestsResponse:', friendRequests);
-      setFriendRequests(friendRequests);
+      console.log('Received friendRequestsUpdate in Profile:', friendRequests);
+      if (isInitialLoad) return;
+      const validRequests = Array.isArray(friendRequests) 
+        ? friendRequests.filter(req => req && req._id && req.username) 
+        : [];
+      setFriendRequests(validRequests);
     });
 
     socket.on('friendsUpdate', (friendList) => {
-      console.log('Received friendsUpdate:', friendList);
-      setProfile((prev) => ({ ...prev, friends: Array.isArray(friendList) ? friendList : [] }));
+      console.log('Received friendsUpdate in Profile:', friendList);
+      if (isInitialLoad) return;
+      const validFriends = Array.isArray(friendList) 
+        ? friendList.filter(friend => friend && friend._id && friend.username) 
+        : [];
+      setProfile((prev) => ({
+        ...prev,
+        friends: validFriends
+      }));
+    });
+
+    socket.on('friendRequestReceived', (request) => {
+      console.log('Received friendRequestReceived in Profile:', request);
+      if (request._id === userId) return; // Ignore if it's the user's own action
+      setFriendRequests((prev) => {
+        if (prev.some(req => req._id === request._id)) return prev;
+        return [...prev, request];
+      });
     });
 
     socket.on('blockedUsersUpdate', (blockedUsers) => {
       console.log('Received blockedUsersUpdate:', blockedUsers);
-      setProfile((prev) => ({ ...prev, blockedUsers: Array.isArray(blockedUsers) ? blockedUsers : [] }));
+      const validBlocked = Array.isArray(blockedUsers) 
+        ? blockedUsers.filter(user => user && user._id) 
+        : [];
+      setProfile((prev) => ({ ...prev, blockedUsers: validBlocked }));
     });
 
     socket.on('actionResponse', ({ type, success, msg }) => {
-      console.log('Action response:', { type, success, msg });
+      console.log('Action response in Profile:', { type, success, msg });
       setError(success ? '' : msg);
       setSuccess(success ? msg : '');
       setTimeout(() => { setError(''); setSuccess(''); }, 3000);
-      if (type === 'acceptFriendRequest' && success) socket.emit('getFriends', userId);
     });
 
     socket.on('error', ({ msg }) => {
@@ -198,26 +216,38 @@ const Profile = () => {
     socketRef.current.emit('unblockUser', { userId, targetId });
   };
 
-  const handleUnfriend = async (friendId) => {
-    try {
-      await api.post('/auth/remove-friend', { friendId });
-      const { data } = await api.get('/auth/profile');
-      setProfile((prev) => ({ ...prev, friends: Array.isArray(data.friends) ? data.friends : [] }));
-      setSuccess('Friend removed successfully!');
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (err) {
-      setError(err.response?.data.msg || 'Failed to remove friend');
-    }
+  const handleUnfriend = (friendId) => {
+    socketRef.current.emit('unfriend', { userId, friendId });
+    setSuccess('Removing friend...');
+    setTimeout(() => setSuccess(''), 3000);
   };
 
   const handleChatWithFriend = (friendId) => navigate(`/chat?friendId=${friendId}`);
-  const handleAcceptFriendRequest = (requesterId) => socketRef.current.emit('acceptFriendRequest', { userId, requesterId });
-  const handleDeclineFriendRequest = (requesterId) => socketRef.current.emit('declineFriendRequest', { userId, requesterId });
+
+  const handleAcceptFriendRequest = (friendId) => {
+    const friendRequest = friendRequests.find((req) => req._id === friendId);
+    if (friendRequest) {
+      setFriendRequests((prev) => prev.filter((req) => req._id !== friendId));
+      setProfile((prev) => {
+        if (prev.friends.some(f => f._id === friendId)) return prev;
+        return {
+          ...prev,
+          friends: [...prev.friends, { _id: friendId, username: friendRequest.username }],
+        };
+      });
+    }
+    socketRef.current.emit('acceptFriendRequest', { userId, friendId });
+  };
+
+  const handleDeclineFriendRequest = (friendId) => {
+    setFriendRequests((prev) => prev.filter((req) => req._id !== friendId));
+    socketRef.current.emit('declineFriendRequest', { userId, friendId });
+  };
 
   const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { duration: 0.5 } } };
   const sidebarVariants = { hidden: { x: -50, opacity: 0 }, visible: { x: 0, opacity: 1, transition: { duration: 0.5 } } };
   const formVariants = { hidden: { x: 50, opacity: 0 }, visible: { x: 0, opacity: 1, transition: { duration: 0.5 } } };
-  const inputVariants = { hover: { scale: 1.02, borderColor: '#FF0000' }, focus: { scale: 1.05, boxShadow: '0 0 10px rgba(255, 0, 0, 0.5)' } };
+  const inputVariants = { hover: { scale: 1.02, borderColor: '#FF0000' }, focus: { scale: 1.05, boxShadow: '0 0 10px rgba(255,0,0,0.5)' } };
   const buttonVariants = { hover: { scale: 1.1 }, tap: { scale: 0.95 } };
   const dropdownVariants = { hidden: { opacity: 0, y: -10 }, visible: { opacity: 1, y: 0, transition: { duration: 0.2 } } };
   const modalVariants = { hidden: { opacity: 0, scale: 0.8 }, visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } } };
@@ -232,6 +262,20 @@ const Profile = () => {
       >
         <Navbar />
         <p>Loading profile...</p>
+      </motion.div>
+    );
+  }
+
+  if (!profile.username) {
+    return (
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={containerVariants}
+        className={`min-h-screen ${isDarkMode ? 'bg-black text-white' : 'bg-white text-black'} flex flex-col pt-20 items-center justify-center`}
+      >
+        <Navbar />
+        <p className="text-red-400">Error: Profile data not loaded. {error}</p>
       </motion.div>
     );
   }
@@ -392,13 +436,13 @@ const Profile = () => {
                   </label>
                   <div className="max-h-40 overflow-y-auto space-y-2 mt-2">
                     {friendRequests.length > 0 ? (
-                      friendRequests.map((req) => (
+                      friendRequests.map((req, index) => (
                         <motion.div
-                          key={req._id}
+                          key={req._id || `req-${index}`}
                           whileHover={{ scale: 1 }}
                           className={`${isDarkMode ? 'bg-gray-700' : 'bg-gray-300'} p-2 rounded-lg flex justify-between items-center`}
                         >
-                          <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>{req.username}</span>
+                          <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>{req.username || 'Unknown'}</span>
                           <div className="flex space-x-2">
                             <motion.button
                               whileHover="hover"
@@ -432,26 +476,30 @@ const Profile = () => {
                     <FaUsers className="mr-2" /> Friends ({profile.friends.length})
                   </label>
                   <div className="max-h-40 overflow-y-auto space-y-2 mt-2">
-                    {profile.friends.map((friend) => (
-                      <motion.div
-                        key={friend._id}
-                        whileHover={{ scale: 1 }}
-                        className={`${isDarkMode ? 'bg-gray-700' : 'bg-gray-300'} p-2 rounded-lg flex justify-between items-center`}
-                      >
-                        <span onClick={() => handleChatWithFriend(friend._id)} className={`cursor-pointer ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                          {friend.username}
-                        </span>
-                        <motion.button
-                          whileHover="hover"
-                          whileTap="tap"
-                          variants={buttonVariants}
-                          onClick={() => handleUnfriend(friend._id)}
-                          className="text-red-400 hover:text-red-500"
+                    {profile.friends.length > 0 ? (
+                      profile.friends.map((friend, index) => (
+                        <motion.div
+                          key={friend._id || `friend-${index}`}
+                          whileHover={{ scale: 1 }}
+                          className={`${isDarkMode ? 'bg-gray-700' : 'bg-gray-300'} p-2 rounded-lg flex justify-between items-center`}
                         >
-                          <FaUserMinus />
-                        </motion.button>
-                      </motion.div>
-                    ))}
+                          <span onClick={() => handleChatWithFriend(friend._id)} className={`cursor-pointer ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {friend.username || 'Unknown'}
+                          </span>
+                          <motion.button
+                            whileHover="hover"
+                            whileTap="tap"
+                            variants={buttonVariants}
+                            onClick={() => handleUnfriend(friend._id)}
+                            className="text-red-400 hover:text-red-500"
+                          >
+                            <FaUserMinus />
+                          </motion.button>
+                        </motion.div>
+                      ))
+                    ) : (
+                      <p className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>No friends yet.</p>
+                    )}
                   </div>
                 </div>
 
@@ -596,8 +644,11 @@ const Profile = () => {
               <div className="space-y-4">
                 <div className="max-h-40 overflow-y-auto space-y-2">
                   {profile.blockedUsers.length > 0 ? (
-                    profile.blockedUsers.map((user) => (
-                      <div key={user._id} className={`${isDarkMode ? 'bg-gray-700' : 'bg-gray-300'} p-2 rounded-lg flex justify-between items-center`}>
+                    profile.blockedUsers.map((user, index) => (
+                      <motion.div
+                        key={user._id || `blocked-${index}`}
+                        className={`${isDarkMode ? 'bg-gray-700' : 'bg-gray-300'} p-2 rounded-lg flex justify-between items-center`}
+                      >
                         <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>{user.username || 'Unknown User'}</span>
                         <motion.button
                           whileHover="hover"
@@ -608,7 +659,7 @@ const Profile = () => {
                         >
                           Unblock
                         </motion.button>
-                      </div>
+                      </motion.div>
                     ))
                   ) : (
                     <p className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>No users blocked.</p>
