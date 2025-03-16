@@ -1,53 +1,29 @@
-// src/components/MessageActions.js
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import io from 'socket.io-client';
 
 const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
 
-const MessageActions = ({ messageId, content, setMessages, reactions = {}, showReactions, isSender, showMenu }) => {
+const MessageActions = ({ messageId, content, setMessages, reactions = {}, showReactions, isSender, showMenu, userId }) => {
   const [editMode, setEditMode] = useState(false);
   const [newContent, setNewContent] = useState(content);
-  const [isDarkMode, setIsDarkMode] = useState(true);
-  const [floatingEmojis, setFloatingEmojis] = useState([]);
-  const userId = localStorage.getItem('anonymousId') || JSON.parse(localStorage.getItem('user'))?.id;
+  const [isDarkMode] = useState(true); // Assuming dark mode is default, adjust if needed
 
   const handleModify = () => {
     if (!newContent.trim()) {
       alert('Message content cannot be empty');
       return;
     }
-    socket.emit('editMessage', { messageId, content: newContent, sender: userId });
-    setMessages((prev) =>
-      prev.map((msg) => (msg._id === messageId ? { ...msg, content: newContent, edited: true } : msg))
-    );
+    socket.emit('editMessage', { messageId, content: newContent, userId });
     setEditMode(false);
   };
 
   const handleUnsend = () => {
-    socket.emit('deleteMessage', { messageId, sender: userId });
-    setMessages((prev) => prev.filter((msg) => msg._id !== messageId));
+    socket.emit('deleteMessage', { messageId, userId });
   };
 
   const handleReaction = (emoji) => {
-    const updatedReactions = { ...reactions, [emoji]: (reactions[emoji] || 0) + 1 };
-    console.log('Adding reaction:', { messageId, emoji, sender: userId });
-    socket.emit('addReaction', { messageId, emoji, sender: userId });
-    setMessages((prev) =>
-      prev.map((msg) => (msg._id === messageId ? { ...msg, reactions: updatedReactions } : msg))
-    );
-  };
-
-  const handleEmojiLongPress = (emoji) => {
-    const newFloatingEmojis = Array.from({ length: 5 }, (_, i) => ({
-      id: `${emoji}-${Date.now()}-${i}`,
-      emoji,
-      x: Math.random() * 20 - 10,
-    }));
-    setFloatingEmojis((prev) => [...prev, ...newFloatingEmojis]);
-    setTimeout(() => {
-      setFloatingEmojis((prev) => prev.filter((e) => !newFloatingEmojis.some((ne) => ne.id === e.id)));
-    }, 1000);
+    socket.emit('addReaction', { messageId, emoji, userId });
   };
 
   const buttonVariants = {
@@ -73,15 +49,6 @@ const MessageActions = ({ messageId, content, setMessages, reactions = {}, showR
   const menuVariants = {
     hidden: { opacity: 0, scale: 0.8, y: 10 },
     visible: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.2 } },
-  };
-
-  const floatingEmojiVariants = {
-    initial: { opacity: 1, y: 0 },
-    animate: {
-      opacity: 0,
-      y: -50,
-      transition: { duration: 1, ease: 'easeOut' },
-    },
   };
 
   const reactionEmojis = ['👍', '❤️', '😂', '😮', '😢'];
@@ -128,7 +95,7 @@ const MessageActions = ({ messageId, content, setMessages, reactions = {}, showR
             animate="visible"
             exit="hidden"
             className={`absolute ${isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-gray-200 border-gray-400'} border rounded-lg shadow-lg p-2 z-10`}
-            style={{ top: '100%', right: 0 }} // Right side and downside
+            style={{ top: '100%', right: 0 }}
           >
             <motion.button
               onClick={() => setEditMode(true)}
@@ -179,35 +146,12 @@ const MessageActions = ({ messageId, content, setMessages, reactions = {}, showR
       </AnimatePresence>
 
       {Object.keys(reactions).length > 0 && (
-        <div className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mt-1 relative`}>
+        <div className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
           {Object.entries(reactions).map(([emoji, count]) => (
-            <motion.span
-              key={emoji}
-              className="mr-2 cursor-pointer"
-              onTouchStart={() => {
-                const timer = setTimeout(() => handleEmojiLongPress(emoji), 500);
-                return () => clearTimeout(timer);
-              }}
-              onTouchEnd={() => clearTimeout()}
-              onTouchMove={() => clearTimeout()}
-            >
+            <span key={emoji} className="mr-2">
               {emoji} {count}
-            </motion.span>
+            </span>
           ))}
-          <AnimatePresence>
-            {floatingEmojis.map((fe) => (
-              <motion.span
-                key={fe.id}
-                className="absolute text-lg"
-                style={{ left: `${fe.x}px` }}
-                variants={floatingEmojiVariants}
-                initial="initial"
-                animate="animate"
-              >
-                {fe.emoji}
-              </motion.span>
-            ))}
-          </AnimatePresence>
         </div>
       )}
     </div>
