@@ -32,14 +32,11 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) =
       initial="hidden"
       animate="visible"
       className="w-full max-w-md mx-auto bg-gradient-to-b from-black to-black bg-opacity-90 backdrop-blur-md shadow-xl border border-gray-700 p-6 sm:p-4 h-full flex flex-col"
-      // Changed 'h-[60vh]' to 'h-full' to inherit the parent height from ChatWindow.js
     >
-      {/* Header */}
       <h2 className="text-lg sm:text-xl lg:text-2xl font-bold mb-4 text-center text-white bg-gradient-to-r from-red-500 to-purple-500 bg-clip-text text-transparent">
         Users 👥
       </h2>
 
-      {/* User List (Scrollable Content) */}
       <div className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-red-500 scrollbar-track-gray-800 space-y-2 sm:space-y-3">
         {users.length === 0 ? (
           <div className="text-gray-400 text-center text-sm sm:text-base">No users available yet 🌐</div>
@@ -90,7 +87,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages }) =
             ))
         )}
       </div>
-      {/* Footer - Updated to match the login page snippet */}
       <div className="mt-4 pt-4 border-gray-700 text-center text-xs sm:text-sm text-gray-400">
         © 2025 Chatify | All Rights Reserved
       </div>
