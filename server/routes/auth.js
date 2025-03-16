@@ -363,8 +363,6 @@ router.get('/profile', auth, async (req, res) => {
       friends: user.friends,
       friendRequests: user.friendRequests, // Added for consistency
       blockedUsers: user.blockedUsers,
-      activityLog: user.activityLog.slice(-5), // Last 5 actions
-      stats: user.stats,
     });
   } catch (err) {
     console.error(err);
