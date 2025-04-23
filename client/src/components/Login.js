@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaKey, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint, FaCamera } from 'react-icons/fa';
 import { startAuthentication } from '@simplewebauthn/browser';
+import * as faceapi from 'face-api.js'; // Import faceapi
 import api from '../utils/api';
-import { loadModels, getFaceDescriptor } from '../utils/faceApi';
+import { loadModels, getFaceDescriptorWithLandmarks } from '../utils/faceApi';
 import Navbar from './Navbar';
 
 const Login = () => {
@@ -15,7 +16,11 @@ const Login = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [loginMethod, setLoginMethod] = useState('password'); // password, webauthn, or face
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [faceLoginAttempts, setFaceLoginAttempts] = useState(0);
+  const [distance, setDistance] = useState(null); // Euclidean distance feedback
+  const MAX_FACE_ATTEMPTS = 3;
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -27,6 +32,7 @@ const Login = () => {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             setIsCameraActive(true);
+            startFaceDetection();
           }
         } catch (err) {
           setError('Failed to access camera or load models: ' + err.message);
@@ -34,7 +40,6 @@ const Login = () => {
       };
       setupCamera();
     }
-    // Cleanup camera on unmount or method change
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
         videoRef.current.srcObject.getTracks().forEach(track => track.stop());
@@ -42,6 +47,53 @@ const Login = () => {
       }
     };
   }, [loginMethod]);
+
+  const startFaceDetection = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const displaySize = { width: video.width, height: video.height };
+    faceapi.matchDimensions(canvas, displaySize);
+
+    const detectFace = async () => {
+      if (!isCameraActive) return;
+      try {
+        const detections = await getFaceDescriptorWithLandmarks(video);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (detections) {
+          const { landmarks } = detections;
+
+          // Draw face frame
+          const faceBox = detections.detection.box;
+          const frameWidth = 200;
+          const frameHeight = 250;
+          const frameX = (canvas.width - frameWidth) / 2;
+          const frameY = (canvas.height - frameHeight) / 2;
+          ctx.strokeStyle = faceBox.x >= frameX && faceBox.x + faceBox.width <= frameX + frameWidth &&
+                           faceBox.y >= frameY && faceBox.y + faceBox.height <= frameY + frameHeight
+                           ? 'green' : 'red';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(frameX, frameY, frameWidth, frameHeight);
+
+          // Draw facial landmarks
+          const landmarkPositions = landmarks.positions;
+          ctx.fillStyle = 'cyan';
+          landmarkPositions.forEach(point => {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+            ctx.fill();
+          });
+        }
+      } catch (err) {
+        console.error('Face detection error:', err);
+      }
+      requestAnimationFrame(detectFace);
+    };
+    detectFace();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -71,12 +123,10 @@ const Login = () => {
 
   const handleGoogleLogin = () => {
     alert('Google login is not implemented. Please use email and password.');
-    // TODO: Implement Google OAuth with Firebase or passport.js
   };
 
   const handleAppleLogin = () => {
     alert('Apple login is not implemented. Please use email and password.');
-    // TODO: Implement Apple Sign-In with appleid.apple.com
   };
 
   const handleBiometricLogin = async () => {
@@ -112,6 +162,7 @@ const Login = () => {
   const handleFaceLogin = async () => {
     setError('');
     setSuccess(false);
+    setDistance(null);
 
     if (!email.trim()) {
       setError('Please enter your email to use face login');
@@ -123,10 +174,30 @@ const Login = () => {
       return;
     }
 
+    if (faceLoginAttempts >= MAX_FACE_ATTEMPTS) {
+      setError('Too many failed face login attempts. Please try another method or contact support.');
+      return;
+    }
+
     try {
-      const descriptor = await getFaceDescriptor(videoRef.current);
-      if (!descriptor) {
-        setError('No face detected. Please position your face in front of the camera.');
+      const detections = await getFaceDescriptorWithLandmarks(videoRef.current);
+      if (!detections) {
+        setError('No face detected. Please position your face within the frame.');
+        setFaceLoginAttempts(prev => prev + 1);
+        return;
+      }
+
+      const { descriptor } = detections;
+      const frameWidth = 200;
+      const frameHeight = 250;
+      const frameX = (videoRef.current.width - frameWidth) / 2;
+      const frameY = (videoRef.current.height - frameHeight) / 2;
+      const faceBox = detections.detection.box;
+
+      if (faceBox.x < frameX || faceBox.x + faceBox.width > frameX + frameWidth ||
+          faceBox.y < frameY || faceBox.y + faceBox.height > frameY + frameHeight) {
+        setError('Please position your face within the green frame.');
+        setFaceLoginAttempts(prev => prev + 1);
         return;
       }
 
@@ -135,10 +206,17 @@ const Login = () => {
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
       setSuccess(true);
+      setFaceLoginAttempts(0);
+      setDistance(data.distance); // Display distance from backend
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
       console.error('Face login error:', err);
-      setError(err.response?.data.msg || 'Face login failed. Ensure you are registered with face recognition.');
+      const errorMsg = err.response?.data.msg || 'Face login failed. Ensure you are registered with face recognition.';
+      setError(errorMsg);
+      setDistance(err.response?.data.distance || null);
+      if (errorMsg === 'Invalid face') {
+        setFaceLoginAttempts(prev => prev + 1);
+      }
     }
   };
 
@@ -225,7 +303,7 @@ const Login = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => setLoginMethod('password')}
+                  onClick={() => { setLoginMethod('password'); setFaceLoginAttempts(0); setDistance(null); }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'password' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Password
@@ -233,7 +311,7 @@ const Login = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => setLoginMethod('webauthn')}
+                  onClick={() => { setLoginMethod('webauthn'); setFaceLoginAttempts(0); setDistance(null); }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face ID
@@ -241,15 +319,19 @@ const Login = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => setLoginMethod('face')}
+                  onClick={() => { setLoginMethod('face'); setFaceLoginAttempts(0); setDistance(null); }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'face' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face Recognition
                 </motion.button>
               </div>
               {loginMethod === 'face' && (
-                <div className="mb-6 flex justify-center">
+                <div className="mb-6 flex justify-center relative">
                   <video ref={videoRef} autoPlay muted className="rounded-lg border-2 border-gray-700" width="320" height="240" />
+                  <canvas ref={canvasRef} className="absolute top-0 left-0" width="320" height="240" />
+                  <div className="absolute bottom-2 left-2 text-sm text-white bg-black bg-opacity-50 px-2 py-1 rounded">
+                    {distance !== null ? `Distance: ${distance.toFixed(3)}` : 'Position face in frame'}
+                  </div>
                 </div>
               )}
               <form onSubmit={handleSubmit} className="space-y-6">
@@ -372,6 +454,7 @@ const Login = () => {
                     variants={buttonVariants}
                     onClick={handleFaceLogin}
                     className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                    disabled={success || faceLoginAttempts >= MAX_FACE_ATTEMPTS}
                   >
                     <FaCamera />
                     <span>Login with Face Recognition</span>
