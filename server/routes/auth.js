@@ -17,6 +17,11 @@ const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
 const rpName = 'Chatify';
 const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:3000';
 
+const calculateEuclideanDistance = (arr1, arr2) => {
+  if (!arr1 || !arr2 || arr1.length !== arr2.length) return Infinity;
+  return Math.sqrt(arr1.reduce((sum, val, i) => sum + Math.pow(val - arr2[i], 2), 0));
+};
+
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -27,7 +32,7 @@ router.post('/login', async (req, res) => {
     }
 
     if (!user.password) {
-      return res.status(400).json({ msg: 'This account uses biometric login. Please use Face ID.' });
+      return res.status(400).json({ msg: 'This account uses biometric or face login. Please use Face ID or Face Recognition.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -40,7 +45,7 @@ router.post('/login', async (req, res) => {
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error(err);
+    console.error('Login error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -62,7 +67,65 @@ router.post('/register', async (req, res) => {
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error(err);
+    console.error('Register error:', err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.post('/face/register', async (req, res) => {
+  const { email, username, descriptor } = req.body;
+
+  try {
+    let user = await User.findOne({ $or: [{ email }, { username }] });
+    if (user) {
+      return res.status(400).json({ msg: 'User already exists with this email or username' });
+    }
+
+    if (!descriptor || !Array.isArray(descriptor) || descriptor.length !== 128) {
+      return res.status(400).json({ msg: 'Invalid face descriptor' });
+    }
+
+    user = new User({ email, username, faceDescriptor: descriptor });
+    await user.save();
+
+    const payload = { userId: user.id };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  } catch (err) {
+    console.error('Face register error:', err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.post('/face/login', async (req, res) => {
+  const { email, descriptor } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ msg: 'User not found' });
+    }
+
+    if (!user.faceDescriptor) {
+      return res.status(400).json({ msg: 'This account does not have face recognition enabled' });
+    }
+
+    if (!descriptor || !Array.isArray(descriptor) || descriptor.length !== 128) {
+      return res.status(400).json({ msg: 'Invalid face descriptor' });
+    }
+
+    const distance = calculateEuclideanDistance(user.faceDescriptor, descriptor);
+    if (distance > 0.6) {
+      return res.status(400).json({ msg: 'Face not recognized' });
+    }
+
+    const payload = { userId: user.id };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  } catch (err) {
+    console.error('Face login error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -76,13 +139,12 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    // Convert email to Buffer for userID
     const userID = Buffer.from(email);
 
     const options = generateRegistrationOptions({
       rpName,
       rpID,
-      userID, // Use Buffer instead of string
+      userID,
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
@@ -98,7 +160,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
 
     res.json(options);
   } catch (err) {
-    console.error(err);
+    console.error('WebAuthn register begin error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -139,7 +201,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error(err);
+    console.error('WebAuthn register complete error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -169,7 +231,7 @@ router.post('/webauthn/login/begin', async (req, res) => {
 
     res.json(options);
   } catch (err) {
-    console.error(err);
+    console.error('WebAuthn login begin error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -219,7 +281,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error(err);
+    console.error('WebAuthn login complete error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -227,7 +289,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   try {
     if (req.user) {
-      const user = await User.findById(req.user).select('-password');
+      const user = await User.findById(req.user).select('-password -faceDescriptor');
       if (!user) {
         return res.status(404).json({ msg: 'User not found' });
       }
@@ -241,7 +303,7 @@ router.get('/me', auth, async (req, res) => {
       });
     }
   } catch (err) {
-    console.error(err);
+    console.error('Get me error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -305,7 +367,7 @@ router.post('/forgot-password', async (req, res) => {
               If you didn't request this reset, please ignore this email or contact our support team.</p>
           </div>
           <div class="footer">
-            <p>© ${new Date().getFullYear()} Your Application. All rights reserved.</p>
+            <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
             <p>Having issues? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
           </div>
         </div>
@@ -316,7 +378,7 @@ router.post('/forgot-password', async (req, res) => {
     await sendEmail(user.email, subject, html);
     res.json({ msg: 'Password reset link sent to your email' });
   } catch (err) {
-    console.error(err);
+    console.error('Forgot password error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -342,7 +404,7 @@ router.post('/reset-password/:token', async (req, res) => {
 
     res.json({ msg: 'Password successfully reset' });
   } catch (err) {
-    console.error(err);
+    console.error('Reset password error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -352,7 +414,7 @@ router.get('/friends', auth, async (req, res) => {
     const user = await User.findById(req.user).populate('friends', 'username online');
     res.json(user.friends);
   } catch (err) {
-    console.error(err);
+    console.error('Get friends error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -372,7 +434,7 @@ router.post('/add-friend', auth, async (req, res) => {
     const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
     res.json(updatedFriends.friends);
   } catch (err) {
-    console.error(err);
+    console.error('Add friend error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -388,19 +450,18 @@ router.post('/remove-friend', auth, async (req, res) => {
     if (!user.friends.includes(friendId)) return res.status(400).json({ msg: 'Not friends' });
 
     user.friends = user.friends.filter(id => id.toString() !== friendId);
-    user.activityLog.push({ action: `Removed ${friend.username} as a friend` });
     await user.save();
 
     const updatedFriends = await User.findById(req.user).populate('friends', 'username online status');
     res.json(updatedFriends.friends);
   } catch (err) {
-    console.error(err);
+    console.error('Remove friend error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
 
 router.put('/profile', auth, async (req, res) => {
-  const { bio, age, status, showOnlineStatus, allowFriendRequests } = req.body;
+  const { bio, age, status, allowFriendRequests } = req.body;
 
   try {
     if (!req.user) return res.status(401).json({ msg: 'Only registered users can update profiles' });
@@ -416,7 +477,6 @@ router.put('/profile', auth, async (req, res) => {
       user.age = age;
     }
     if (status !== undefined) user.status = status.substring(0, 30);
-    if (showOnlineStatus !== undefined) user.privacy.showOnlineStatus = showOnlineStatus;
     if (allowFriendRequests !== undefined) user.privacy.allowFriendRequests = allowFriendRequests;
 
     await user.save();
@@ -430,7 +490,7 @@ router.put('/profile', auth, async (req, res) => {
       privacy: user.privacy,
     });
   } catch (err) {
-    console.error(err);
+    console.error('Update profile error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -440,7 +500,7 @@ router.get('/profile', auth, async (req, res) => {
     if (!req.user) return res.status(401).json({ msg: 'Only registered users have profiles' });
 
     const user = await User.findById(req.user)
-      .select('-password')
+      .select('-password -faceDescriptor')
       .populate('friends', 'username online status')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
@@ -459,7 +519,7 @@ router.get('/profile', auth, async (req, res) => {
       blockedUsers: user.blockedUsers,
     });
   } catch (err) {
-    console.error(err);
+    console.error('Get profile error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -478,7 +538,7 @@ router.put('/change-password', auth, async (req, res) => {
     await user.save();
     res.json({ msg: 'Password changed successfully' });
   } catch (err) {
-    console.error(err);
+    console.error('Change password error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -491,7 +551,7 @@ router.delete('/delete-account', auth, async (req, res) => {
     await User.deleteOne({ _id: req.user });
     res.json({ msg: 'Account deleted successfully' });
   } catch (err) {
-    console.error(err);
+    console.error('Delete account error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -507,11 +567,10 @@ router.post('/block-user', auth, async (req, res) => {
     if (user.blockedUsers.includes(userToBlock._id)) return res.status(400).json({ msg: 'User already blocked' });
 
     user.blockedUsers.push(userToBlock._id);
-    user.activityLog.push({ action: `Blocked ${username}` });
     await user.save();
     res.json({ blockedUsers: user.blockedUsers });
   } catch (err) {
-    console.error(err);
+    console.error('Block user error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -523,37 +582,10 @@ router.post('/unblock-user', auth, async (req, res) => {
     if (!user.blockedUsers.includes(userId)) return res.status(400).json({ msg: 'User not blocked' });
 
     user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
-    const unblockedUser = await User.findById(userId);
-    user.activityLog.push({ action: `Unblocked ${unblockedUser.username}` });
     await user.save();
     res.json({ blockedUsers: user.blockedUsers });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-router.get('/blocked-users', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user).populate('blockedUsers', 'username');
-    if (!user) return res.status(404).json({ msg: 'User not found' });
-
-    res.json(user.blockedUsers);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-router.post('/increment-messages', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user);
-    user.stats.messagesSent += 1;
-    user.activityLog.push({ action: 'Sent a message' });
-    await user.save();
-    res.json(user.stats);
-  } catch (err) {
-    console.error(err);
+    console.error('Unblock user error:', err);
     res.status(500).json({ msg: 'Server error' });
   }
 });
