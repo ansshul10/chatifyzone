@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaUser, FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint, FaCamera } from 'react-icons/fa';
 import { startRegistration } from '@simplewebauthn/browser';
+import * as faceapi from 'face-api.js'; // Import faceapi
 import api from '../utils/api';
-import { loadModels, getFaceDescriptor } from '../utils/faceApi';
+import { loadModels, getFaceDescriptorWithLandmarks } from '../utils/faceApi';
 import Navbar from './Navbar';
 
 const Register = () => {
@@ -14,9 +15,12 @@ const Register = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [signupMethod, setSignupMethod] = useState('password'); // password, webauthn, or face
+  const [signupMethod, setSignupMethod] = useState('password');
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [facePosition, setFacePosition] = useState('center'); // center, left, right
+  const [descriptors, setDescriptors] = useState([]); // Store 3 descriptors
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -28,6 +32,7 @@ const Register = () => {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             setIsCameraActive(true);
+            startFaceDetection();
           }
         } catch (err) {
           setError('Failed to access camera or load models: ' + err.message);
@@ -35,7 +40,6 @@ const Register = () => {
       };
       setupCamera();
     }
-    // Cleanup camera on unmount or method change
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
         videoRef.current.srcObject.getTracks().forEach(track => track.stop());
@@ -43,6 +47,110 @@ const Register = () => {
       }
     };
   }, [signupMethod]);
+
+  const startFaceDetection = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const displaySize = { width: video.width, height: video.height };
+    faceapi.matchDimensions(canvas, displaySize);
+
+    const detectFace = async () => {
+      if (!isCameraActive) return;
+      try {
+        const detections = await getFaceDescriptorWithLandmarks(video);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (detections) {
+          const { landmarks, detection } = detections;
+
+          // Draw face frame
+          const faceBox = detection.box;
+          const frameWidth = 200;
+          const frameHeight = 250;
+          const frameX = (canvas.width - frameWidth) / 2;
+          const frameY = (canvas.height - frameHeight) / 2;
+          ctx.strokeStyle = faceBox.x >= frameX && faceBox.x + faceBox.width <= frameX + frameWidth &&
+                           faceBox.y >= frameY && faceBox.y + faceBox.height <= frameY + frameHeight
+                           ? 'green' : 'red';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(frameX, frameY, frameWidth, frameHeight);
+
+          // Draw facial landmarks
+          const landmarkPositions = landmarks.positions;
+          ctx.fillStyle = 'cyan';
+          landmarkPositions.forEach(point => {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+            ctx.fill();
+          });
+
+          // Check face orientation
+          const noseTip = landmarks.getNose()[3];
+          const canvasCenterX = canvas.width / 2;
+          if (facePosition === 'center' && Math.abs(noseTip.x - canvasCenterX) > 30) {
+            setError('Please center your face.');
+          } else if (facePosition === 'left' && noseTip.x > canvasCenterX - 50) {
+            setError('Please turn your face slightly to the right.');
+          } else if (facePosition === 'right' && noseTip.x < canvasCenterX + 50) {
+            setError('Please turn your face slightly to the left.');
+          } else {
+            setError('');
+          }
+        } else {
+          setError('No face detected. Please position your face in the frame.');
+        }
+      } catch (err) {
+        console.error('Face detection error:', err);
+      }
+      requestAnimationFrame(detectFace);
+    };
+    detectFace();
+  };
+
+  const captureFace = async () => {
+    try {
+      const detections = await getFaceDescriptorWithLandmarks(videoRef.current);
+      if (!detections) {
+        setError('No face detected. Please position your face in the frame.');
+        return false;
+      }
+
+      const { descriptor, detection, landmarks } = detections;
+      const frameWidth = 200;
+      const frameHeight = 250;
+      const frameX = (videoRef.current.width - frameWidth) / 2;
+      const frameY = (videoRef.current.height - frameHeight) / 2;
+      const faceBox = detection.box;
+
+      if (faceBox.x < frameX || faceBox.x + faceBox.width > frameX + frameWidth ||
+          faceBox.y < frameY || faceBox.y + faceBox.height > frameY + frameHeight) {
+        setError('Please position your face within the green frame.');
+        return false;
+      }
+
+      const noseTip = landmarks.getNose()[3];
+      const canvasCenterX = videoRef.current.width / 2;
+      if (facePosition === 'center' && Math.abs(noseTip.x - canvasCenterX) > 30) {
+        setError('Please center your face.');
+        return false;
+      } else if (facePosition === 'left' && noseTip.x > canvasCenterX - 50) {
+        setError('Please turn your face slightly to the right.');
+        return false;
+      } else if (facePosition === 'right' && noseTip.x < canvasCenterX + 50) {
+        setError('Please turn your face slightly to the left.');
+        return false;
+      }
+
+      setDescriptors(prev => [...prev, descriptor]);
+      return true;
+    } catch (err) {
+      setError('Error capturing face: ' + err.message);
+      return false;
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -72,12 +180,10 @@ const Register = () => {
 
   const handleGoogleSignup = () => {
     alert('Google signup is not implemented. Please use email and password.');
-    // TODO: Implement Google OAuth with Firebase or passport.js
   };
 
   const handleAppleSignup = () => {
     alert('Apple signup is not implemented. Please use email and password.');
-    // TODO: Implement Apple Sign-In with appleid.apple.com
   };
 
   const handleBiometricSignup = async () => {
@@ -124,22 +230,32 @@ const Register = () => {
       return;
     }
 
-    try {
-      const descriptor = await getFaceDescriptor(videoRef.current);
-      if (!descriptor) {
-        setError('No face detected. Please position your face in front of the camera.');
-        return;
+    if (descriptors.length < 3) {
+      const success = await captureFace();
+      if (success) {
+        if (facePosition === 'center') {
+          setFacePosition('left');
+          setError('Face captured. Now turn slightly to the right.');
+        } else if (facePosition === 'left') {
+          setFacePosition('right');
+          setError('Face captured. Now turn slightly to the left.');
+        } else if (facePosition === 'right') {
+          // All three descriptors captured
+          try {
+            const { data } = await api.post('/auth/face/register', { username, email, descriptors });
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('user', JSON.stringify(data.user));
+            api.defaults.headers.common['x-auth-token'] = data.token;
+            setSuccess(true);
+            setTimeout(() => navigate('/login'), 2000);
+          } catch (err) {
+            setError(err.response?.data.msg || 'Face signup failed.');
+            setDescriptors([]); // Reset on failure
+            setFacePosition('center');
+          }
+        }
       }
-
-      const { data } = await api.post('/auth/face/register', { username, email, descriptor });
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      api.defaults.headers.common['x-auth-token'] = data.token;
-      setSuccess(true);
-      setTimeout(() => navigate('/login'), 2000);
-    } catch (err) {
-      console.error('Face signup error:', err);
-      setError(err.response?.data.msg || 'Face signup failed.');
+      return;
     }
   };
 
@@ -226,7 +342,7 @@ const Register = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => setSignupMethod('password')}
+                  onClick={() => { setSignupMethod('password'); setDescriptors([]); setFacePosition('center'); }}
                   className={`px-4 py-2 rounded-lg ${signupMethod === 'password' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Password
@@ -234,7 +350,7 @@ const Register = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => setSignupMethod('webauthn')}
+                  onClick={() => { setSignupMethod('webauthn'); setDescriptors([]); setFacePosition('center'); }}
                   className={`px-4 py-2 rounded-lg ${signupMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face ID
@@ -242,15 +358,21 @@ const Register = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => setSignupMethod('face')}
+                  onClick={() => { setSignupMethod('face'); setDescriptors([]); setFacePosition('center'); }}
                   className={`px-4 py-2 rounded-lg ${signupMethod === 'face' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face Recognition
                 </motion.button>
               </div>
               {signupMethod === 'face' && (
-                <div className="mb-6 flex justify-center">
+                <div className="mb-6 flex justify-center relative">
                   <video ref={videoRef} autoPlay muted className="rounded-lg border-2 border-gray-700" width="320" height="240" />
+                  <canvas ref={canvasRef} className="absolute top-0 left-0" width="320" height="240" />
+                  <div className="absolute bottom-2 left-2 text-sm text-white bg-black bg-opacity-50 px-2 py-1 rounded">
+                    {facePosition === 'center' ? 'Position face in center' :
+                     facePosition === 'left' ? 'Turn slightly to the right' :
+                     'Turn slightly to the left'}
+                  </div>
                 </div>
               )}
               <form onSubmit={handleSubmit} className="space-y-6">
@@ -391,9 +513,10 @@ const Register = () => {
                     variants={buttonVariants}
                     onClick={handleFaceSignup}
                     className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                    disabled={success}
                   >
                     <FaCamera />
-                    <span>Sign Up with Face Recognition</span>
+                    <span>{descriptors.length < 3 ? `Capture ${facePosition} face` : 'Sign Up with Face Recognition'}</span>
                   </motion.button>
                 )}
               </form>
