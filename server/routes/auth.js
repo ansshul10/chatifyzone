@@ -6,6 +6,16 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
+const {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+} = require('@simplewebauthn/server');
+
+const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
+const rpName = 'Chatify';
+const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:3000';
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -14,6 +24,10 @@ router.post('/login', async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ msg: 'Invalid credentials' });
+    }
+
+    if (!user.password) {
+      return res.status(400).json({ msg: 'This account uses biometric login. Please use Face ID.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -53,6 +67,163 @@ router.post('/register', async (req, res) => {
   }
 });
 
+router.post('/webauthn/register/begin', async (req, res) => {
+  const { username, email } = req.body;
+
+  try {
+    let user = await User.findOne({ $or: [{ email }, { username }] });
+    if (user) {
+      return res.status(400).json({ msg: 'User already exists with this email or username' });
+    }
+
+    // Convert email to Buffer for userID
+    const userID = Buffer.from(email);
+
+    const options = generateRegistrationOptions({
+      rpName,
+      rpID,
+      userID, // Use Buffer instead of string
+      userName: username,
+      userDisplayName: username,
+      attestationType: 'none',
+      excludeCredentials: [],
+      authenticatorSelection: {
+        userVerification: 'required',
+        authenticatorAttachment: 'platform',
+      },
+    });
+
+    req.session.challenge = options.challenge;
+    req.session.user = { email, username };
+
+    res.json(options);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.post('/webauthn/register/complete', async (req, res) => {
+  const { email, username, credential } = req.body;
+
+  try {
+    if (!req.session.challenge || !req.session.user || req.session.user.email !== email || req.session.user.username !== username) {
+      return res.status(400).json({ msg: 'Invalid session or user data' });
+    }
+
+    const verification = await verifyRegistrationResponse({
+      credential,
+      expectedChallenge: req.session.challenge,
+      expectedOrigin,
+      expectedRPID: rpID,
+    });
+
+    if (!verification.verified) {
+      return res.status(400).json({ msg: 'WebAuthn registration failed' });
+    }
+
+    const { credentialID, publicKey, counter } = verification.registrationInfo;
+
+    const user = new User({
+      email,
+      username,
+      webauthnCredentials: [{ credentialID, publicKey, counter, deviceName: 'Face ID' }],
+    });
+
+    await user.save();
+    req.session.challenge = null;
+    req.session.user = null;
+
+    const payload = { userId: user.id };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.post('/webauthn/login/begin', async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ msg: 'User not found' });
+    }
+
+    const credentials = user.webauthnCredentials.map(cred => ({
+      id: cred.credentialID,
+      type: 'public-key',
+    }));
+
+    const options = generateAuthenticationOptions({
+      rpID,
+      allowCredentials: credentials,
+      userVerification: 'required',
+    });
+
+    req.session.challenge = options.challenge;
+    req.session.email = email;
+
+    res.json(options);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.post('/webauthn/login/complete', async (req, res) => {
+  const { email, credential } = req.body;
+
+  try {
+    if (!req.session.challenge || req.session.email !== email) {
+      return res.status(400).json({ msg: 'Invalid session or email' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ msg: 'User not found' });
+    }
+
+    const credentialMatch = user.webauthnCredentials.find(cred => cred.credentialID === credential.id);
+    if (!credentialMatch) {
+      return res.status(400).json({ msg: 'Invalid credential' });
+    }
+
+    const verification = await verifyAuthenticationResponse({
+      credential,
+      expectedChallenge: req.session.challenge,
+      expectedOrigin,
+      expectedRPID: rpID,
+      authenticator: {
+        credentialID: credentialMatch.credentialID,
+        credentialPublicKey: credentialMatch.publicKey,
+        counter: credentialMatch.counter,
+      },
+    });
+
+    if (!verification.verified) {
+      return res.status(400).json({ msg: 'WebAuthn authentication failed' });
+    }
+
+    credentialMatch.counter = verification.authenticationInfo.newCounter;
+    await user.save();
+
+    req.session.challenge = null;
+    req.session.email = null;
+
+    const payload = { userId: user.id };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 router.get('/me', auth, async (req, res) => {
   try {
     if (req.user) {
@@ -75,7 +246,6 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
-// Forgot Password - Send reset link
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
 
@@ -85,13 +255,11 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(400).json({ msg: 'No user found with this email' });
     }
 
-    // Generate reset token
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour expiration
+    user.resetPasswordExpires = Date.now() + 3600000;
     await user.save();
 
-    // Send email with enhanced HTML template
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
     const subject = 'Password Reset Request';
     const html = `
@@ -103,93 +271,24 @@ router.post('/forgot-password', async (req, res) => {
         <meta http-equiv="X-UA-Compatible" content="ie=edge">
         <title>Password Reset</title>
         <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-          body {
-            background-color: #1A1A1A;
-            font-family: 'Arial', sans-serif;
-            color: white;
-            line-height: 1.6;
-          }
-          .container {
-            max-width: 600px;
-            margin: 40px auto;
-            background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%);
-            border-radius: 12px;
-            padding: 40px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-          }
-          .header {
-            text-align: center;
-            padding-bottom: 30px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-          }
-          .header h1 {
-            font-size: 28px;
-            font-weight: 700;
-            color: white;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-          }
-          .content {
-            padding: 20px 0;
-          }
-          .content p {
-            margin-bottom: 15px;
-          }
-          .button {
-            display: inline-block;
-            padding: 14px 32px;
-            background: #FF0000;
-            color: white;
-            text-decoration: none;
-            border-radius: 6px;
-            font-size: 16px;
-            font-weight: 600;
-            transition: background 0.3s ease;
-            text-align: center;
-          }
-          .button:hover {
-            background: #CC0000;
-          }
-          .warning {
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 14px;
-            margin-top: 20px;
-          }
-          .footer {
-            text-align: center;
-            padding-top: 30px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.5);
-          }
-          .highlight {
-            color: #FF0000;
-            font-weight: 600;
-          }
-          a {
-            color: #FF0000;
-            text-decoration: none;
-          }
-          a:hover {
-            text-decoration: underline;
-          }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
+          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+          .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+          .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
+          .content { padding: 20px 0; }
+          .content p { margin-bottom: 15px; }
+          .button { display: inline-block; padding: 14px 32px; background: #FF0000; color: white; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; transition: background 0.3s ease; text-align: center; }
+          .button:hover { background: #CC0000; }
+          .warning { color: rgba(255, 255, 255, 0.7); font-size: 14px; margin-top: 20px; }
+          .footer { text-align: center; padding-top: 30px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+          .highlight { color: #FF0000; font-weight: 600; }
+          a { color: #FF0000; text-decoration: none; }
+          a:hover { text-decoration: underline; }
           @media only screen and (max-width: 600px) {
-            .container {
-              margin: 20px;
-              padding: 20px;
-            }
-            .header h1 {
-              font-size: 22px;
-            }
-            .button {
-              display: block;
-              width: 100%;
-            }
+            .container { margin: 20px; padding: 20px; }
+            .header h1 { font-size: 22px; }
+            .button { display: block; width: 100%; }
           }
         </style>
       </head>
@@ -214,7 +313,7 @@ router.post('/forgot-password', async (req, res) => {
       </html>
     `;
 
-    await sendEmail(user.email, subject, html); // Updated to use html instead of text
+    await sendEmail(user.email, subject, html);
     res.json({ msg: 'Password reset link sent to your email' });
   } catch (err) {
     console.error(err);
@@ -222,7 +321,6 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// Reset Password - Change password with token
 router.post('/reset-password/:token', async (req, res) => {
   const { token } = req.params;
   const { password } = req.body;
@@ -249,10 +347,9 @@ router.post('/reset-password/:token', async (req, res) => {
   }
 });
 
-// Get user's friends
 router.get('/friends', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).populate('friends', 'username online');
+    const user = await User.findById(req.user).populate('friends', 'username online');
     res.json(user.friends);
   } catch (err) {
     console.error(err);
@@ -260,20 +357,19 @@ router.get('/friends', auth, async (req, res) => {
   }
 });
 
-// Add a friend
 router.post('/add-friend', auth, async (req, res) => {
   const { friendUsername } = req.body;
   try {
     const friend = await User.findOne({ username: friendUsername });
     if (!friend) return res.status(404).json({ msg: 'User not found' });
-    if (friend._id.toString() === req.user.userId) return res.status(400).json({ msg: 'Cannot add yourself' });
+    if (friend._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot add yourself' });
 
-    const user = await User.findById(req.user.userId);
+    const user = await User.findById(req.user);
     if (user.friends.includes(friend._id)) return res.status(400).json({ msg: 'Already friends' });
 
     user.friends.push(friend._id);
     await user.save();
-    const updatedFriends = await User.findById(req.user.userId).populate('friends', 'username online');
+    const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
     res.json(updatedFriends.friends);
   } catch (err) {
     console.error(err);
@@ -303,7 +399,6 @@ router.post('/remove-friend', auth, async (req, res) => {
   }
 });
 
-// Update profile with status and privacy settings
 router.put('/profile', auth, async (req, res) => {
   const { bio, age, status, showOnlineStatus, allowFriendRequests } = req.body;
 
@@ -340,7 +435,6 @@ router.put('/profile', auth, async (req, res) => {
   }
 });
 
-// Get profile with all new fields
 router.get('/profile', auth, async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ msg: 'Only registered users have profiles' });
@@ -348,8 +442,8 @@ router.get('/profile', auth, async (req, res) => {
     const user = await User.findById(req.user)
       .select('-password')
       .populate('friends', 'username online status')
-      .populate('friendRequests', 'username') // If friend requests are used
-      .populate('blockedUsers', 'username'); // Populate blockedUsers
+      .populate('friendRequests', 'username')
+      .populate('blockedUsers', 'username');
     if (!user) return res.status(404).json({ msg: 'User not found' });
 
     res.json({
@@ -361,7 +455,7 @@ router.get('/profile', auth, async (req, res) => {
       status: user.status,
       privacy: user.privacy,
       friends: user.friends,
-      friendRequests: user.friendRequests, // Added for consistency
+      friendRequests: user.friendRequests,
       blockedUsers: user.blockedUsers,
     });
   } catch (err) {
@@ -402,7 +496,6 @@ router.delete('/delete-account', auth, async (req, res) => {
   }
 });
 
-// Block a user
 router.post('/block-user', auth, async (req, res) => {
   const { username } = req.body;
   try {
@@ -423,7 +516,6 @@ router.post('/block-user', auth, async (req, res) => {
   }
 });
 
-// Unblock a user
 router.post('/unblock-user', auth, async (req, res) => {
   const { userId } = req.body;
   try {
@@ -441,7 +533,6 @@ router.post('/unblock-user', auth, async (req, res) => {
   }
 });
 
-// Get blocked users with details
 router.get('/blocked-users', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user).populate('blockedUsers', 'username');
@@ -453,6 +544,7 @@ router.get('/blocked-users', auth, async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
+
 router.post('/increment-messages', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user);
