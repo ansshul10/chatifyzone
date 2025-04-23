@@ -5,6 +5,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   username: { type: String, required: true, unique: true, minlength: 3, maxlength: 20 },
   password: { type: String },
+  faceDescriptor: { type: [Number], default: undefined }, // Store face descriptor
   online: { type: Boolean, default: false },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date },
