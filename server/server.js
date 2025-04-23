@@ -1,6 +1,8 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const chatRoutes = require('./routes/chat');
@@ -9,6 +11,7 @@ const cors = require('cors');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
+const Group = require('./models/Group');
 require('dotenv').config();
 
 const app = express();
@@ -19,8 +22,17 @@ const io = socketIo(server, {
 
 connectDB();
 
-app.use(cors());
+app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:3000', credentials: true }));
 app.use(express.json());
+app.use(
+  session({
+    secret: process.env.JWT_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
+    cookie: { secure: process.env.NODE_ENV === 'production' },
+  })
+);
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/group', groupRoutes);
@@ -185,21 +197,148 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('addReaction', async ({ messageId, emoji, userId }) => {
+  socket.on('joinGroup', async ({ groupId, userId }) => {
     try {
-      const message = await Message.findById(messageId);
+      const group = await Group.findById(groupId);
+      if (!group) return socket.emit('error', { msg: 'Group not found' });
+      if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
+
+      socket.join(groupId);
+      socket.emit('loadGroupMessages', { groupId, messages: group.messages });
+    } catch (err) {
+      console.error('Error joining group:', err);
+      socket.emit('error', { msg: 'Failed to join group' });
+    }
+  });
+
+  socket.on('sendGroupMessage', async ({ groupId, userId, content, sender, createdAt }) => {
+    try {
+      if (!groupId || !userId || !content || !sender) return socket.emit('error', { msg: 'Missing required fields' });
+
+      const group = await Group.findById(groupId);
+      if (!group) return socket.emit('error', { msg: 'Group not found' });
+      if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
+
+      const senderData = userId.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: userId }) : await User.findById(userId);
+      const senderUsername = senderData ? senderData.username : 'Unknown';
+
+      const message = { sender: sender.toString(), content, createdAt: new Date(createdAt), reactions: {}, username: senderUsername };
+      group.messages.push(message);
+      await group.save();
+
+      const newMessage = group.messages[group.messages.length - 1];
+      io.to(groupId).emit('receiveGroupMessage', { ...message, groupId, _id: newMessage._id });
+    } catch (err) {
+      console.error('Error sending group message:', err);
+      socket.emit('error', { msg: 'Failed to send group message' });
+    }
+  });
+
+  socket.on('editGroupMessage', async ({ groupId, messageId, content, userId }) => {
+    try {
+      const group = await Group.findById(groupId);
+      if (!group) return socket.emit('error', { msg: 'Group not found' });
+
+      const message = group.messages.id(messageId);
       if (!message) return socket.emit('error', { msg: 'Message not found' });
+      if (message.sender.toString() !== userId) return socket.emit('error', { msg: 'Only the sender can edit the message' });
 
-      message.reactions = message.reactions || new Map();
-      const currentCount = message.reactions.get(emoji) || 0;
-      message.reactions.set(emoji, currentCount + 1);
-      await message.save();
+      message.content = content;
+      message.edited = true;
+      await group.save();
 
-      io.to(message.sender).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
-      io.to(message.receiver).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+      io.to(groupId).emit('groupMessageEdited', { groupId, messageId, content, edited: true });
+    } catch (err) {
+      console.error('Error editing group message:', err);
+      socket.emit('error', { msg: 'Failed to edit group message' });
+    }
+  });
+
+  socket.on('deleteGroupMessage', async ({ groupId, messageId, userId }) => {
+    try {
+      const group = await Group.findById(groupId);
+      if (!group) return socket.emit('error', { msg: 'Group not found' });
+
+      const message = group.messages.id(messageId);
+      if (!message) return socket.emit('error', { msg: 'Message not found' });
+      if (message.sender.toString() !== userId) return socket.emit('error', { msg: 'Only the sender can delete the message' });
+
+      group.messages.pull(messageId);
+      await group.save();
+
+      io.to(groupId).emit('groupMessageDeleted', { groupId, messageId });
+    } catch (err) {
+      console.error('Error deleting group message:', err);
+      socket.emit('error', { msg: 'Failed to delete group message' });
+    }
+  });
+
+  socket.on('addReaction', async ({ messageId, emoji, userId, groupId }) => {
+    try {
+      if (groupId) {
+        const group = await Group.findById(groupId);
+        if (!group) return socket.emit('error', { msg: 'Group not found' });
+        if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
+
+        const message = group.messages.id(messageId);
+        if (!message) return socket.emit('error', { msg: 'Message not found' });
+
+        message.reactions = message.reactions || new Map();
+        const currentCount = message.reactions.get(emoji) || 0;
+        message.reactions.set(emoji, currentCount + 1);
+        await group.save();
+
+        io.to(groupId).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+      } else {
+        const message = await Message.findById(messageId);
+        if (!message) return socket.emit('error', { msg: 'Message not found' });
+        if (![message.sender.toString(), message.receiver.toString()].includes(userId)) return socket.emit('error', { msg: 'Unauthorized' });
+
+        message.reactions = message.reactions || new Map();
+        const currentCount = message.reactions.get(emoji) || 0;
+        message.reactions.set(emoji, currentCount + 1);
+        await message.save();
+
+        io.to(message.sender).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+        io.to(message.receiver).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+      }
     } catch (err) {
       console.error('Error adding reaction:', err);
       socket.emit('error', { msg: 'Failed to add reaction' });
+    }
+  });
+
+  socket.on('leaveGroup', async ({ groupId, userId }) => {
+    try {
+      const group = await Group.findById(groupId);
+      if (!group) return socket.emit('error', { msg: 'Group not found' });
+      if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
+      if (group.creator === userId) return socket.emit('error', { msg: 'Creator cannot leave the group; delete it instead' });
+
+      group.members = group.members.filter((member) => member !== userId);
+      await group.save();
+
+      socket.leave(groupId);
+      io.to(groupId).emit('groupUpdate', group);
+      socket.emit('actionResponse', { type: 'leaveGroup', success: true, msg: 'Left group successfully' });
+    } catch (err) {
+      console.error('Error leaving group:', err);
+      socket.emit('error', { msg: 'Failed to leave group' });
+    }
+  });
+
+  socket.on('deleteGroup', async ({ groupId, userId }) => {
+    try {
+      const group = await Group.findById(groupId);
+      if (!group) return socket.emit('error', { msg: 'Group not found' });
+      if (group.creator !== userId) return socket.emit('error', { msg: 'Only the creator can delete the group' });
+
+      await Group.deleteOne({ _id: groupId });
+      io.to(groupId).emit('groupUpdate', { _id: groupId, deleted: true });
+      socket.emit('actionResponse', { type: 'deleteGroup', success: true, msg: 'Group deleted successfully' });
+    } catch (err) {
+      console.error('Error deleting group:', err);
+      socket.emit('error', { msg: 'Failed to delete group' });
     }
   });
 
@@ -252,7 +391,6 @@ io.on('connection', (socket) => {
       if (receiver.blockedUsers.includes(userId)) {
         return socket.emit('error', { msg: 'You are blocked by this user' });
       }
-      // Explicitly check privacy setting, default to true if undefined
       const allowFriendRequests = receiver.privacy?.allowFriendRequests ?? true;
       if (!allowFriendRequests) {
         return socket.emit('error', { msg: 'This user is not accepting friend requests' });
@@ -273,10 +411,7 @@ io.on('connection', (socket) => {
     try {
       const userUpdate = await User.findByIdAndUpdate(
         userId,
-        {
-          $pull: { friendRequests: friendId },
-          $push: { friends: friendId }
-        },
+        { $pull: { friendRequests: friendId }, $push: { friends: friendId } },
         { new: true }
       );
       if (!userUpdate) return socket.emit('error', { msg: 'User not found' });
@@ -291,10 +426,7 @@ io.on('connection', (socket) => {
       const user = await User.findById(userId).populate('friendRequests', 'username').populate('friends', 'username');
       const friend = await User.findById(friendId).populate('friends', 'username');
 
-      const updatedFriendRequests = user.friendRequests.map((req) => ({
-        _id: req._id.toString(),
-        username: req.username,
-      }));
+      const updatedFriendRequests = user.friendRequests.map((req) => ({ _id: req._id.toString(), username: req.username }));
       const updatedUserFriends = user.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
       const updatedFriendFriends = friend.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
 
@@ -319,11 +451,7 @@ io.on('connection', (socket) => {
       if (!userUpdate) return socket.emit('error', { msg: 'User not found' });
 
       const user = await User.findById(userId).populate('friendRequests', 'username');
-
-      const updatedFriendRequests = user.friendRequests.map((req) => ({
-        _id: req._id.toString(),
-        username: req.username,
-      }));
+      const updatedFriendRequests = user.friendRequests.map((req) => ({ _id: req._id.toString(), username: req.username }));
 
       socket.emit('friendRequestsUpdate', updatedFriendRequests);
       socket.emit('actionResponse', { type: 'declineFriendRequest', success: true, msg: 'Friend request declined', friendId });
