@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaKey, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint, FaCamera } from 'react-icons/fa';
+import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint, FaCamera } from 'react-icons/fa';
 import { startAuthentication } from '@simplewebauthn/browser';
-import * as faceapi from 'face-api.js'; // Import faceapi
+import * as faceapi from 'face-api.js';
 import api from '../utils/api';
-import { loadModels, getFaceDescriptorWithLandmarks } from '../utils/faceApi';
 import Navbar from './Navbar';
 
 const Login = () => {
@@ -14,85 +13,147 @@ const Login = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [loginMethod, setLoginMethod] = useState('password'); // password, webauthn, or face
+  const [loginMethod, setLoginMethod] = useState('password');
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [faceLoginAttempts, setFaceLoginAttempts] = useState(0);
-  const [distance, setDistance] = useState(null); // Euclidean distance feedback
-  const MAX_FACE_ATTEMPTS = 3;
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [faceApiLoaded, setFaceApiLoaded] = useState(false);
+  const [captureStatus, setCaptureStatus] = useState('PENDING');
+  const [faceCaptured, setFaceCaptured] = useState(false);
+  const [counter, setCounter] = useState(5);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const faceApiIntervalRef = useRef(null);
   const navigate = useNavigate();
+  const videoWidth = 320;
+  const videoHeight = 240;
+
+  const loadModels = async () => {
+    const uri = '/models';
+    await faceapi.nets.ssdMobilenetv1.loadFromUri(uri);
+    await faceapi.nets.faceLandmark68Net.loadFromUri(uri);
+    await faceapi.nets.faceRecognitionNet.loadFromUri(uri);
+  };
 
   useEffect(() => {
     if (loginMethod === 'face') {
-      const setupCamera = async () => {
-        try {
-          await loadModels();
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            setIsCameraActive(true);
-            startFaceDetection();
-          }
-        } catch (err) {
-          setError('Failed to access camera or load models: ' + err.message);
-        }
-      };
-      setupCamera();
+      loadModels()
+        .then(() => setModelsLoaded(true))
+        .catch(err => {
+          console.error('Model loading error:', err);
+          setError('Failed to load face recognition models.');
+        });
     }
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
-        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-        setIsCameraActive(false);
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+      }
+      setIsCameraActive(false);
+      if (faceApiIntervalRef.current) {
+        clearInterval(faceApiIntervalRef.current);
       }
     };
   }, [loginMethod]);
 
-  const startFaceDetection = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+  useEffect(() => {
+    if (captureStatus === 'SUCCESS' && faceCaptured) {
+      const counterInterval = setInterval(() => {
+        setCounter(prev => prev - 1);
+      }, 1000);
 
-    const displaySize = { width: video.width, height: video.height };
-    faceapi.matchDimensions(canvas, displaySize);
+      if (counter === 0) {
+        if (videoRef.current && videoRef.current.srcObject) {
+          const tracks = videoRef.current.srcObject.getTracks();
+          tracks.forEach(track => track.stop());
+        }
+        clearInterval(counterInterval);
+        if (faceApiIntervalRef.current) {
+          clearInterval(faceApiIntervalRef.current);
+        }
+        handleFaceLogin();
+      }
 
-    const detectFace = async () => {
-      if (!isCameraActive) return;
+      return () => clearInterval(counterInterval);
+    }
+    setCounter(5);
+  }, [captureStatus, faceCaptured, counter]);
+
+  const getLocalUserVideo = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          setIsCameraActive(true);
+        };
+      } else {
+        throw new Error('Video element not found');
+      }
+    } catch (err) {
+      console.error('Error accessing camera:', err);
+      setError('Failed to access camera: ' + err.message);
+      setIsCameraActive(false);
+    }
+  };
+
+  const captureFace = async () => {
+    if (!videoRef.current || !canvasRef.current) {
+      console.error('Video or canvas element not found');
+      setError('Video or canvas element not found');
+      return;
+    }
+
+    faceapi.matchDimensions(canvasRef.current, videoRef.current);
+    const faceApiInterval = setInterval(async () => {
+      if (!videoRef.current || !videoRef.current.srcObject) {
+        console.error('Video stream not available');
+        clearInterval(faceApiInterval);
+        setError('Video stream not available');
+        return;
+      }
+
       try {
-        const detections = await getFaceDescriptorWithLandmarks(video);
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const detections = await faceapi
+          .detectAllFaces(videoRef.current)
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+        const resizedDetections = faceapi.resizeResults(detections, {
+          width: videoWidth,
+          height: videoHeight,
+        });
 
-        if (detections) {
-          const { landmarks } = detections;
+        if (!canvasRef.current) {
+          return;
+        }
 
-          // Draw face frame
-          const faceBox = detections.detection.box;
-          const frameWidth = 200;
-          const frameHeight = 250;
-          const frameX = (canvas.width - frameWidth) / 2;
-          const frameY = (canvas.height - frameHeight) / 2;
-          ctx.strokeStyle = faceBox.x >= frameX && faceBox.x + faceBox.width <= frameX + frameWidth &&
-                           faceBox.y >= frameY && faceBox.y + faceBox.height <= frameY + frameHeight
-                           ? 'green' : 'red';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(frameX, frameY, frameWidth, frameHeight);
+        const ctx = canvasRef.current.getContext('2d');
+        ctx.clearRect(0, 0, videoWidth, videoHeight);
+        faceapi.draw.drawDetections(canvasRef.current, resizedDetections);
+        faceapi.draw.drawFaceLandmarks(canvasRef.current, resizedDetections);
 
-          // Draw facial landmarks
-          const landmarkPositions = landmarks.positions;
-          ctx.fillStyle = 'cyan';
-          landmarkPositions.forEach(point => {
-            ctx.beginPath();
-            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
-            ctx.fill();
-          });
+        if (resizedDetections.length > 0) {
+          const descriptor = resizedDetections[0].descriptor;
+          if (!descriptor) {
+            throw new Error('Face descriptor is missing');
+          }
+          setFaceCaptured(true);
+          setCaptureStatus('SUCCESS');
+          localStorage.setItem('tempFaceDescriptor', JSON.stringify(Array.from(descriptor)));
+        } else {
+          setCaptureStatus('FAILED');
+        }
+
+        if (!faceApiLoaded) {
+          setFaceApiLoaded(true);
         }
       } catch (err) {
         console.error('Face detection error:', err);
+        setError('Failed to detect face: ' + err.message);
+        setCaptureStatus('FAILED');
+        clearInterval(faceApiInterval);
       }
-      requestAnimationFrame(detectFace);
-    };
-    detectFace();
+    }, 1000 / 15);
+    faceApiIntervalRef.current = faceApiInterval;
   };
 
   const handleSubmit = async (e) => {
@@ -117,7 +178,7 @@ const Login = () => {
       setSuccess(true);
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
-      setError(err.response?.data.msg || 'Invalid credentials');
+      setError(err.response?.data.msg || 'Login failed');
     }
   };
 
@@ -134,7 +195,7 @@ const Login = () => {
     setSuccess(false);
 
     if (!email.trim()) {
-      setError('Please enter your email to use biometric login');
+      setError('Please personally enter your email to use biometric login');
       return;
     }
 
@@ -162,61 +223,32 @@ const Login = () => {
   const handleFaceLogin = async () => {
     setError('');
     setSuccess(false);
-    setDistance(null);
 
     if (!email.trim()) {
-      setError('Please enter your email to use face login');
+      setError('Please enter your email to use face recognition login');
       return;
     }
 
-    if (!isCameraActive) {
-      setError('Camera is not active. Please enable face login.');
-      return;
-    }
-
-    if (faceLoginAttempts >= MAX_FACE_ATTEMPTS) {
-      setError('Too many failed face login attempts. Please try another method or contact support.');
+    const faceDescriptor = JSON.parse(localStorage.getItem('tempFaceDescriptor'));
+    if (!faceDescriptor) {
+      setError('Face descriptor not found. Please capture your face again.');
       return;
     }
 
     try {
-      const detections = await getFaceDescriptorWithLandmarks(videoRef.current);
-      if (!detections) {
-        setError('No face detected. Please position your face within the frame.');
-        setFaceLoginAttempts(prev => prev + 1);
-        return;
-      }
-
-      const { descriptor } = detections;
-      const frameWidth = 200;
-      const frameHeight = 250;
-      const frameX = (videoRef.current.width - frameWidth) / 2;
-      const frameY = (videoRef.current.height - frameHeight) / 2;
-      const faceBox = detections.detection.box;
-
-      if (faceBox.x < frameX || faceBox.x + faceBox.width > frameX + frameWidth ||
-          faceBox.y < frameY || faceBox.y + faceBox.height > frameY + frameHeight) {
-        setError('Please position your face within the green frame.');
-        setFaceLoginAttempts(prev => prev + 1);
-        return;
-      }
-
-      const { data } = await api.post('/auth/face/login', { email, descriptor });
+      const { data } = await api.post('/auth/face/login', {
+        email,
+        descriptor: faceDescriptor,
+      });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
+      localStorage.removeItem('tempFaceDescriptor');
       setSuccess(true);
-      setFaceLoginAttempts(0);
-      setDistance(data.distance); // Display distance from backend
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
       console.error('Face login error:', err);
-      const errorMsg = err.response?.data.msg || 'Face login failed. Ensure you are registered with face recognition.';
-      setError(errorMsg);
-      setDistance(err.response?.data.distance || null);
-      if (errorMsg === 'Invalid face') {
-        setFaceLoginAttempts(prev => prev + 1);
-      }
+      setError(err.response?.data.msg || 'Face recognition login failed.');
     }
   };
 
@@ -255,6 +287,31 @@ const Login = () => {
     visible: { opacity: 1, y: 0, transition: { duration: 0.5, delay: 0.5 } },
   };
 
+  const videoContainerStyle = {
+    position: 'relative',
+    width: '320px',
+    height: '240px',
+    margin: '0 auto',
+  };
+
+  const videoStyle = {
+    width: '100%',
+    height: '100%',
+    objectFit: 'fill',
+    borderRadius: '10px',
+  };
+
+  const canvasStyle = {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    zIndex: 10,
+    pointerEvents: 'none',
+    display: 'block',
+  };
+
   return (
     <>
       <Navbar />
@@ -273,24 +330,24 @@ const Login = () => {
               Welcome Back to Chatify
             </h1>
             <p className={`text-base sm:text-lg ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} leading-relaxed text-center lg:text-left`}>
-              Log in to continue your seamless communication experience. Connect with friends, enjoy private messaging, and access premium features.
+              Log in to reconnect with friends, continue your conversations, and enjoy secure messaging.
             </p>
             <div className="space-y-4 sm:space-y-6">
-              <motion.div whileHover={{ x: 10 }} className="flex items-center space-x-4 justify-center lg:justify-start">
-                <FaCheckCircle className="text-red-500" />
-                <span>Quick Access</span>
-              </motion.div>
               <motion.div whileHover={{ x: 10 }} className="flex items-center space-x-4 justify-center lg:justify-start">
                 <FaCheckCircle className="text-red-500" />
                 <span>Secure Login</span>
               </motion.div>
               <motion.div whileHover={{ x: 10 }} className="flex items-center space-x-4 justify-center lg:justify-start">
                 <FaCheckCircle className="text-red-500" />
-                <span>Resume Chatting Instantly</span>
+                <span>Fast Access</span>
+              </motion.div>
+              <motion.div whileHover={{ x: 10 }} className="flex items-center space-x-4 justify-center lg:justify-start">
+                <FaCheckCircle className="text-red-500" />
+                <span>Stay Connected</span>
               </motion.div>
             </div>
             <motion.div whileHover={{ scale: 1.05 }} className="mt-6 flex items-center space-x-4 justify-center lg:justify-start">
-              <span className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Ready to Connect?</span>
+              <span className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Ready to Chat?</span>
               <FaArrowRight className="text-red-500 text-xl sm:text-2xl" />
             </motion.div>
           </motion.div>
@@ -303,7 +360,7 @@ const Login = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => { setLoginMethod('password'); setFaceLoginAttempts(0); setDistance(null); }}
+                  onClick={() => { setLoginMethod('password'); setFaceApiLoaded(false); setCaptureStatus('PENDING'); setIsCameraActive(false); setCounter(5); setFaceCaptured(false); }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'password' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Password
@@ -311,7 +368,7 @@ const Login = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => { setLoginMethod('webauthn'); setFaceLoginAttempts(0); setDistance(null); }}
+                  onClick={() => { setLoginMethod('webauthn'); setFaceApiLoaded(false); setCaptureStatus('PENDING'); setIsCameraActive(false); setCounter(5); setFaceCaptured(false); }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face ID
@@ -319,36 +376,122 @@ const Login = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => { setLoginMethod('face'); setFaceLoginAttempts(0); setDistance(null); }}
+                  onClick={() => { setLoginMethod('face'); setFaceApiLoaded(false); setCaptureStatus('PENDING'); setIsCameraActive(false); setCounter(5); setFaceCaptured(false); }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'face' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face Recognition
                 </motion.button>
               </div>
               {loginMethod === 'face' && (
-                <div className="mb-6 flex justify-center relative">
-                  <video ref={videoRef} autoPlay muted className="rounded-lg border-2 border-gray-700" width="320" height="240" />
-                  <canvas ref={canvasRef} className="absolute top-0 left-0" width="320" height="240" />
-                  <div className="absolute bottom-2 left-2 text-sm text-white bg-black bg-opacity-50 px-2 py-1 rounded">
-                    {distance !== null ? `Distance: ${distance.toFixed(3)}` : 'Position face in frame'}
+                <div className="flex flex-col items-center gap-6">
+                  {!isCameraActive && !modelsLoaded && (
+                    <h3 className="text-center text-xl font-bold text-gray-900 ">
+                      <span className="block">Attempting to Log In With Your Face.</span>
+                      <span className="block text-red-500 mt-2 ">Loading Models...</span>
+                    </h3>
+                  )}
+                  {!isCameraActive && modelsLoaded && (
+                    <h3 className="text-center text-xl font-bold text-gray-900 ">
+                      <span className="block text-red-500 mt-2 ">
+                        Please Capture Your Face to Log In.
+                      </span>
+                    </h3>
+                  )}
+                  {isCameraActive && captureStatus === 'SUCCESS' && faceCaptured && (
+                    <h3 className="text-center text-xl font-bold text-gray-900 ">
+                      <span className="block text-red-500 mt-2 ">
+                        We've successfully captured your face!
+                      </span>
+                      <span className="block text-red-500 mt-2">
+                        Please stay {counter} more seconds...
+                      </span>
+                    </h3>
+                  )}
+                  {isCameraActive && captureStatus === 'FAILED' && (
+                    <h3 className="text-center text-xl font-bold text-red-500">
+                      <span className="block mt-4">
+                        We could not capture your face.
+                      </span>
+                    </h3>
+                  )}
+                  {isCameraActive && !faceApiLoaded && captureStatus === 'PENDING' && (
+                    <h3 className="text-center text-xl font-bold text-gray-900">
+                      <span className="block mt-4">Capturing Face...</span>
+                    </h3>
+                  )}
+                  <div style={videoContainerStyle}>
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      muted
+                      style={{
+                        ...videoStyle,
+                        display: isCameraActive ? 'block' : 'none',
+                      }}
+                      onPlay={captureFace}
+                    />
+                    <canvas
+                      ref={canvasRef}
+                      style={{
+                        ...canvasStyle,
+                        display: isCameraActive ? 'block' : 'none',
+                      }}
+                    />
                   </div>
+                  {!isCameraActive && modelsLoaded && (
+                    <motion.button
+                      whileHover="hover"
+                      whileTap="tap"
+                      variants={buttonVariants}
+                      onClick={getLocalUserVideo}
+                      className={`w-full p-3 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 mt-2 mb-4 `}
+                    >
+                      <FaCamera />
+                      <span>Capture my face </span>
+                    </motion.button>
+                  )}
+                  {!isCameraActive && !modelsLoaded && (
+                    <button
+                      disabled
+                      className={`w-full p-4 rounded-lg font-semibold shadow-lg cursor-not-allowed ${isDarkMode ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-500'} flex items-center justify-center space-x-2 mt-2 mb-4`}
+                    >
+                      <svg
+                        aria-hidden="true"
+                        role="status"
+                        className="inline mr-2 w-4 h-4 text-gray-200 animate-spin "
+                        viewBox="0 0 100 101"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z"
+                          fill="currentColor"
+                        />
+                        <path
+                          d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z"
+                          fill="#1C64F2"
+                        />
+                      </svg>
+                      <span>Please wait while models are loading...</span>
+                    </button>
+                  )}
                 </div>
               )}
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="relative">
                   <motion.div
                     whileHover="hover"
                     whileFocus="focus"
                     variants={inputVariants}
-                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
+                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'} mb-4 `}
                   >
-                    <FaEnvelope className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
+                    <FaEnvelope className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3 `} />
                     <input
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="Your Email"
-                      className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
+                      className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none `}
                       required
                     />
                   </motion.div>
@@ -420,7 +563,7 @@ const Login = () => {
                   className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                 >
                   <FaGoogle />
-                  <span>Login with Google</span>
+                  <span>Log In with Google</span>
                 </motion.button>
                 <motion.button
                   type="button"
@@ -431,7 +574,7 @@ const Login = () => {
                   className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                 >
                   <FaApple />
-                  <span>Login with Apple</span>
+                  <span>Log In with Apple</span>
                 </motion.button>
                 {loginMethod === 'webauthn' && (
                   <motion.button
@@ -443,33 +586,16 @@ const Login = () => {
                     className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                   >
                     <FaFingerprint />
-                    <span>Login with Face ID</span>
-                  </motion.button>
-                )}
-                {loginMethod === 'face' && (
-                  <motion.button
-                    type="button"
-                    whileHover="hover"
-                    whileTap="tap"
-                    variants={buttonVariants}
-                    onClick={handleFaceLogin}
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
-                    disabled={success || faceLoginAttempts >= MAX_FACE_ATTEMPTS}
-                  >
-                    <FaCamera />
-                    <span>Login with Face Recognition</span>
+                    <span>Log In with Face ID</span>
                   </motion.button>
                 )}
               </form>
               <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} space-y-2`}>
                 <div>
-                  <a href="/forgot-password" className="text-red-500 hover:underline flex items-center justify-center space-x-1">
-                    <FaKey className="text-sm" />
-                    <span>Forgot Password?</span>
-                  </a>
+                  Don't have an account? <a href="/signup" className="text-red-500 hover:underline">Sign up here</a>
                 </div>
                 <div>
-                  Don’t have an account? <a href="/signup" className="text-red-500 hover:underline">Sign up here</a>
+                  Forgot your password? <a href="/forgot-password" className="text-red-500 hover:underline">Reset it here</a>
                 </div>
               </div>
             </div>
