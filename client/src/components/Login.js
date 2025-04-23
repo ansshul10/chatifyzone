@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaKey, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint } from 'react-icons/fa';
+import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaKey, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint, FaCamera } from 'react-icons/fa';
 import { startAuthentication } from '@simplewebauthn/browser';
 import api from '../utils/api';
+import { loadModels, getFaceDescriptor } from '../utils/faceApi';
 import Navbar from './Navbar';
 
 const Login = () => {
@@ -12,15 +13,47 @@ const Login = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [loginMethod, setLoginMethod] = useState('password'); // password, webauthn, or face
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const videoRef = useRef(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (loginMethod === 'face') {
+      const setupCamera = async () => {
+        try {
+          await loadModels();
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            setIsCameraActive(true);
+          }
+        } catch (err) {
+          setError('Failed to access camera or load models: ' + err.message);
+        }
+      };
+      setupCamera();
+    }
+    // Cleanup camera on unmount or method change
+    return () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+        setIsCameraActive(false);
+      }
+    };
+  }, [loginMethod]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setSuccess(false);
 
-    if (!email.trim() || !password.trim()) {
-      setError('Please enter both email and password');
+    if (!email.trim()) {
+      setError('Email is required');
+      return;
+    }
+    if (loginMethod === 'password' && !password.trim()) {
+      setError('Password is required');
       return;
     }
 
@@ -38,10 +71,12 @@ const Login = () => {
 
   const handleGoogleLogin = () => {
     alert('Google login is not implemented. Please use email and password.');
+    // TODO: Implement Google OAuth with Firebase or passport.js
   };
 
   const handleAppleLogin = () => {
     alert('Apple login is not implemented. Please use email and password.');
+    // TODO: Implement Apple Sign-In with appleid.apple.com
   };
 
   const handleBiometricLogin = async () => {
@@ -54,20 +89,14 @@ const Login = () => {
     }
 
     try {
-      // Check if platform authenticator is available
       const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       if (!isAvailable) {
         throw new Error('This device does not support Face ID or biometric authentication.');
       }
 
-      // Step 1: Request authentication options
       const response = await api.post('/auth/webauthn/login/begin', { email });
       const publicKey = response.data;
-
-      // Step 2: Start WebAuthn authentication (prompts Face ID)
       const credential = await startAuthentication(publicKey);
-
-      // Step 3: Complete authentication
       const { data } = await api.post('/auth/webauthn/login/complete', { email, credential });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
@@ -76,13 +105,40 @@ const Login = () => {
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
       console.error('Biometric login error:', err);
-      if (err.response) {
-        setError(err.response.data.msg || 'Biometric login failed.');
-      } else if (err.message.includes('network')) {
-        setError('Cannot connect to server. Ensure the backend is running on http://localhost:5000.');
-      } else {
-        setError(err.message || 'Biometric login failed. Ensure your device supports Face ID or try email/password.');
+      setError(err.response?.data.msg || err.message || 'Biometric login failed.');
+    }
+  };
+
+  const handleFaceLogin = async () => {
+    setError('');
+    setSuccess(false);
+
+    if (!email.trim()) {
+      setError('Please enter your email to use face login');
+      return;
+    }
+
+    if (!isCameraActive) {
+      setError('Camera is not active. Please enable face login.');
+      return;
+    }
+
+    try {
+      const descriptor = await getFaceDescriptor(videoRef.current);
+      if (!descriptor) {
+        setError('No face detected. Please position your face in front of the camera.');
+        return;
       }
+
+      const { data } = await api.post('/auth/face/login', { email, descriptor });
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      api.defaults.headers.common['x-auth-token'] = data.token;
+      setSuccess(true);
+      setTimeout(() => navigate('/'), 2000);
+    } catch (err) {
+      console.error('Face login error:', err);
+      setError(err.response?.data.msg || 'Face login failed. Ensure you are registered with face recognition.');
     }
   };
 
@@ -165,6 +221,37 @@ const Login = () => {
               <h2 className={`text-2xl sm:text-3xl font-bold mb-6 sm:mb-8 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                 Log In to Your Account
               </h2>
+              <div className="flex justify-center space-x-4 mb-6">
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setLoginMethod('password')}
+                  className={`px-4 py-2 rounded-lg ${loginMethod === 'password' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+                >
+                  Password
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setLoginMethod('webauthn')}
+                  className={`px-4 py-2 rounded-lg ${loginMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+                >
+                  Face ID
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setLoginMethod('face')}
+                  className={`px-4 py-2 rounded-lg ${loginMethod === 'face' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+                >
+                  Face Recognition
+                </motion.button>
+              </div>
+              {loginMethod === 'face' && (
+                <div className="mb-6 flex justify-center">
+                  <video ref={videoRef} autoPlay muted className="rounded-lg border-2 border-gray-700" width="320" height="240" />
+                </div>
+              )}
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="relative">
                   <motion.div
@@ -184,25 +271,26 @@ const Login = () => {
                     />
                   </motion.div>
                 </div>
-                <div className="relative">
-                  <motion.div
-                    whileHover="hover"
-                    whileFocus="focus"
-                    variants={inputVariants}
-                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
-                  NEED ASSISTANCE FROM HERE
-                  >
-                    <FaLock className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Your Password"
-                      className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
-                      required
-                    />
-                  </motion.div>
-                </div>
+                {loginMethod === 'password' && (
+                  <div className="relative">
+                    <motion.div
+                      whileHover="hover"
+                      whileFocus="focus"
+                      variants={inputVariants}
+                      className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
+                    >
+                      <FaLock className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Your Password"
+                        className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
+                        required
+                      />
+                    </motion.div>
+                  </div>
+                )}
                 <AnimatePresence>
                   {error && (
                     <motion.div
@@ -229,16 +317,18 @@ const Login = () => {
                     </motion.div>
                   )}
                 </AnimatePresence>
-                <motion.button
-                  type="submit"
-                  whileHover="hover"
-                  whileTap="tap"
-                  variants={buttonVariants}
-                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'}`}
-                  disabled={success}
-                >
-                  Log In Now
-                </motion.button>
+                {loginMethod === 'password' && (
+                  <motion.button
+                    type="submit"
+                    whileHover="hover"
+                    whileTap="tap"
+                    variants={buttonVariants}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'}`}
+                    disabled={success}
+                  >
+                    Log In Now
+                  </motion.button>
+                )}
                 <motion.button
                   type="button"
                   whileHover="hover"
@@ -261,17 +351,32 @@ const Login = () => {
                   <FaApple />
                   <span>Login with Apple</span>
                 </motion.button>
-                <motion.button
-                  type="button"
-                  whileHover="hover"
-                  whileTap="tap"
-                  variants={buttonVariants}
-                  onClick={handleBiometricLogin}
-                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
-                >
-                  <FaFingerprint />
-                  <span>Login with Face ID</span>
-                </motion.button>
+                {loginMethod === 'webauthn' && (
+                  <motion.button
+                    type="button"
+                    whileHover="hover"
+                    whileTap="tap"
+                    variants={buttonVariants}
+                    onClick={handleBiometricLogin}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                  >
+                    <FaFingerprint />
+                    <span>Login with Face ID</span>
+                  </motion.button>
+                )}
+                {loginMethod === 'face' && (
+                  <motion.button
+                    type="button"
+                    whileHover="hover"
+                    whileTap="tap"
+                    variants={buttonVariants}
+                    onClick={handleFaceLogin}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                  >
+                    <FaCamera />
+                    <span>Login with Face Recognition</span>
+                  </motion.button>
+                )}
               </form>
               <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} space-y-2`}>
                 <div>
