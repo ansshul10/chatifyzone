@@ -15,7 +15,7 @@ const {
 
 const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
 const rpName = 'Chatify';
-const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:3000';
+const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
 
 const calculateEuclideanDistance = (arr1, arr2) => {
   if (!arr1 || !arr2 || arr1.length !== arr2.length) return Infinity;
@@ -73,7 +73,7 @@ router.post('/register', async (req, res) => {
 });
 
 router.post('/face/register', async (req, res) => {
-  const { email, username, descriptor } = req.body;
+  const { email, username, descriptors } = req.body;
 
   try {
     let user = await User.findOne({ $or: [{ email }, { username }] });
@@ -81,11 +81,12 @@ router.post('/face/register', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    if (!descriptor || !Array.isArray(descriptor) || descriptor.length !== 128) {
-      return res.status(400).json({ msg: 'Invalid face descriptor' });
+    if (!descriptors || !Array.isArray(descriptors) || descriptors.length !== 3 ||
+        descriptors.some(d => !Array.isArray(d) || d.length !== 128)) {
+      return res.status(400).json({ msg: 'Invalid face descriptors: Exactly 3 descriptors of 128 values each are required' });
     }
 
-    user = new User({ email, username, faceDescriptor: descriptor });
+    user = new User({ email, username, faceDescriptors: descriptors });
     await user.save();
 
     const payload = { userId: user.id };
@@ -107,7 +108,7 @@ router.post('/face/login', async (req, res) => {
       return res.status(400).json({ msg: 'User not found' });
     }
 
-    if (!user.faceDescriptor) {
+    if (!user.faceDescriptors || user.faceDescriptors.length === 0) {
       return res.status(400).json({ msg: 'This account does not have face recognition enabled' });
     }
 
@@ -115,15 +116,23 @@ router.post('/face/login', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid face descriptor' });
     }
 
-    const distance = calculateEuclideanDistance(user.faceDescriptor, descriptor);
-    if (distance > 0.6) {
-      return res.status(400).json({ msg: 'Face not recognized' });
+    const distances = user.faceDescriptors.map(storedDescriptor =>
+      calculateEuclideanDistance(storedDescriptor, descriptor)
+    );
+    const minDistance = Math.min(...distances);
+
+    if (minDistance > 0.4) {
+      return res.status(401).json({ msg: 'Invalid face', distance: minDistance });
     }
 
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    res.json({
+      token,
+      user: { id: user.id, email: user.email, username: user.username },
+      distance: minDistance
+    });
   } catch (err) {
     console.error('Face login error:', err);
     res.status(500).json({ msg: 'Server error' });
@@ -289,7 +298,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   try {
     if (req.user) {
-      const user = await User.findById(req.user).select('-password -faceDescriptor');
+      const user = await User.findById(req.user).select('-password -faceDescriptors');
       if (!user) {
         return res.status(404).json({ msg: 'User not found' });
       }
@@ -500,7 +509,7 @@ router.get('/profile', auth, async (req, res) => {
     if (!req.user) return res.status(401).json({ msg: 'Only registered users have profiles' });
 
     const user = await User.findById(req.user)
-      .select('-password -faceDescriptor')
+      .select('-password -faceDescriptors')
       .populate('friends', 'username online status')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
