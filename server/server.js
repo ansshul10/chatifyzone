@@ -1,13 +1,14 @@
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
+const { Server } = require('socket.io');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
+const mongoose = require('mongoose');
+const cors = require('cors');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const chatRoutes = require('./routes/chat');
 const groupRoutes = require('./routes/group');
-const cors = require('cors');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
@@ -16,27 +17,48 @@ require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: { origin: process.env.CLIENT_URL || 'http://localhost:3000', methods: ['GET', 'POST'] },
+const io = new Server(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
 });
 
+// Connect to MongoDB
 connectDB();
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:3000', credentials: true }));
+// Middleware
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true,
+}));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
-    secret: process.env.JWT_SECRET,
+    secret: process.env.SESSION_SECRET || 'your-session-secret',
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
-    cookie: { secure: process.env.NODE_ENV === 'production' },
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: 'sessions',
+    }),
+    cookie: {
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    },
   })
 );
+
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/group', groupRoutes);
 
+// Socket.IO Logic
 const userSocketMap = new Map();
 
 const getOnlineUsers = async () => {
@@ -512,5 +534,23 @@ io.on('connection', (socket) => {
   });
 });
 
+// Error Handling Middleware
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ msg: 'Server error' });
+});
+
+// Start Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Graceful Shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Closing server...');
+  server.close(() => {
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed.');
+      process.exit(0);
+    });
+  });
+});
