@@ -1,36 +1,36 @@
 import * as faceapi from 'face-api.js';
 
-const loadModels = async () => {
-  const MODEL_URL = '/models';
+import { canvas } from 'face-api.js';
+const { Canvas, Image, ImageData } = canvas;
+faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
+
+export const loadModels = async () => {
   try {
-    await Promise.all([
-      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-    ]);
+    await faceapi.nets.ssdMobilenetv1.loadFromUri('/models');
+    await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
+    await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
     console.log('Face-api.js models loaded');
-  } catch (err) {
-    console.error('Error loading face-api.js models:', err);
+  } catch (error) {
+    console.error('Error loading models:', error);
     throw new Error('Failed to load face recognition models');
   }
 };
 
-const getFaceDescriptor = async (videoElement) => {
+export const detectFace = async (videoElement) => {
   try {
     const detections = await faceapi
-      .detectSingleFace(videoElement, new faceapi.SsdMobilenetv1Options())
+      .detectSingleFace(videoElement)
       .withFaceLandmarks()
       .withFaceDescriptor();
-
-    if (!detections) {
-      throw new Error('No face detected');
-    }
-
-    return Array.from(detections.descriptor);
-  } catch (err) {
-    console.error('Error getting face descriptor:', err);
-    throw err;
+    return detections ? detections.descriptor : null;
+  } catch (error) {
+    console.error('Error detecting face:', error);
+    return null;
   }
 };
 
-export { loadModels, getFaceDescriptor };
+export const compareFaces = (descriptor1, descriptor2) => {
+  if (!descriptor1 || !descriptor2) return false;
+  const distance = faceapi.euclideanDistance(descriptor1, descriptor2);
+  return distance < 0.6; // Threshold for face match
+};
