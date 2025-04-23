@@ -32,5 +32,5 @@ export const detectFace = async (videoElement) => {
 export const compareFaces = (descriptor1, descriptor2) => {
   if (!descriptor1 || !descriptor2) return false;
   const distance = faceapi.euclideanDistance(descriptor1, descriptor2);
-  return distance < 0.6; // Threshold for face match
+  return distance < 0.4; // Threshold for face match
 };
