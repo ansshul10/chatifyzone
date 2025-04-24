@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,7 +24,7 @@ const Signup = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [customUser, setCustomUser] = useState(null);
   const [imageError, setImageError] = useState(null);
-  const [faceDescriptor, setFaceDescriptor] = useState(null); // Store a single descriptor
+  const [faceDescriptor, setFaceDescriptor] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const animationFrameRef = useRef(null);
@@ -86,7 +85,7 @@ const Signup = () => {
           setIsCameraActive(false);
           handleFaceSignup();
         }
-      }, 100); // Update every 100ms for smoother countdown
+      }, 100);
       return () => clearInterval(counterInterval);
     }
     setCounter(3);
@@ -141,7 +140,6 @@ const Signup = () => {
         if (detection) {
           const { detection: box, landmarks } = detection;
 
-          // Adjust coordinates to match video display
           const video = videoRef.current;
           const displayWidth = videoWidth;
           const displayHeight = videoHeight;
@@ -158,20 +156,17 @@ const Signup = () => {
             height: box.box.height * scaleY,
           };
 
-          // Draw red bounding box
           ctx.beginPath();
           ctx.lineWidth = 2;
           ctx.strokeStyle = 'red';
           ctx.rect(adjustedBox.x, adjustedBox.y, adjustedBox.width, adjustedBox.height);
           ctx.stroke();
 
-          // Draw confidence score
           const score = box.score.toFixed(2);
           ctx.font = '16px Arial';
           ctx.fillStyle = 'red';
           ctx.fillText(score, adjustedBox.x, adjustedBox.y - 5);
 
-          // Draw landmarks (green dots, no lines)
           if (landmarks && landmarks.positions) {
             const scaledLandmarks = landmarks.positions.map(point => ({
               x: point.x * scaleX,
@@ -261,32 +256,44 @@ const Signup = () => {
     setSuccess(false);
 
     if (!email.trim()) {
-      setError('Please enter your email to use biometric signup');
+      setError('Please enter your email to use fingerprint signup');
       return;
     }
     if (!username.trim()) {
-      setError('Please enter your username to use biometric signup');
+      setError('Please enter your username to use fingerprint signup');
       return;
     }
 
     try {
-      const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!isAvailable) {
-        throw new Error('This device does not support Face ID or biometric authentication.');
+      // Check if WebAuthn is supported
+      if (!window.PublicKeyCredential) {
+        throw new Error('WebAuthn is not supported in this browser.');
       }
 
+      // Check if platform authenticator is available
+      const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (!isAvailable) {
+        throw new Error('This device does not support fingerprint authentication.');
+      }
+
+      // Start WebAuthn registration
       const response = await api.post('/auth/webauthn/register/begin', { email, username });
       const publicKey = response.data;
+
+      // Trigger fingerprint prompt
       const credential = await startRegistration(publicKey);
+
+      // Complete registration
       const { data } = await api.post('/auth/webauthn/register/complete', { email, username, credential });
+
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
       setSuccess(true);
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
-      console.error('Biometric signup error:', err);
-      setError(err.response?.data.msg || err.message || 'Biometric signup failed.');
+      console.error('Fingerprint signup error:', err);
+      setError(err.response?.data.msg || err.message || 'Fingerprint signup failed. Please ensure your device has a fingerprint sensor and try again.');
     }
   };
 
@@ -336,7 +343,7 @@ const Signup = () => {
       const { data } = await api.post('/auth/face/register', {
         email,
         username,
-        descriptor, // Send single descriptor
+        descriptor,
       });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
@@ -537,7 +544,7 @@ const Signup = () => {
                   }}
                   className={`px-4 py-2 rounded-lg ${signupMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
-                  Face ID
+                  Fingerprint
                 </motion.button>
                 <motion.button
                   whileHover={{ scale: 1.1 }}
@@ -783,7 +790,7 @@ const Signup = () => {
                         xmlns="http://www.w3.org/2000/svg"
                       >
                         <path
-                          d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z"
+                          d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z"
                           fill="currentColor"
                         />
                         <path
@@ -923,7 +930,7 @@ const Signup = () => {
                     className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                   >
                     <FaFingerprint />
-                    <span>Sign Up with Face ID</span>
+                    <span>Sign Up with Fingerprint</span>
                   </motion.button>
                 )}
                 {signupMethod === 'face' && (
@@ -958,7 +965,7 @@ const Signup = () => {
           variants={footerVariants}
           initial="hidden"
           animate="visible"
-          className={`${isDarkMode ? 'bg-black border-gray-800' : 'bg-white border-gray-300'} py-6 border-t`}
+          className={`${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray200 border-gray-400'} py-6 border-t`}
         >
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center text-sm">
             <div className={`mb-4 sm:mb-0 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
