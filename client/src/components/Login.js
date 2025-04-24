@@ -135,7 +135,6 @@ const Login = () => {
         if (detection) {
           const { detection: box, landmarks } = detection;
 
-          // Adjust coordinates to match video display
           const video = videoRef.current;
           const displayWidth = videoWidth;
           const displayHeight = videoHeight;
@@ -152,20 +151,17 @@ const Login = () => {
             height: box.box.height * scaleY,
           };
 
-          // Draw red bounding box
           ctx.beginPath();
           ctx.lineWidth = 2;
           ctx.strokeStyle = 'red';
           ctx.rect(adjustedBox.x, adjustedBox.y, adjustedBox.width, adjustedBox.height);
           ctx.stroke();
 
-          // Draw confidence score
           const score = box.score.toFixed(2);
           ctx.font = '16px Arial';
           ctx.fillStyle = 'red';
           ctx.fillText(score, adjustedBox.x, adjustedBox.y - 5);
 
-          // Draw landmarks (green dots, no lines)
           if (landmarks && landmarks.positions) {
             const scaledLandmarks = landmarks.positions.map(point => ({
               x: point.x * scaleX,
@@ -242,28 +238,40 @@ const Login = () => {
     setSuccess(false);
 
     if (!email.trim()) {
-      setError('Please enter your email to use biometric login');
+      setError('Please enter your email to use fingerprint login');
       return;
     }
 
     try {
-      const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!isAvailable) {
-        throw new Error('This device does not support Face ID or biometric authentication.');
+      // Check if WebAuthn is supported
+      if (!window.PublicKeyCredential) {
+        throw new Error('WebAuthn is not supported in this browser.');
       }
 
+      // Check if platform authenticator is available
+      const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (!isAvailable) {
+        throw new Error('This device does not support fingerprint authentication.');
+      }
+
+      // Start WebAuthn authentication
       const response = await api.post('/auth/webauthn/login/begin', { email });
       const publicKey = response.data;
+
+      // Trigger fingerprint prompt
       const credential = await startAuthentication(publicKey);
+
+      // Complete authentication
       const { data } = await api.post('/auth/webauthn/login/complete', { email, credential });
+
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
       setSuccess(true);
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
-      console.error('Biometric login error:', err);
-      setError(err.response?.data.msg || err.message || 'Biometric login failed.');
+      console.error('Fingerprint login error:', err);
+      setError(err.response?.data.msg || err.message || 'Fingerprint login failed. Please ensure your device has a fingerprint sensor and try again.');
     }
   };
 
@@ -432,7 +440,7 @@ const Login = () => {
                   }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
-                  Face ID
+                  Fingerprint
                 </motion.button>
                 <motion.button
                   whileHover={{ scale: 1.1 }}
@@ -542,6 +550,7 @@ const Login = () => {
                       }}
                     />
                   </div>
+                  <div className="mt-6"></div>
                   {!isCameraActive && modelsLoaded && (
                     <motion.button
                       whileHover="hover"
@@ -690,7 +699,7 @@ const Login = () => {
                     className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                   >
                     <FaFingerprint />
-                    <span>Log In with Face ID</span>
+                    <span>Log In with Fingerprint</span>
                   </motion.button>
                 )}
                 {loginMethod === 'face' && (
@@ -728,7 +737,7 @@ const Login = () => {
           variants={footerVariants}
           initial="hidden"
           animate="visible"
-          className={`${isDarkMode ? 'bg-black border-gray-800' : 'bg-white border-gray-300'} py-6 border-t`}
+          className={`${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} py-6 border-t`}
         >
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center text-sm">
             <div className={`mb-4 sm:mb-0 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
