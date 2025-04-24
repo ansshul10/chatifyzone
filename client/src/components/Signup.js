@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaEnvelope, FaUser, FaLock, FaArrowRight, FaCheckCircle, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint, FaCamera } from 'react-icons/fa';
 import { startRegistration } from '@simplewebauthn/browser';
 import * as faceapi from 'face-api.js';
+import { RadioGroup } from '@headlessui/react';
 import api from '../utils/api';
 import Navbar from './Navbar';
 
@@ -17,77 +19,89 @@ const Signup = () => {
   const [signupMethod, setSignupMethod] = useState('password');
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [modelsLoaded, setModelsLoaded] = useState(false);
-  const [faceApiLoaded, setFaceApiLoaded] = useState(false);
   const [captureStatus, setCaptureStatus] = useState('PENDING');
   const [faceCaptured, setFaceCaptured] = useState(false);
-  const [counter, setCounter] = useState(5);
-  const [descriptors, setDescriptors] = useState([]);
+  const [counter, setCounter] = useState(3);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [customUser, setCustomUser] = useState(null);
+  const [imageError, setImageError] = useState(null);
+  const [faceDescriptor, setFaceDescriptor] = useState(null); // Store a single descriptor
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const faceApiIntervalRef = useRef(null);
+  const animationFrameRef = useRef(null);
   const navigate = useNavigate();
   const videoWidth = 320;
   const videoHeight = 240;
-  const requiredDescriptors = 3;
 
   const loadModels = async () => {
-    const uri = '/models';
-    await faceapi.nets.ssdMobilenetv1.loadFromUri(uri);
-    await faceapi.nets.faceLandmark68Net.loadFromUri(uri);
-    await faceapi.nets.faceRecognitionNet.loadFromUri(uri);
+    const MODEL_URL = '/models';
+    try {
+      console.log('Loading face-api.js models from:', MODEL_URL);
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
+      console.log('Face-api.js models loaded successfully');
+      setModelsLoaded(true);
+    } catch (err) {
+      console.error('Error loading face-api.js models:', err);
+      setError(`Failed to load face recognition models: ${err.message}`);
+    }
   };
 
   useEffect(() => {
     if (signupMethod === 'face') {
-      loadModels()
-        .then(() => setModelsLoaded(true))
-        .catch(err => {
-          console.error('Model loading error:', err);
-          setError('Failed to load face recognition models.');
-        });
+      loadModels().catch(err => {
+        console.error('Model loading error:', err);
+        setError('Failed to load face recognition models.');
+      });
     }
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
-        const tracks = videoRef.current.srcObject.getTracks();
-        tracks.forEach(track => track.stop());
+        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
       }
       setIsCameraActive(false);
-      if (faceApiIntervalRef.current) {
-        clearInterval(faceApiIntervalRef.current);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
     };
   }, [signupMethod]);
 
   useEffect(() => {
-    if (captureStatus === 'SUCCESS' && faceCaptured && descriptors.length === requiredDescriptors) {
+    if (captureStatus === 'SUCCESS' && faceCaptured) {
+      const startTime = Date.now();
       const counterInterval = setInterval(() => {
-        setCounter(prev => prev - 1);
-      }, 1000);
-
-      if (counter === 0) {
-        if (videoRef.current && videoRef.current.srcObject) {
-          const tracks = videoRef.current.srcObject.getTracks();
-          tracks.forEach(track => track.stop());
+        const elapsed = (Date.now() - startTime) / 1000;
+        const remaining = Math.max(0, 3 - Math.floor(elapsed));
+        setCounter(remaining);
+        if (remaining <= 0) {
+          clearInterval(counterInterval);
+          if (videoRef.current && videoRef.current.srcObject) {
+            videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+          }
+          if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+          }
+          setIsCameraActive(false);
+          handleFaceSignup();
         }
-        clearInterval(counterInterval);
-        if (faceApiIntervalRef.current) {
-          clearInterval(faceApiIntervalRef.current);
-        }
-        handleFaceSignup();
-      }
-
+      }, 100); // Update every 100ms for smoother countdown
       return () => clearInterval(counterInterval);
     }
-    setCounter(5);
-  }, [captureStatus, faceCaptured, counter, descriptors]);
+    setCounter(3);
+  }, [captureStatus, faceCaptured]);
 
   const getLocalUserVideo = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: videoWidth, height: videoHeight },
+      });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
           setIsCameraActive(true);
+          captureFace();
         };
       } else {
         throw new Error('Video element not found');
@@ -101,71 +115,107 @@ const Signup = () => {
 
   const captureFace = async () => {
     if (!videoRef.current || !canvasRef.current) {
-      console.error('Video or canvas element not found');
       setError('Video or canvas element not found');
       return;
     }
 
-    faceapi.matchDimensions(canvasRef.current, videoRef.current);
-    const faceApiInterval = setInterval(async () => {
+    faceapi.matchDimensions(canvasRef.current, { width: videoWidth, height: videoHeight });
+
+    const detectFace = async () => {
       if (!videoRef.current || !videoRef.current.srcObject) {
         console.error('Video stream not available');
-        clearInterval(faceApiInterval);
         setError('Video stream not available');
+        setCaptureStatus('FAILED');
         return;
       }
 
       try {
-        const detections = await faceapi
-          .detectAllFaces(videoRef.current)
+        const detection = await faceapi
+          .detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options())
           .withFaceLandmarks()
-          .withFaceDescriptors();
-        const resizedDetections = faceapi.resizeResults(detections, {
-          width: videoWidth,
-          height: videoHeight,
-        });
-
-        if (!canvasRef.current) {
-          return;
-        }
+          .withFaceDescriptor();
 
         const ctx = canvasRef.current.getContext('2d');
         ctx.clearRect(0, 0, videoWidth, videoHeight);
-        faceapi.draw.drawDetections(canvasRef.current, resizedDetections);
-        faceapi.draw.drawFaceLandmarks(canvasRef.current, resizedDetections);
 
-        if (resizedDetections.length > 0) {
-          const descriptor = resizedDetections[0].descriptor;
-          if (!descriptor) {
-            throw new Error('Face descriptor is missing');
+        if (detection) {
+          const { detection: box, landmarks } = detection;
+
+          // Adjust coordinates to match video display
+          const video = videoRef.current;
+          const displayWidth = videoWidth;
+          const displayHeight = videoHeight;
+          const videoActualWidth = video.videoWidth;
+          const videoActualHeight = video.videoHeight;
+
+          const scaleX = displayWidth / videoActualWidth;
+          const scaleY = displayHeight / videoActualHeight;
+
+          const adjustedBox = {
+            x: box.box.x * scaleX,
+            y: box.box.y * scaleY,
+            width: box.box.width * scaleX,
+            height: box.box.height * scaleY,
+          };
+
+          // Draw red bounding box
+          ctx.beginPath();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'red';
+          ctx.rect(adjustedBox.x, adjustedBox.y, adjustedBox.width, adjustedBox.height);
+          ctx.stroke();
+
+          // Draw confidence score
+          const score = box.score.toFixed(2);
+          ctx.font = '16px Arial';
+          ctx.fillStyle = 'red';
+          ctx.fillText(score, adjustedBox.x, adjustedBox.y - 5);
+
+          // Draw landmarks (green dots, no lines)
+          if (landmarks && landmarks.positions) {
+            const scaledLandmarks = landmarks.positions.map(point => ({
+              x: point.x * scaleX,
+              y: point.y * scaleY,
+            }));
+
+            ctx.fillStyle = 'green';
+            scaledLandmarks.forEach(point => {
+              ctx.beginPath();
+              ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+              ctx.fill();
+            });
           }
-          setDescriptors(prev => {
-            if (prev.length < requiredDescriptors) {
-              const newDescriptors = [...prev, Array.from(descriptor)];
-              if (newDescriptors.length === requiredDescriptors) {
-                setFaceCaptured(true);
-                setCaptureStatus('SUCCESS');
-                localStorage.setItem('tempFaceDescriptors', JSON.stringify(newDescriptors));
-              }
-              return newDescriptors;
-            }
-            return prev;
-          });
-        } else {
-          setCaptureStatus('FAILED');
-        }
 
-        if (!faceApiLoaded) {
-          setFaceApiLoaded(true);
+          const descriptor = detection.descriptor;
+          if (descriptor && !faceDescriptor) {
+            setFaceDescriptor(Array.from(descriptor));
+            setFaceCaptured(true);
+            setCaptureStatus('SUCCESS');
+          }
+        } else if (!faceDescriptor) {
+          setCaptureStatus('FAILED');
         }
       } catch (err) {
         console.error('Face detection error:', err);
         setError('Failed to detect face: ' + err.message);
         setCaptureStatus('FAILED');
-        clearInterval(faceApiInterval);
       }
-    }, 1000 / 15);
-    faceApiIntervalRef.current = faceApiInterval;
+
+      if (!faceDescriptor) {
+        animationFrameRef.current = requestAnimationFrame(detectFace);
+      }
+    };
+
+    animationFrameRef.current = requestAnimationFrame(detectFace);
+  };
+
+  const convertBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const fileReader = new FileReader();
+      fileReader.readAsDataURL(file);
+      fileReader.onload = () => resolve(fileReader.result);
+      fileReader.onerror = (error) => reject(error);
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -252,10 +302,33 @@ const Signup = () => {
       setError('Please enter your username to use face recognition signup');
       return;
     }
+    if (!selectedUser && !faceCaptured) {
+      setError('Please upload a face image or capture your face');
+      return;
+    }
 
-    const faceDescriptors = JSON.parse(localStorage.getItem('tempFaceDescriptors'));
-    if (!faceDescriptors || faceDescriptors.length !== requiredDescriptors) {
-      setError('Face descriptors not found or insufficient. Please capture your face again.');
+    let descriptor = faceDescriptor;
+    if (selectedUser && selectedUser.type === 'CUSTOM') {
+      try {
+        const img = await faceapi.fetchImage(selectedUser.picture);
+        const detections = await faceapi
+          .detectSingleFace(img)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        if (!detections) {
+          setError('No face detected in the uploaded image');
+          return;
+        }
+        descriptor = Array.from(detections.descriptor);
+      } catch (err) {
+        console.error('Image processing error:', err);
+        setError('Failed to process uploaded image');
+        return;
+      }
+    }
+
+    if (!descriptor) {
+      setError('No face data available. Please capture or upload your face.');
       return;
     }
 
@@ -263,12 +336,11 @@ const Signup = () => {
       const { data } = await api.post('/auth/face/register', {
         email,
         username,
-        descriptors: faceDescriptors,
+        descriptor, // Send single descriptor
       });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
-      localStorage.removeItem('tempFaceDescriptors');
       setSuccess(true);
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
@@ -317,13 +389,15 @@ const Signup = () => {
     width: '320px',
     height: '240px',
     margin: '0 auto',
+    borderRadius: '50%',
+    overflow: 'hidden',
   };
 
   const videoStyle = {
     width: '100%',
     height: '100%',
-    objectFit: 'fill',
-    borderRadius: '10px',
+    objectFit: 'cover',
+    borderRadius: '50%',
   };
 
   const canvasStyle = {
@@ -335,7 +409,56 @@ const Signup = () => {
     zIndex: 10,
     pointerEvents: 'none',
     display: 'block',
+    borderRadius: '50%',
   };
+
+  const User = ({ user }) => (
+    <RadioGroup.Option
+      key={user.id}
+      value={user}
+      className={({ checked }) =>
+        `${
+          checked ? 'bg-red-600 bg-opacity-75 text-white' : isDarkMode ? 'bg-gray-800' : 'bg-gray-100'
+        } relative flex cursor-pointer rounded-lg px-5 py-4 shadow-md focus:outline-none`
+      }
+    >
+      {({ checked }) => (
+        <div className="flex w-full items-center justify-between">
+          <div className="flex items-center">
+            <div className="text-sm">
+              <RadioGroup.Label
+                as="div"
+                className={`flex items-center gap-x-6 font-medium ${
+                  checked ? 'text-white' : isDarkMode ? 'text-gray-300' : 'text-gray-900'
+                }`}
+              >
+                <img
+                  className="object-cover h-10 w-10 rounded-full"
+                  src={user.type === 'CUSTOM' ? user.picture : `/temp-accounts/${user.picture}`}
+                  alt={user.fullName}
+                />
+                {user.fullName}
+              </RadioGroup.Label>
+            </div>
+          </div>
+          {checked && (
+            <div className="shrink-0 text-white">
+              <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6">
+                <circle cx={12} cy={12} r={12} fill="#fff" opacity="0.2" />
+                <path
+                  d="M7 13l3 3 7-7"
+                  stroke="#fff"
+                  strokeWidth={1.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+          )}
+        </div>
+      )}
+    </RadioGroup.Option>
+  );
 
   return (
     <>
@@ -385,7 +508,16 @@ const Signup = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => { setSignupMethod('password'); setFaceApiLoaded(false); setCaptureStatus('PENDING'); setIsCameraActive(false); setCounter(5); setFaceCaptured(false); setDescriptors([]); }}
+                  onClick={() => {
+                    setSignupMethod('password');
+                    setCaptureStatus('PENDING');
+                    setIsCameraActive(false);
+                    setCounter(3);
+                    setFaceCaptured(false);
+                    setFaceDescriptor(null);
+                    setSelectedUser(null);
+                    setCustomUser(null);
+                  }}
                   className={`px-4 py-2 rounded-lg ${signupMethod === 'password' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Password
@@ -393,7 +525,16 @@ const Signup = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => { setSignupMethod('webauthn'); setFaceApiLoaded(false); setCaptureStatus('PENDING'); setIsCameraActive(false); setCounter(5); setFaceCaptured(false); setDescriptors([]); }}
+                  onClick={() => {
+                    setSignupMethod('webauthn');
+                    setCaptureStatus('PENDING');
+                    setIsCameraActive(false);
+                    setCounter(3);
+                    setFaceCaptured(false);
+                    setFaceDescriptor(null);
+                    setSelectedUser(null);
+                    setCustomUser(null);
+                  }}
                   className={`px-4 py-2 rounded-lg ${signupMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face ID
@@ -401,48 +542,201 @@ const Signup = () => {
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => { setSignupMethod('face'); setFaceApiLoaded(false); setCaptureStatus('PENDING'); setIsCameraActive(false); setCounter(5); setFaceCaptured(false); setDescriptors([]); }}
+                  onClick={() => {
+                    setSignupMethod('face');
+                    setCaptureStatus('PENDING');
+                    setIsCameraActive(false);
+                    setCounter(3);
+                    setFaceCaptured(false);
+                    setFaceDescriptor(null);
+                    setSelectedUser(null);
+                    setCustomUser(null);
+                  }}
                   className={`px-4 py-2 rounded-lg ${signupMethod === 'face' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
                 >
                   Face Recognition
                 </motion.button>
               </div>
               {signupMethod === 'face' && (
-                <div className="flex flex-col items-center gap-8">
-                  {!isCameraActive && !modelsLoaded && (
+                <div className="flex flex-col items-center gap-6">
+                  {imageError && (
+                    <h3 className="text-center text-xl font-bold text-red-500">
+                      <span className="block mt-4">{imageError}</span>
+                    </h3>
+                  )}
+                  {!isCameraActive && !modelsLoaded && !imageError && (
                     <h3 className="text-center text-xl font-bold text-gray-900">
                       <span className="block">Attempting to Sign Up With Your Face.</span>
                       <span className="block text-red-500 mt-2">Loading Models...</span>
                     </h3>
                   )}
-                  {!isCameraActive && modelsLoaded && (
+                  {!isCameraActive && modelsLoaded && !imageError && (
                     <h3 className="text-center text-xl font-bold text-gray-900">
                       <span className="block text-red-500 mt-2">
-                        Please Capture Your Face to Sign Up.
+                        Please Upload or Capture Your Face to Sign Up.
                       </span>
                     </h3>
                   )}
-                  {isCameraActive && captureStatus === 'SUCCESS' && faceCaptured && descriptors.length === requiredDescriptors && (
+                  {isCameraActive && captureStatus === 'SUCCESS' && faceCaptured && (
                     <h3 className="text-center text-xl font-bold text-gray-900">
                       <span className="block text-red-500 mt-2">
                         We've successfully captured your face!
                       </span>
                       <span className="block text-red-500 mt-2">
-                        Please stay {counter} more seconds...
+                        Please wait {counter} more seconds...
                       </span>
+                      <svg
+                        className="animate-spin h-5 w-5 text-red-500 mx-auto mt-2"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v8z"
+                        />
+                      </svg>
                     </h3>
                   )}
                   {isCameraActive && captureStatus === 'FAILED' && (
-                    <h3 className="text-center text-xl font-bold text-red-500">
-                      <span className="block mt-4">
-                        We could not capture your face.
-                      </span>
+                    <div className="text-center">
+                      <h3 className="text-xl font-bold text-red-500">
+                        <span className="block mt-4">
+                          Oops! We did not recognize your face.
+                        </span>
+                      </h3>
+                      <motion.button
+                        whileHover="hover"
+                        whileTap="tap"
+                        variants={buttonVariants}
+                        onClick={() => {
+                          setCaptureStatus('PENDING');
+                          setFaceCaptured(false);
+                          setFaceDescriptor(null);
+                          getLocalUserVideo();
+                        }}
+                        className={`mt-4 p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                      >
+                        <FaCamera />
+                        <span>Retry Capture</span>
+                      </motion.button>
+                    </div>
+                  )}
+                  {isCameraActive && captureStatus === 'PENDING' && (
+                    <h3 className="text-center text-xl font-bold text-gray-900">
+                      <span className="block mt-4">Attempting to Sign Up With Your Face.</span>
                     </h3>
                   )}
-                  {isCameraActive && !faceApiLoaded && captureStatus === 'PENDING' && (
-                    <h3 className="text-center text-xl font-bold text-gray-900">
-                      <span className="block mt-4">Capturing Face... ({descriptors.length}/{requiredDescriptors})</span>
-                    </h3>
+                  {!isCameraActive && modelsLoaded && (
+                    <div className="w-full p-4 text-center">
+                      <div className="mx-auto w-full max-w-md">
+                        <RadioGroup value={selectedUser} onChange={setSelectedUser}>
+                          <RadioGroup.Label className="sr-only">User selection</RadioGroup.Label>
+                          <div className="space-y-2">
+                            {customUser && (
+                              <div className="relative">
+                                <User user={customUser} />
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  strokeWidth={1.5}
+                                  stroke="currentColor"
+                                  className="text-red-500 w-6 h-6 absolute top-1/2 -translate-y-1/2 right-[-32px] cursor-pointer"
+                                  onClick={() => {
+                                    setCustomUser(null);
+                                    setSelectedUser(null);
+                                  }}
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M6 18L18 6M6 6l12 12"
+                                  />
+                                </svg>
+                              </div>
+                            )}
+                          </div>
+                        </RadioGroup>
+                        <div className="flex flex-col items-center justify-center w-full mt-3">
+                          <label
+                            htmlFor="dropzone-file"
+                            className={`flex flex-col items-center justify-center w-full border-2 border-dashed rounded-lg cursor-pointer ${isDarkMode ? 'border-gray-600 bg-gray-800 hover:border-red-500 hover:bg-gray-700' : 'border-gray-300 bg-gray-50 hover:border-red-500 hover:bg-gray-100'}`}
+                          >
+                            <div className="flex flex-col items-center justify-center py-4">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                strokeWidth={1.5}
+                                stroke="currentColor"
+                                className="w-6 h-6 text-red-500 mb-2"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"
+                                />
+                              </svg>
+                              <p className={`font-semibold mb-2 text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                                Click to upload face image
+                              </p>
+                              <p className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                                PNG, JPG, or JPEG
+                              </p>
+                            </div>
+                            <input
+                              id="dropzone-file"
+                              type="file"
+                              accept=".png,.jpg,.jpeg"
+                              className="hidden"
+                              onChange={async (e) => {
+                                const files = e.target.files;
+                                if (!files || files.length === 0) {
+                                  setImageError('No files selected.');
+                                  return;
+                                }
+                                const file = files[0];
+                                const name = file.name;
+                                const suffixArr = name.split('.');
+                                const suffix = suffixArr[suffixArr.length - 1];
+                                if (!['png', 'jpg', 'jpeg'].includes(suffix)) {
+                                  setImageError('Only PNG, JPG, or JPEG files are supported.');
+                                  return;
+                                }
+
+                                try {
+                                  const base64 = await convertBase64(file);
+                                  const user = {
+                                    id: 'custom',
+                                    fullName: username || 'Custom User',
+                                    type: 'CUSTOM',
+                                    picture: base64,
+                                  };
+                                  setCustomUser(user);
+                                  setSelectedUser(user);
+                                  setImageError(null);
+                                } catch (err) {
+                                  setImageError('Failed to process image.');
+                                }
+                              }}
+                            />
+                          </label>
+                          {imageError && (
+                            <p className="text-red-500 text-xs mt-2">{imageError}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   )}
                   <div style={videoContainerStyle}>
                     <video
@@ -453,7 +747,6 @@ const Signup = () => {
                         ...videoStyle,
                         display: isCameraActive ? 'block' : 'none',
                       }}
-                      onPlay={captureFace}
                     />
                     <canvas
                       ref={canvasRef}
@@ -463,6 +756,7 @@ const Signup = () => {
                       }}
                     />
                   </div>
+                  <div className="mt-6"></div>
                   {!isCameraActive && modelsLoaded && (
                     <motion.button
                       whileHover="hover"
@@ -489,7 +783,7 @@ const Signup = () => {
                         xmlns="http://www.w3.org/2000/svg"
                       >
                         <path
-                          d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z"
+                          d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z"
                           fill="currentColor"
                         />
                         <path
@@ -630,6 +924,20 @@ const Signup = () => {
                   >
                     <FaFingerprint />
                     <span>Sign Up with Face ID</span>
+                  </motion.button>
+                )}
+                {signupMethod === 'face' && (
+                  <motion.button
+                    type="button"
+                    whileHover="hover"
+                    whileTap="tap"
+                    variants={buttonVariants}
+                    onClick={handleFaceSignup}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                    disabled={!selectedUser && !faceCaptured}
+                  >
+                    <FaArrowRight />
+                    <span>Continue</span>
                   </motion.button>
                 )}
               </form>
