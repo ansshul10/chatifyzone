@@ -73,7 +73,7 @@ router.post('/register', async (req, res) => {
 });
 
 router.post('/face/register', async (req, res) => {
-  const { email, username, descriptors } = req.body;
+  const { email, username, descriptor } = req.body;
 
   try {
     let user = await User.findOne({ $or: [{ email }, { username }] });
@@ -81,12 +81,11 @@ router.post('/face/register', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    if (!descriptors || !Array.isArray(descriptors) || descriptors.length !== 3 ||
-        descriptors.some(d => !Array.isArray(d) || d.length !== 128)) {
-      return res.status(400).json({ msg: 'Invalid face descriptors: Exactly 3 descriptors of 128 values each are required' });
+    if (!descriptor || !Array.isArray(descriptor) || descriptor.length !== 128) {
+      return res.status(400).json({ msg: 'Invalid face descriptor: A single descriptor with 128 values is required' });
     }
 
-    user = new User({ email, username, faceDescriptors: descriptors });
+    user = new User({ email, username, faceDescriptors: [descriptor] });
     await user.save();
 
     const payload = { userId: user.id };
@@ -113,16 +112,13 @@ router.post('/face/login', async (req, res) => {
     }
 
     if (!descriptor || !Array.isArray(descriptor) || descriptor.length !== 128) {
-      return res.status(400).json({ msg: 'Invalid face descriptor' });
+      return res.status(400).json({ msg: 'Invalid face descriptor: A single descriptor with 128 values is required' });
     }
 
-    const distances = user.faceDescriptors.map(storedDescriptor =>
-      calculateEuclideanDistance(storedDescriptor, descriptor)
-    );
-    const minDistance = Math.min(...distances);
+    const distance = calculateEuclideanDistance(user.faceDescriptors[0], descriptor);
 
-    if (minDistance > 0.4) {
-      return res.status(401).json({ msg: 'Invalid face', distance: minDistance });
+    if (distance > 0.4) {
+      return res.status(401).json({ msg: 'Invalid face', distance });
     }
 
     const payload = { userId: user.id };
@@ -131,7 +127,7 @@ router.post('/face/login', async (req, res) => {
     res.json({
       token,
       user: { id: user.id, email: user.email, username: user.username },
-      distance: minDistance
+      distance
     });
   } catch (err) {
     console.error('Face login error:', err);
