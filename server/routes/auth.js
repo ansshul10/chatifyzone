@@ -135,33 +135,35 @@ router.post('/face/login', async (req, res) => {
   }
 });
 
+// WebAuthn Registration (Signup)
 router.post('/webauthn/register/begin', async (req, res) => {
   const { username, email } = req.body;
 
   try {
+    // Check if user exists
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    const userID = Buffer.from(email);
-
-    const options = generateRegistrationOptions({
+    // Generate WebAuthn registration options
+    const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID,
+      userID: email, // Use email as unique user ID
       userName: username,
       userDisplayName: username,
-      attestationType: 'none',
-      excludeCredentials: [],
+      attestationType: 'none', // No attestation required
       authenticatorSelection: {
-        userVerification: 'required',
-        authenticatorAttachment: 'platform',
+        authenticatorAttachment: 'platform', // Use device authenticator (e.g., fingerprint)
+        userVerification: 'required', // Require fingerprint verification
       },
+      excludeCredentials: [], // No existing credentials to exclude
     });
 
+    // Store challenge in session
     req.session.challenge = options.challenge;
-    req.session.user = { email, username };
+    req.session.pendingUser = { email, username };
 
     res.json(options);
   } catch (err) {
@@ -174,33 +176,50 @@ router.post('/webauthn/register/complete', async (req, res) => {
   const { email, username, credential } = req.body;
 
   try {
-    if (!req.session.challenge || !req.session.user || req.session.user.email !== email || req.session.user.username !== username) {
+    // Validate session
+    if (
+      !req.session.challenge ||
+      !req.session.pendingUser ||
+      req.session.pendingUser.email !== email ||
+      req.session.pendingUser.username !== username
+    ) {
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
+    // Verify WebAuthn registration
     const verification = await verifyRegistrationResponse({
-      credential,
+      response: credential,
       expectedChallenge: req.session.challenge,
       expectedOrigin,
       expectedRPID: rpID,
     });
 
     if (!verification.verified) {
-      return res.status(400).json({ msg: 'WebAuthn registration failed' });
+      return res.status(400).json({ msg: 'Fingerprint registration failed' });
     }
 
     const { credentialID, publicKey, counter } = verification.registrationInfo;
 
+    // Create new user
     const user = new User({
       email,
       username,
-      webauthnCredentials: [{ credentialID, publicKey, counter, deviceName: 'Face ID' }],
+      webauthnCredentials: [{
+        credentialID: Buffer.from(credentialID).toString('base64'), // Store as base64
+        publicKey: Buffer.from(publicKey).toString('base64'), // Store as base64
+        counter,
+        deviceName: 'Fingerprint Authenticator',
+        authenticatorType: 'fingerprint',
+      }],
     });
 
     await user.save();
-    req.session.challenge = null;
-    req.session.user = null;
 
+    // Clear session
+    req.session.challenge = null;
+    req.session.pendingUser = null;
+
+    // Generate JWT
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
@@ -211,26 +230,31 @@ router.post('/webauthn/register/complete', async (req, res) => {
   }
 });
 
+// WebAuthn Authentication (Login)
 router.post('/webauthn/login/begin', async (req, res) => {
   const { email } = req.body;
 
   try {
+    // Find user
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ msg: 'User not found' });
     }
 
+    // Get user's WebAuthn credentials
     const credentials = user.webauthnCredentials.map(cred => ({
-      id: cred.credentialID,
+      id: Buffer.from(cred.credentialID, 'base64'), // Decode from base64
       type: 'public-key',
     }));
 
-    const options = generateAuthenticationOptions({
+    // Generate authentication options
+    const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: credentials,
-      userVerification: 'required',
+      userVerification: 'required', // Require fingerprint verification
     });
 
+    // Store challenge in session
     req.session.challenge = options.challenge;
     req.session.email = email;
 
@@ -245,42 +269,51 @@ router.post('/webauthn/login/complete', async (req, res) => {
   const { email, credential } = req.body;
 
   try {
+    // Validate session
     if (!req.session.challenge || req.session.email !== email) {
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
 
+    // Find user
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ msg: 'User not found' });
     }
 
-    const credentialMatch = user.webauthnCredentials.find(cred => cred.credentialID === credential.id);
+    // Find matching credential
+    const credentialMatch = user.webauthnCredentials.find(
+      cred => cred.credentialID === Buffer.from(credential.id).toString('base64')
+    );
     if (!credentialMatch) {
       return res.status(400).json({ msg: 'Invalid credential' });
     }
 
+    // Verify authentication
     const verification = await verifyAuthenticationResponse({
-      credential,
+      response: credential,
       expectedChallenge: req.session.challenge,
       expectedOrigin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: credentialMatch.credentialID,
-        credentialPublicKey: credentialMatch.publicKey,
+        credentialID: Buffer.from(credentialMatch.credentialID, 'base64'),
+        credentialPublicKey: Buffer.from(credentialMatch.publicKey, 'base64'),
         counter: credentialMatch.counter,
       },
     });
 
     if (!verification.verified) {
-      return res.status(400).json({ msg: 'WebAuthn authentication failed' });
+      return res.status(400).json({ msg: 'Fingerprint authentication failed' });
     }
 
+    // Update counter
     credentialMatch.counter = verification.authenticationInfo.newCounter;
     await user.save();
 
+    // Clear session
     req.session.challenge = null;
     req.session.email = null;
 
+    // Generate JWT
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
