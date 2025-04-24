@@ -5,7 +5,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   username: { type: String, required: true, unique: true, minlength: 3, maxlength: 20 },
   password: { type: String },
-  faceDescriptors: { type: [[Number]], default: [] }, // Store multiple face descriptors
+  faceDescriptors: { type: [[Number]], default: [] },
   online: { type: Boolean, default: false },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date },
@@ -25,10 +25,11 @@ const userSchema = new mongoose.Schema({
     publicKey: { type: String, required: true },
     counter: { type: Number, required: true },
     deviceName: { type: String },
+    authenticatorType: { type: String, default: 'fingerprint' }, // Optional: track authenticator type
   }],
 });
 
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', async function (next) {
   if (this.isModified('password') && this.password) {
     this.password = await bcrypt.hash(this.password, 10);
   }
