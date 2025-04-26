@@ -134,13 +134,13 @@ router.post('/webauthn/register/begin', async (req, res) => {
 
     // Step 4: Generate WebAuthn registration options
     console.log('[WebAuthn Register Begin] Step 4: Generating WebAuthn registration options');
-    const userID = crypto.randomBytes(32);
+    const userID = crypto.randomBytes(32); // Generate a 32-byte Buffer
     let options;
     try {
       options = await generateRegistrationOptions({
         rpName,
         rpID,
-        userID: userID.toString('base64'),
+        userID, // Pass the raw Buffer, not base64 string
         userName: username,
         userDisplayName: username,
         attestationType: 'none',
@@ -170,7 +170,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
     const response = {
       publicKey: options,
       challenge: options.challenge,
-      userID: userID.toString('base64'),
+      userID: userID.toString('base64'), // Send base64-encoded userID to client
       email,
       username,
     };
@@ -194,7 +194,6 @@ router.post('/webauthn/register/begin', async (req, res) => {
     res.status(500).json({ msg: 'Unexpected server error' });
   }
 });
-
 // Password-based login
 router.post('/login', async (req, res) => {
   try {
