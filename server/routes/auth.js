@@ -88,6 +88,19 @@ const unblockUserSchema = Joi.object({
   userId: Joi.string().required(),
 });
 
+// Helper function to validate base64 string
+const isValidBase64 = (str) => {
+  if (typeof str !== 'string') return false;
+  try {
+    // Check if the string is valid base64 by decoding and re-encoding
+    const decoded = Buffer.from(str, 'base64');
+    const reEncoded = decoded.toString('base64');
+    return reEncoded === str || reEncoded === str.replace(/=+$/, '');
+  } catch (err) {
+    return false;
+  }
+};
+
 // WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
@@ -381,7 +394,7 @@ router.post('/register', async (req, res) => {
 // WebAuthn login: Begin
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Begin] Deployed Version: Buffer Fix 2025-04-26 v2');
+    console.log('[WebAuthn Login Begin] Deployed Version: Buffer Fix 2025-04-27 v3');
     console.log('[WebAuthn Login Begin] Step 1: Received request:', req.body);
 
     console.log('[WebAuthn Login Begin] Step 2: Validating request body');
@@ -408,11 +421,40 @@ router.post('/webauthn/login/begin', async (req, res) => {
       credentialCount: user.webauthnCredentials.length,
     });
 
-    console.log('[WebAuthn Login Begin] Step 4: Generating authentication options');
-    const allowCredentials = user.webauthnCredentials.map(cred => ({
-      id: Buffer.from(cred.credentialID, 'base64'),
-      type: 'public-key',
-    }));
+    console.log('[WebAuthn Login Begin] Step 4: Validating credentials');
+    const validCredentials = user.webauthnCredentials.filter(cred => {
+      const isValid = isValidBase64(cred.credentialID);
+      if (!isValid) {
+        console.error('[WebAuthn Login Begin] Step 4 Error: Invalid credentialID:', {
+          credentialID: cred.credentialID,
+          deviceName: cred.deviceName,
+          authenticatorType: cred.authenticatorType,
+        });
+      }
+      return isValid;
+    });
+
+    if (validCredentials.length === 0) {
+      console.error('[WebAuthn Login Begin] Step 4 Error: No valid credentials found for:', email);
+      return res.status(400).json({ msg: 'No valid biometric credentials found for this user' });
+    }
+
+    const allowCredentials = validCredentials.map(cred => {
+      console.log('[WebAuthn Login Begin] Step 4: Processing credential:', {
+        credentialID: cred.credentialID,
+        deviceName: cred.deviceName,
+      });
+      return {
+        id: Buffer.from(cred.credentialID, 'base64'),
+        type: 'public-key',
+      };
+    });
+    console.log('[WebAuthn Login Begin] Step 4: Generated allowCredentials:', allowCredentials.map(cred => ({
+      id: Buffer.from(cred.id).toString('base64'),
+      type: cred.type,
+    })));
+
+    console.log('[WebAuthn Login Begin] Step 5: Generating authentication options');
     let options;
     try {
       options = await generateAuthenticationOptions({
@@ -420,22 +462,26 @@ router.post('/webauthn/login/begin', async (req, res) => {
         allowCredentials,
         userVerification: 'required',
       });
-      console.log('[WebAuthn Login Begin] Step 4: Options generated successfully:', {
+      console.log('[WebAuthn Login Begin] Step 5: Options generated successfully:', {
         challenge: options.challenge,
-        allowCredentials: allowCredentials.map(cred => ({
+        allowCredentials: options.allowCredentials.map(cred => ({
           id: Buffer.from(cred.id).toString('base64'),
           type: cred.type,
         })),
       });
     } catch (webauthnError) {
-      console.error('[WebAuthn Login Begin] Step 4 Error: Failed to generate authentication options:', {
+      console.error('[WebAuthn Login Begin] Step 5 Error: Failed to generate authentication options:', {
         message: webauthnError.message,
         stack: webauthnError.stack,
+        allowCredentials: allowCredentials.map(cred => ({
+          id: Buffer.from(cred.id).toString('base64'),
+          type: cred.type,
+        })),
       });
-      return res.status(500).json({ msg: 'Failed to generate WebAuthn authentication options' });
+      return res.status(500).json({ msg: 'Failed to generate WebAuthn authentication options', details: webauthnError.message });
     }
 
-    console.log('[WebAuthn Login Begin] Step 5: Storing session data');
+    console.log('[WebAuthn Login Begin] Step 6: Storing session data');
     req.session.challenge = options.challenge;
     req.session.email = email;
     req.session.webauthnUserID = user.webauthnUserID;
@@ -443,7 +489,7 @@ router.post('/webauthn/login/begin', async (req, res) => {
 
     try {
       await req.session.save();
-      console.log('[WebAuthn Login Begin] Step 5: Session saved successfully:', {
+      console.log('[WebAuthn Login Begin] Step 6: Session saved successfully:', {
         sessionId: req.sessionID,
         challenge: options.challenge,
         email,
@@ -451,17 +497,17 @@ router.post('/webauthn/login/begin', async (req, res) => {
         challengeExpires: req.session.challengeExpires,
       });
     } catch (sessionError) {
-      console.error('[WebAuthn Login Begin] Step 5 Error: Failed to save session:', {
+      console.error('[WebAuthn Login Begin] Step 6 Error: Failed to save session:', {
         message: sessionError.message,
         stack: sessionError.stack,
       });
       return res.status(500).json({ msg: 'Failed to save session data' });
     }
 
-    console.log('[WebAuthn Login Begin] Step 6: Sending response');
+    console.log('[WebAuthn Login Begin] Step 7: Sending response');
     res.json(options);
   } catch (err) {
-    console.error('[WebAuthn Login Begin] Step 7 Error: Unexpected server error:', {
+    console.error('[WebAuthn Login Begin] Step 8 Error: Unexpected server error:', {
       message: err.message,
       stack: err.stack,
     });
@@ -1071,7 +1117,7 @@ router.post('/unblock-user', auth, async (req, res) => {
 
     const { userId } = req.body;
     const user = await User.findById(req.user);
-    if (!user.blockedUsers.includes(userId)) {
+    if (!user.blockedUsers.includes(userId) && userId !== req.user) {
       console.error('[Unblock User] User not blocked:', userId);
       return res.status(400).json({ msg: 'User not blocked' });
     }
