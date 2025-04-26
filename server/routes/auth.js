@@ -275,7 +275,7 @@ router.post('/register', async (req, res) => {
 // WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
-    console.log('[WebAuthn Register Complete] Received request:', req.body.email, req.body.username);
+    console.log('[WebAuthn Register Complete] Received request:', req.body);
     const { error } = webauthnRegisterCompleteSchema.validate(req.body);
     if (error) {
       console.error('[WebAuthn Register Complete] Validation error:', error.details[0].message);
@@ -288,6 +288,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Missing challenge or userID' });
     }
 
+    console.log('[WebAuthn Register Complete] Verifying credential with userID:', userID);
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: challenge,
@@ -296,8 +297,8 @@ router.post('/webauthn/register/complete', async (req, res) => {
     });
 
     if (!verification.verified) {
-      console.error('[WebAuthn Register Complete] Verification failed for:', email);
-      return res.status(400).json({ msg: 'Fingerprint registration failed' });
+      console.error('[WebAuthn Register Complete] Verification failed for:', email, verification);
+      return res.status(400).json({ msg: 'Fingerprint registration failed', details: verification });
     }
 
     const { credentialID, publicKey, counter } = verification.registrationInfo;
@@ -305,7 +306,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const user = new User({
       email,
       username,
-      webauthnUserID: userID,
+      webauthnUserID: userID, // Store the base64-encoded userID
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
         publicKey: Buffer.from(publicKey).toString('base64'),
