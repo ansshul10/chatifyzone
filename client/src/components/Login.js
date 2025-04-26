@@ -476,7 +476,7 @@ const Login = () => {
                   {isCameraActive && captureStatus === 'SUCCESS' && faceCaptured && (
                     <h3 className="text-center text-xl font-bold text-gray-900">
                       <span className="block text-red-500 mt-2">
-                        We've successfully captured your face!
+                        We&apos;ve successfully captured your face!
                       </span>
                       <span className="block text-red-500 mt-2">
                         Please wait {counter} more seconds...
@@ -719,7 +719,7 @@ const Login = () => {
               </form>
               <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} space-y-2`}>
                 <div>
-                  Don't have an account? <a href="/signup" className="text-red-500 hover:underline">Sign up here</a>
+                  Don&apos;t have an account? <a href="/signup" className="text-red-500 hover:underline">Sign up here</a>
                 </div>
                 <div>
                   Forgot your password? <a href="/forgot-password" className="text-red-500 hover:underline">Reset it here</a>
