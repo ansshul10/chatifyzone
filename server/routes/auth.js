@@ -88,6 +88,102 @@ const unblockUserSchema = Joi.object({
   userId: Joi.string().required(),
 });
 
+// WebAuthn registration: Begin
+router.post('/webauthn/register/begin', async (req, res) => {
+  try {
+    console.log('[WebAuthn Register Begin] Step 1: Received request:', {
+      email: req.body.email,
+      username: req.body.username,
+      body: req.body,
+    });
+
+    // Step 2: Validate request body
+    console.log('[WebAuthn Register Begin] Step 2: Validating request body');
+    const { error } = webauthnRegisterBeginSchema.validate(req.body);
+    if (error) {
+      console.error('[WebAuthn Register Begin] Step 2 Error: Validation failed:', {
+        message: error.details[0].message,
+        details: error.details,
+      });
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+    console.log('[WebAuthn Register Begin] Step 2: Validation passed');
+
+    // Step 3: Check for existing user
+    const { username, email } = req.body;
+    console.log('[WebAuthn Register Begin] Step 3: Checking for existing user:', { email, username });
+    let user;
+    try {
+      user = await User.findOne({ $or: [{ email }, { username }] });
+    } catch (dbError) {
+      console.error('[WebAuthn Register Begin] Step 3 Error: Database query failed:', {
+        message: dbError.message,
+        stack: dbError.stack,
+      });
+      return res.status(500).json({ msg: 'Database error during user check' });
+    }
+    if (user) {
+      console.error('[WebAuthn Register Begin] Step 3 Error: User already exists:', {
+        email: user.email,
+        username: user.username,
+        userId: user._id,
+      });
+      return res.status(400).json({ msg: 'User already exists with this email or username' });
+    }
+    console.log('[WebAuthn Register Begin] Step 3: No existing user found');
+
+    // Step 4: Generate WebAuthn registration options
+    console.log('[WebAuthn Register Begin] Step 4: Generating WebAuthn registration options');
+    const userID = crypto.randomBytes(32);
+    let options;
+    try {
+      options = await generateRegistrationOptions({
+        rpName,
+        rpID,
+        userID,
+        userName: username,
+        userDisplayName: username,
+        attestationType: 'none',
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+        },
+        excludeCredentials: [],
+      });
+      console.log('[WebAuthn Register Begin] Step 4: Options generated successfully:', {
+        userID: userID.toString('base64'),
+        challenge: options.challenge,
+        rp: options.rp,
+        user: options.user,
+      });
+    } catch (webauthnError) {
+      console.error('[WebAuthn Register Begin] Step 4 Error: Failed to generate WebAuthn options:', {
+        message: webauthnError.message,
+        stack: webauthnError.stack,
+      });
+      return res.status(500).json({ msg: 'Failed to generate WebAuthn registration options' });
+    }
+
+    // Step 5: Prepare and send response
+    console.log('[WebAuthn Register Begin] Step 5: Preparing response');
+    const response = {
+      publicKey: options,
+      challenge: options.challenge,
+      userID: userID.toString('base64'),
+      email,
+      username,
+    };
+    console.log('[WebAuthn Register Begin] Step 5: Sending response:', JSON.stringify(response, null, 2));
+    res.json(response);
+  } catch (err) {
+    console.error('[WebAuthn Register Begin] Step 6 Error: Unexpected server error:', {
+      message: err.message,
+      stack: err.stack,
+    });
+    res.status(500).json({ msg: 'Unexpected server error' });
+  }
+});
+
 // Password-based login
 router.post('/login', async (req, res) => {
   try {
@@ -166,55 +262,6 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// WebAuthn registration: Begin
-router.post('/webauthn/register/begin', async (req, res) => {
-  try {
-    console.log('[WebAuthn Register Begin] Received request:', req.body.email, req.body.username);
-    const { error } = webauthnRegisterBeginSchema.validate(req.body);
-    if (error) {
-      console.error('[WebAuthn Register Begin] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { username, email } = req.body;
-    let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
-      console.error('[WebAuthn Register Begin] User already exists:', { email, username });
-      return res.status(400).json({ msg: 'User already exists with this email or username' });
-    }
-
-    const userID = crypto.randomBytes(32); // Generate Buffer for userID
-    const options = await generateRegistrationOptions({
-      rpName,
-      rpID,
-      userID,
-      userName: username,
-      userDisplayName: username,
-      attestationType: 'none',
-      authenticatorSelection: {
-        authenticatorAttachment: 'platform',
-        userVerification: 'required',
-      },
-      excludeCredentials: [],
-    });
-
-    console.log(`[WebAuthn Register Begin] Generated options for ${username}:`, {
-      userID: userID.toString('base64'),
-      challenge: options.challenge,
-    });
-
-    res.json({
-      publicKey: options,
-      challenge: options.challenge,
-      userID: userID.toString('base64'),
-      email,
-      username,
-    });
-  } catch (err) {
-    console.error('[WebAuthn Register Begin] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
 // WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
@@ -274,6 +321,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
+
 // WebAuthn login: Begin
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
