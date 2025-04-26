@@ -192,7 +192,6 @@ router.post('/webauthn/register/begin', async (req, res) => {
 });
 
 // WebAuthn registration: Complete
-// WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
     console.log('[WebAuthn Register Complete] Received request:', req.body);
@@ -382,44 +381,90 @@ router.post('/register', async (req, res) => {
 // WebAuthn login: Begin
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Begin] Received request:', req.body.email);
+    console.log('[WebAuthn Login Begin] Deployed Version: Buffer Fix 2025-04-26 v2');
+    console.log('[WebAuthn Login Begin] Step 1: Received request:', req.body);
+
+    console.log('[WebAuthn Login Begin] Step 2: Validating request body');
     const { error } = webauthnLoginBeginSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Login Begin] Validation error:', error.details[0].message);
+      console.error('[WebAuthn Login Begin] Step 2 Error: Validation failed:', {
+        message: error.details[0].message,
+        details: error.details,
+      });
       return res.status(400).json({ msg: error.details[0].message });
     }
+    console.log('[WebAuthn Login Begin] Step 2: Validation passed');
 
     const { email } = req.body;
+    console.log('[WebAuthn Login Begin] Step 3: Fetching user for email:', email);
     const user = await User.findOne({ email });
     if (!user || !user.webauthnCredentials.length) {
-      console.error('[WebAuthn Login Begin] No biometric credentials found for:', email);
+      console.error('[WebAuthn Login Begin] Step 3 Error: No biometric credentials found for:', email);
       return res.status(400).json({ msg: 'No biometric credentials found for this user' });
     }
-
-    const options = await generateAuthenticationOptions({
-      rpID,
-      allowCredentials: user.webauthnCredentials.map(cred => ({
-        id: Buffer.from(cred.credentialID, 'base64'),
-        type: 'public-key',
-      })),
-      userVerification: 'required',
+    console.log('[WebAuthn Login Begin] Step 3: User found:', {
+      username: user.username,
+      webauthnUserID: user.webauthnUserID,
+      credentialCount: user.webauthnCredentials.length,
     });
 
+    console.log('[WebAuthn Login Begin] Step 4: Generating authentication options');
+    const allowCredentials = user.webauthnCredentials.map(cred => ({
+      id: Buffer.from(cred.credentialID, 'base64'),
+      type: 'public-key',
+    }));
+    let options;
+    try {
+      options = await generateAuthenticationOptions({
+        rpID,
+        allowCredentials,
+        userVerification: 'required',
+      });
+      console.log('[WebAuthn Login Begin] Step 4: Options generated successfully:', {
+        challenge: options.challenge,
+        allowCredentials: allowCredentials.map(cred => ({
+          id: Buffer.from(cred.id).toString('base64'),
+          type: cred.type,
+        })),
+      });
+    } catch (webauthnError) {
+      console.error('[WebAuthn Login Begin] Step 4 Error: Failed to generate authentication options:', {
+        message: webauthnError.message,
+        stack: webauthnError.stack,
+      });
+      return res.status(500).json({ msg: 'Failed to generate WebAuthn authentication options' });
+    }
+
+    console.log('[WebAuthn Login Begin] Step 5: Storing session data');
     req.session.challenge = options.challenge;
     req.session.email = email;
     req.session.webauthnUserID = user.webauthnUserID;
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
 
-    await req.session.save();
+    try {
+      await req.session.save();
+      console.log('[WebAuthn Login Begin] Step 5: Session saved successfully:', {
+        sessionId: req.sessionID,
+        challenge: options.challenge,
+        email,
+        webauthnUserID: user.webauthnUserID,
+        challengeExpires: req.session.challengeExpires,
+      });
+    } catch (sessionError) {
+      console.error('[WebAuthn Login Begin] Step 5 Error: Failed to save session:', {
+        message: sessionError.message,
+        stack: sessionError.stack,
+      });
+      return res.status(500).json({ msg: 'Failed to save session data' });
+    }
 
-    console.log(`[WebAuthn Login Begin] Generated options for ${user.username}:`, {
-      sessionId: req.sessionID,
-      challenge: options.challenge,
-    });
-
+    console.log('[WebAuthn Login Begin] Step 6: Sending response');
     res.json(options);
   } catch (err) {
-    console.error('[WebAuthn Login Begin] Server error:', err.message);
+    console.error('[WebAuthn Login Begin] Step 7 Error: Unexpected server error:', {
+      message: err.message,
+      stack: err.stack,
+    });
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -427,22 +472,29 @@ router.post('/webauthn/login/begin', async (req, res) => {
 // WebAuthn login: Complete
 router.post('/webauthn/login/complete', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Complete] Received request:', req.body.email);
+    console.log('[WebAuthn Login Complete] Deployed Version: Buffer Fix 2025-04-26 v2');
+    console.log('[WebAuthn Login Complete] Step 1: Received request:', req.body);
+
+    console.log('[WebAuthn Login Complete] Step 2: Validating request body');
     const { error } = webauthnLoginCompleteSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Login Complete] Validation error:', error.details[0].message);
+      console.error('[WebAuthn Login Complete] Step 2 Error: Validation failed:', {
+        message: error.details[0].message,
+        details: error.details,
+      });
       return res.status(400).json({ msg: error.details[0].message });
     }
+    console.log('[WebAuthn Login Complete] Step 2: Validation passed');
 
     const { email, credential } = req.body;
-
+    console.log('[WebAuthn Login Complete] Step 3: Verifying session data');
     if (
       !req.session.challenge ||
       req.session.email !== email ||
       !req.session.webauthnUserID ||
       req.session.challengeExpires < Date.now()
     ) {
-      console.error('[WebAuthn Login Complete] Invalid session data:', {
+      console.error('[WebAuthn Login Complete] Step 3 Error: Invalid session data:', {
         sessionId: req.sessionID,
         sessionChallenge: req.session.challenge,
         sessionEmail: req.session.email,
@@ -452,58 +504,138 @@ router.post('/webauthn/login/complete', async (req, res) => {
       });
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
+    console.log('[WebAuthn Login Complete] Step 3: Session data valid');
 
+    console.log('[WebAuthn Login Complete] Step 4: Fetching user for email:', email);
     const user = await User.findOne({ email });
     if (!user) {
-      console.error('[WebAuthn Login Complete] User not found:', email);
+      console.error('[WebAuthn Login Complete] Step 4 Error: User not found:', email);
       return res.status(400).json({ msg: 'User not found' });
     }
+    console.log('[WebAuthn Login Complete] Step 4: User found:', {
+      username: user.username,
+      webauthnUserID: user.webauthnUserID,
+    });
 
+    console.log('[WebAuthn Login Complete] Step 5: Verifying credential ID');
     const credentialID = Buffer.from(credential.rawId).toString('base64');
     const credentialMatch = user.webauthnCredentials.find(
       cred => cred.credentialID === credentialID
     );
     if (!credentialMatch) {
-      console.error('[WebAuthn Login Complete] Invalid credential for:', email);
+      console.error('[WebAuthn Login Complete] Step 5 Error: Invalid credential ID:', {
+        providedCredentialID: credentialID,
+        storedCredentials: user.webauthnCredentials.map(cred => cred.credentialID),
+      });
       return res.status(400).json({ msg: 'Invalid credential' });
     }
-
-    const verification = await verifyAuthenticationResponse({
-      response: credential,
-      expectedChallenge: req.session.challenge,
-      expectedOrigin,
-      expectedRPID: rpID,
-      authenticator: {
-        credentialID: Buffer.from(credentialMatch.credentialID, 'base64'),
-        credentialPublicKey: Buffer.from(credentialMatch.publicKey, 'base64'),
-        counter: credentialMatch.counter,
-      },
+    console.log('[WebAuthn Login Complete] Step 5: Credential ID matched:', {
+      credentialID,
+      deviceName: credentialMatch.deviceName,
+      authenticatorType: credentialMatch.authenticatorType,
     });
 
-    if (!verification.verified) {
-      console.error('[WebAuthn Login Complete] Verification failed for:', email);
-      return res.status(400).json({ msg: 'Fingerprint authentication failed' });
+    console.log('[WebAuthn Login Complete] Step 6: Preparing authenticator data');
+    const authenticator = {
+      credentialID: Buffer.from(credentialMatch.credentialID, 'base64'),
+      credentialPublicKey: Buffer.from(credentialMatch.publicKey, 'base64'),
+      counter: credentialMatch.counter,
+    };
+    console.log('[WebAuthn Login Complete] Step 6: Authenticator data:', {
+      credentialID: Buffer.from(authenticator.credentialID).toString('base64'),
+      publicKey: Buffer.from(authenticator.credentialPublicKey).toString('base64').substring(0, 50) + '...',
+      counter: authenticator.counter,
+    });
+
+    console.log('[WebAuthn Login Complete] Step 7: Verifying authentication response');
+    let verification;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge: req.session.challenge,
+        expectedOrigin,
+        expectedRPID: rpID,
+        authenticator,
+      });
+      console.log('[WebAuthn Login Complete] Step 7: Verification result:', {
+        verified: verification.verified,
+        authenticationInfo: verification.authenticationInfo,
+      });
+    } catch (verifyError) {
+      console.error('[WebAuthn Login Complete] Step 7 Error: Verification failed:', {
+        message: verifyError.message,
+        stack: verifyError.stack,
+        credential,
+        expectedChallenge: req.session.challenge,
+        expectedOrigin,
+        expectedRPID: rpID,
+        authenticator: {
+          credentialID: Buffer.from(authenticator.credentialID).toString('base64'),
+          publicKey: Buffer.from(authenticator.credentialPublicKey).toString('base64').substring(0, 50) + '...',
+          counter: authenticator.counter,
+        },
+      });
+      return res.status(400).json({ msg: 'Fingerprint authentication failed', details: verifyError.message });
     }
 
-    credentialMatch.counter = verification.authenticationInfo.newCounter;
-    await user.save();
+    if (!verification.verified) {
+      console.error('[WebAuthn Login Complete] Step 7 Error: Verification not successful:', {
+        email,
+        verification,
+      });
+      return res.status(400).json({ msg: 'Fingerprint authentication failed', details: verification });
+    }
 
+    console.log('[WebAuthn Login Complete] Step 8: Updating credential counter');
+    credentialMatch.counter = verification.authenticationInfo.newCounter;
+    try {
+      await user.save();
+      console.log('[WebAuthn Login Complete] Step 8: User saved with updated counter:', {
+        username: user.username,
+        newCounter: credentialMatch.counter,
+      });
+    } catch (saveError) {
+      console.error('[WebAuthn Login Complete] Step 8 Error: Failed to save user:', {
+        message: saveError.message,
+        stack: saveError.stack,
+      });
+      return res.status(500).json({ msg: 'Failed to update user data' });
+    }
+
+    console.log('[WebAuthn Login Complete] Step 9: Generating JWT token');
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
+    console.log('[WebAuthn Login Complete] Step 10: Updating session');
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.challenge = null;
     req.session.email = null;
     req.session.webauthnUserID = null;
     req.session.challengeExpires = null;
-    await req.session.save();
+    try {
+      await req.session.save();
+      console.log('[WebAuthn Login Complete] Step 10: Session updated successfully:', {
+        sessionId: req.sessionID,
+        userId: user.id,
+        username: user.username,
+      });
+    } catch (sessionError) {
+      console.error('[WebAuthn Login Complete] Step 10 Error: Failed to save session:', {
+        message: sessionError.message,
+        stack: sessionError.stack,
+      });
+      return res.status(500).json({ msg: 'Failed to update session data' });
+    }
 
-    console.log(`[WebAuthn Login Complete] User logged in: ${user.username} (ID: ${user.id})`);
+    console.log(`[WebAuthn Login Complete] Step 11: User logged in: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('[WebAuthn Login Complete] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
+    console.error('[WebAuthn Login Complete] Step 12 Error: Unexpected server error:', {
+      message: err.message,
+      stack: err.stack,
+    });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
