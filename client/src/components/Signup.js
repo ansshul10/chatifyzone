@@ -284,7 +284,8 @@ const Signup = () => {
 
       console.log('Starting WebAuthn registration for:', { email, username });
     const response = await api.post('/auth/webauthn/register/begin', { email, username });
-    console.log('Full response from /auth/webauthn/register/begin:', response.data);
+      console.log('Full response from /auth/webauthn/register/begin:', response); // Log the entire response object
+      console.log('Response data:', response.data); // Log response.data specifically
 
     if (!response.data || !response.data.challenge || !response.data.userID) {
       console.error('Invalid response from /auth/webauthn/register/begin:', response.data);
