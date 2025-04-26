@@ -27,12 +27,14 @@ const sessionMiddleware = session({
     mongoUrl: process.env.MONGO_URI,
     collectionName: 'sessions',
     ttl: 24 * 60 * 60, // 24 hours
+    autoRemove: 'native', // Automatically remove expired sessions
   }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production' ? true : false,
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/', // Ensure cookie is sent for all routes
   },
 });
 
@@ -63,6 +65,14 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Debug middleware to log session data
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] Request: ${req.method} ${req.url}`);
+  console.log('Session ID:', req.sessionID);
+  console.log('Session Data:', JSON.stringify(req.session, null, 2));
+  next();
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
