@@ -88,26 +88,6 @@ const unblockUserSchema = Joi.object({
   userId: Joi.string().required(),
 });
 
-// Helper function to validate base64 string
-const isValidBase64 = (str) => {
-  if (typeof str !== 'string' || str.length === 0) return false;
-  // Allow only base64 characters (A-Z, a-z, 0-9, +, /, =)
-  const base64Regex = /^[A-Za-z0-9+/=]+$/;
-  if (!base64Regex.test(str)) return false;
-  // Ensure length is a multiple of 4 (base64 requirement)
-  if (str.length % 4 !== 0) return false;
-  // Try decoding to catch invalid base64
-  try {
-    const decoded = Buffer.from(str, 'base64');
-    // Re-encode to verify integrity (removing padding for comparison)
-    const reEncoded = decoded.toString('base64').replace(/=+$/, '');
-    const originalNoPadding = str.replace(/=+$/, '');
-    return reEncoded === originalNoPadding;
-  } catch (err) {
-    return false;
-  }
-};
-
 // WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
@@ -200,32 +180,10 @@ router.post('/webauthn/register/begin', async (req, res) => {
     }
     console.log('[WebAuthn Register Begin] Step 6: Response structure valid');
 
-    console.log('[WebAuthn Register Begin] Step 7: Storing session data');
-    req.session.challenge = options.challenge;
-    req.session.email = email;
-    req.session.username = username;
-    req.session.webauthnUserID = userID.toString('base64');
-    try {
-      await req.session.save();
-      console.log('[WebAuthn Register Begin] Step 7: Session saved successfully:', {
-        sessionId: req.sessionID,
-        challenge: options.challenge,
-        email,
-        username,
-        webauthnUserID: userID.toString('base64'),
-      });
-    } catch (sessionError) {
-      console.error('[WebAuthn Register Begin] Step 7 Error: Failed to save session:', {
-        message: sessionError.message,
-        stack: sessionError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save session data' });
-    }
-
-    console.log('[WebAuthn Register Begin] Step 8: Sending response:', response);
+    console.log('[WebAuthn Register Begin] Step 7: Sending response:', response);
     res.json(response);
   } catch (err) {
-    console.error('[WebAuthn Register Begin] Step 9 Error: Unexpected server error:', {
+    console.error('[WebAuthn Register Begin] Step 8 Error: Unexpected server error:', {
       message: err.message,
       stack: err.stack,
     });
@@ -234,43 +192,24 @@ router.post('/webauthn/register/begin', async (req, res) => {
 });
 
 // WebAuthn registration: Complete
+// WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
-    console.log('[WebAuthn Register Complete] Deployed Version: Buffer Fix 2025-04-26 v2');
-    console.log('[WebAuthn Register Complete] Step 1: Received request:', req.body);
-
-    console.log('[WebAuthn Register Complete] Step 2: Validating request body');
+    console.log('[WebAuthn Register Complete] Received request:', req.body);
     const { error } = webauthnRegisterCompleteSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Register Complete] Step 2 Error: Validation error:', error.details[0].message);
+      console.error('[WebAuthn Register Complete] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
-    console.log('[WebAuthn Register Complete] Step 2: Validation passed');
 
     const { email, username, credential, challenge, userID } = req.body;
-    console.log('[WebAuthn Register Complete] Step 3: Verifying session data');
-    if (
-      !req.session.challenge ||
-      req.session.email !== email ||
-      req.session.username !== username ||
-      req.session.webauthnUserID !== userID
-    ) {
-      console.error('[WebAuthn Register Complete] Step 3 Error: Invalid session data:', {
-        sessionId: req.sessionID,
-        sessionChallenge: req.session.challenge,
-        sessionEmail: req.session.email,
-        sessionUsername: req.session.username,
-        sessionWebauthnUserID: req.session.webauthnUserID,
-        providedEmail: email,
-        providedUsername: username,
-        providedUserID: userID,
-      });
-      return res.status(400).json({ msg: 'Invalid session data' });
+    if (!challenge || !userID) {
+      console.error('[WebAuthn Register Complete] Missing challenge or userID:', { challenge, userID });
+      return res.status(400).json({ msg: 'Missing challenge or userID' });
     }
-    console.log('[WebAuthn Register Complete] Step 3: Session data valid');
 
-    console.log('[WebAuthn Register Complete] Step 4: Verifying credential with userID:', userID);
-    console.log('[WebAuthn Register Complete] Step 4: Credential structure:', {
+    console.log('[WebAuthn Register Complete] Verifying credential with userID:', userID);
+    console.log('[WebAuthn Register Complete] Credential structure:', {
       id: credential.id,
       rawId: credential.rawId,
       type: credential.type,
@@ -294,24 +233,21 @@ router.post('/webauthn/register/complete', async (req, res) => {
         expectedOrigin,
         expectedRPID: rpID,
       });
-      console.log('[WebAuthn Register Complete] Step 4: Verification result:', {
-        verified: verification.verified,
-        registrationInfo: verification.registrationInfo,
-      });
     } catch (verifyError) {
-      console.error('[WebAuthn Register Complete] Step 4 Error: Verification failed:', {
+      console.error('[WebAuthn Register Complete] Verification error:', {
         message: verifyError.message,
         stack: verifyError.stack,
       });
       return res.status(400).json({ msg: 'Fingerprint registration verification failed', details: verifyError.message });
     }
 
+    console.log('[WebAuthn Register Complete] Verification result:', verification);
+
     if (!verification.verified) {
-      console.error('[WebAuthn Register Complete] Step 4 Error: Verification failed for:', email, verification);
+      console.error('[WebAuthn Register Complete] Verification failed for:', email, verification);
       return res.status(400).json({ msg: 'Fingerprint registration failed', details: verification });
     }
 
-    console.log('[WebAuthn Register Complete] Step 5: Processing credential data');
     const registrationInfo = verification.registrationInfo || {};
     const credentialData = registrationInfo.credential || {};
     const credentialID = credentialData.id;
@@ -319,7 +255,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const counter = credentialData.counter;
 
     if (!credentialID || !publicKey || counter === undefined) {
-      console.error('[WebAuthn Register Complete] Step 5 Error: Missing credential fields:', {
+      console.error('[WebAuthn Register Complete] Missing credential fields:', {
         credentialID,
         publicKey,
         counter,
@@ -329,13 +265,12 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(500).json({ msg: 'Invalid credential data from server' });
     }
 
-    console.log('[WebAuthn Register Complete] Step 5: Extracted credential data:', {
-      credentialID: Buffer.from(credentialID).toString('base64'),
+    console.log('[WebAuthn Register Complete] Extracted credential data:', {
+      credentialID,
       publicKey: Buffer.from(publicKey).toString('base64').substring(0, 50) + '...',
       counter,
     });
 
-    console.log('[WebAuthn Register Complete] Step 6: Creating new user');
     const user = new User({
       email,
       username,
@@ -349,53 +284,19 @@ router.post('/webauthn/register/complete', async (req, res) => {
       }],
     });
 
-    try {
-      await user.save();
-      console.log('[WebAuthn Register Complete] Step 6: User saved:', {
-        username: user.username,
-        email: user.email,
-        userId: user.id,
-      });
-    } catch (saveError) {
-      console.error('[WebAuthn Register Complete] Step 6 Error: Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save user data' });
-    }
+    await user.save();
 
-    console.log('[WebAuthn Register Complete] Step 7: Generating JWT token');
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    console.log('[WebAuthn Register Complete] Step 8: Updating session');
     req.session.userId = user.id;
     req.session.username = user.username;
-    req.session.challenge = null;
-    req.session.email = null;
-    req.session.webauthnUserID = null;
-    try {
-      await req.session.save();
-      console.log('[WebAuthn Register Complete] Step 8: Session updated successfully:', {
-        sessionId: req.sessionID,
-        userId: user.id,
-        username: user.username,
-      });
-    } catch (sessionError) {
-      console.error('[WebAuthn Register Complete] Step 8 Error: Failed to save session:', {
-        message: sessionError.message,
-        stack: sessionError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to update session data' });
-    }
+    await req.session.save();
 
-    console.log(`[WebAuthn Register Complete] Step 9: User registered: ${user.username} (ID: ${user.id})`);
+    console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('[WebAuthn Register Complete] Step 10 Error: Unexpected server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[WebAuthn Register Complete] Server error:', err.message, err.stack);
     res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
@@ -433,28 +334,12 @@ router.post('/login', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    try {
-      await req.session.save();
-      console.log('[Password Login] Session saved successfully:', {
-        sessionId: req.sessionID,
-        userId: user.id,
-        username: user.username,
-      });
-    } catch (sessionError) {
-      console.error('[Password Login] Failed to save session:', {
-        message: sessionError.message,
-        stack: sessionError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save session data' });
-    }
+    await req.session.save();
 
     console.log(`[Password Login] User logged in: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('[Password Login] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Password Login] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -477,48 +362,19 @@ router.post('/register', async (req, res) => {
     }
 
     user = new User({ email, username, password });
-    try {
-      await user.save();
-      console.log('[Password Register] User saved:', {
-        username: user.username,
-        email: user.email,
-        userId: user.id,
-      });
-    } catch (saveError) {
-      console.error('[Password Register] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save user data' });
-    }
+    await user.save();
 
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    try {
-      await req.session.save();
-      console.log('[Password Register] Session saved successfully:', {
-        sessionId: req.sessionID,
-        userId: user.id,
-        username: user.username,
-      });
-    } catch (sessionError) {
-      console.error('[Password Register] Failed to save session:', {
-        message: sessionError.message,
-        stack: sessionError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save session data' });
-    }
+    await req.session.save();
 
     console.log(`[Password Register] User registered: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('[Password Register] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Password Register] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -526,143 +382,44 @@ router.post('/register', async (req, res) => {
 // WebAuthn login: Begin
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Begin] Deployed Version: Buffer Fix 2025-04-27 v3');
-    console.log('[WebAuthn Login Begin] Step 1: Received request:', req.body);
-
-    console.log('[WebAuthn Login Begin] Step 2: Validating request body');
+    console.log('[WebAuthn Login Begin] Received request:', req.body.email);
     const { error } = webauthnLoginBeginSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Login Begin] Step 2 Error: Validation failed:', {
-        message: error.details[0].message,
-        details: error.details,
-      });
+      console.error('[WebAuthn Login Begin] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
-    console.log('[WebAuthn Login Begin] Step 2: Validation passed');
 
     const { email } = req.body;
-    console.log('[WebAuthn Login Begin] Step 3: Fetching user for email:', email);
     const user = await User.findOne({ email });
     if (!user || !user.webauthnCredentials.length) {
-      console.error('[WebAuthn Login Begin] Step 3 Error: No biometric credentials found for:', email);
+      console.error('[WebAuthn Login Begin] No biometric credentials found for:', email);
       return res.status(400).json({ msg: 'No biometric credentials found for this user' });
     }
-    console.log('[WebAuthn Login Begin] Step 3: User found:', {
-      username: user.username,
-      webauthnUserID: user.webauthnUserID,
-      credentialCount: user.webauthnCredentials.length,
-    });
 
-    console.log('[WebAuthn Login Begin] Step 4: Validating credentials');
-    const validCredentials = user.webauthnCredentials.filter(cred => {
-      const isValid = isValidBase64(cred.credentialID);
-      if (!isValid) {
-        console.error('[WebAuthn Login Begin] Step 4 Error: Invalid credentialID:', {
-          credentialID: cred.credentialID,
-          deviceName: cred.deviceName,
-          authenticatorType: cred.authenticatorType,
-        });
-      }
-      return isValid;
-    });
-
-    if (validCredentials.length === 0) {
-      console.error('[WebAuthn Login Begin] Step 4 Error: No valid credentials found for:', email);
-      return res.status(400).json({ msg: 'No valid biometric credentials found for this user' });
-    }
-
-    const allowCredentials = validCredentials.map(cred => {
-      console.log('[WebAuthn Login Begin] Step 4: Processing credential:', {
-        credentialID: cred.credentialID,
-        deviceName: cred.deviceName,
-      });
-      let credentialID;
-      try {
-        if (!isValidBase64(cred.credentialID)) {
-          throw new Error('Invalid base64 format');
-        }
-        credentialID = Buffer.from(cred.credentialID, 'base64');
-      } catch (err) {
-        console.error('[WebAuthn Login Begin] Step 4 Error: Failed to decode credentialID:', {
-          credentialID: cred.credentialID,
-          deviceName: cred.deviceName,
-          error: err.message,
-        });
-        return null; // Skip invalid credentials
-      }
-      return {
-        id: credentialID,
+    const options = await generateAuthenticationOptions({
+      rpID,
+      allowCredentials: user.webauthnCredentials.map(cred => ({
+        id: Buffer.from(cred.credentialID, 'base64'),
         type: 'public-key',
-      };
-    }).filter(cred => cred !== null); // Remove invalid credentials
+      })),
+      userVerification: 'required',
+    });
 
-    if (allowCredentials.length === 0) {
-      console.error('[WebAuthn Login Begin] Step 4 Error: No valid credentials after decoding for:', email);
-      return res.status(400).json({ msg: 'No valid biometric credentials could be processed' });
-    }
-
-    console.log('[WebAuthn Login Begin] Step 4: Generated allowCredentials:', allowCredentials.map(cred => ({
-      id: Buffer.from(cred.id).toString('base64'),
-      type: cred.type,
-    })));
-
-    console.log('[WebAuthn Login Begin] Step 5: Generating authentication options');
-    let options;
-    try {
-      options = await generateAuthenticationOptions({
-        rpID,
-        allowCredentials,
-        userVerification: 'required',
-      });
-      console.log('[WebAuthn Login Begin] Step 5: Options generated successfully:', {
-        challenge: options.challenge,
-        allowCredentials: options.allowCredentials.map(cred => ({
-          id: Buffer.from(cred.id).toString('base64'),
-          type: cred.type,
-        })),
-      });
-    } catch (webauthnError) {
-      console.error('[WebAuthn Login Begin] Step 5 Error: Failed to generate authentication options:', {
-        message: webauthnError.message,
-        stack: webauthnError.stack,
-        allowCredentials: allowCredentials.map(cred => ({
-          id: Buffer.from(cred.id).toString('base64'),
-          type: cred.type,
-        })),
-      });
-      return res.status(500).json({ msg: 'Failed to generate WebAuthn authentication options', details: webauthnError.message });
-    }
-
-    console.log('[WebAuthn Login Begin] Step 6: Storing session data');
     req.session.challenge = options.challenge;
     req.session.email = email;
     req.session.webauthnUserID = user.webauthnUserID;
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
 
-    try {
-      await req.session.save();
-      console.log('[WebAuthn Login Begin] Step 6: Session saved successfully:', {
-        sessionId: req.sessionID,
-        challenge: options.challenge,
-        email,
-        webauthnUserID: user.webauthnUserID,
-        challengeExpires: req.session.challengeExpires,
-      });
-    } catch (sessionError) {
-      console.error('[WebAuthn Login Begin] Step 6 Error: Failed to save session:', {
-        message: sessionError.message,
-        stack: sessionError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save session data' });
-    }
+    await req.session.save();
 
-    console.log('[WebAuthn Login Begin] Step 7: Sending response');
+    console.log(`[WebAuthn Login Begin] Generated options for ${user.username}:`, {
+      sessionId: req.sessionID,
+      challenge: options.challenge,
+    });
+
     res.json(options);
   } catch (err) {
-    console.error('[WebAuthn Login Begin] Step 8 Error: Unexpected server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[WebAuthn Login Begin] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -670,29 +427,22 @@ router.post('/webauthn/login/begin', async (req, res) => {
 // WebAuthn login: Complete
 router.post('/webauthn/login/complete', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Complete] Deployed Version: Buffer Fix 2025-04-27 v3');
-    console.log('[WebAuthn Login Complete] Step 1: Received request:', req.body);
-
-    console.log('[WebAuthn Login Complete] Step 2: Validating request body');
+    console.log('[WebAuthn Login Complete] Received request:', req.body.email);
     const { error } = webauthnLoginCompleteSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Login Complete] Step 2 Error: Validation failed:', {
-        message: error.details[0].message,
-        details: error.details,
-      });
+      console.error('[WebAuthn Login Complete] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
-    console.log('[WebAuthn Login Complete] Step 2: Validation passed');
 
     const { email, credential } = req.body;
-    console.log('[WebAuthn Login Complete] Step 3: Verifying session data');
+
     if (
       !req.session.challenge ||
       req.session.email !== email ||
       !req.session.webauthnUserID ||
       req.session.challengeExpires < Date.now()
     ) {
-      console.error('[WebAuthn Login Complete] Step 3 Error: Invalid session data:', {
+      console.error('[WebAuthn Login Complete] Invalid session data:', {
         sessionId: req.sessionID,
         sessionChallenge: req.session.challenge,
         sessionEmail: req.session.email,
@@ -702,161 +452,58 @@ router.post('/webauthn/login/complete', async (req, res) => {
       });
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
-    console.log('[WebAuthn Login Complete] Step 3: Session data valid');
 
-    console.log('[WebAuthn Login Complete] Step 4: Fetching user for email:', email);
     const user = await User.findOne({ email });
     if (!user) {
-      console.error('[WebAuthn Login Complete] Step 4 Error: User not found:', email);
+      console.error('[WebAuthn Login Complete] User not found:', email);
       return res.status(400).json({ msg: 'User not found' });
     }
-    console.log('[WebAuthn Login Complete] Step 4: User found:', {
-      username: user.username,
-      webauthnUserID: user.webauthnUserID,
-    });
 
-    console.log('[WebAuthn Login Complete] Step 5: Verifying credential ID');
-    let credentialID;
-    try {
-      credentialID = Buffer.from(credential.rawId, 'base64').toString('base64');
-      if (!isValidBase64(credentialID)) {
-        throw new Error('Invalid base64 format for credential.rawId');
-      }
-    } catch (err) {
-      console.error('[WebAuthn Login Complete] Step 5 Error: Invalid credential ID format:', {
-        rawId: credential.rawId,
-        error: err.message,
-      });
-      return res.status(400).json({ msg: 'Invalid credential format' });
-    }
-
+    const credentialID = Buffer.from(credential.rawId).toString('base64');
     const credentialMatch = user.webauthnCredentials.find(
       cred => cred.credentialID === credentialID
     );
     if (!credentialMatch) {
-      console.error('[WebAuthn Login Complete] Step 5 Error: Invalid credential ID:', {
-        providedCredentialID: credentialID,
-        storedCredentials: user.webauthnCredentials.map(cred => cred.credentialID),
-      });
+      console.error('[WebAuthn Login Complete] Invalid credential for:', email);
       return res.status(400).json({ msg: 'Invalid credential' });
     }
-    console.log('[WebAuthn Login Complete] Step 5: Credential ID matched:', {
-      credentialID,
-      deviceName: credentialMatch.deviceName,
-      authenticatorType: credentialMatch.authenticatorType,
-    });
 
-    console.log('[WebAuthn Login Complete] Step 6: Preparing authenticator data');
-    let authenticator;
-    try {
-      authenticator = {
+    const verification = await verifyAuthenticationResponse({
+      response: credential,
+      expectedChallenge: req.session.challenge,
+      expectedOrigin,
+      expectedRPID: rpID,
+      authenticator: {
         credentialID: Buffer.from(credentialMatch.credentialID, 'base64'),
         credentialPublicKey: Buffer.from(credentialMatch.publicKey, 'base64'),
         counter: credentialMatch.counter,
-      };
-    } catch (err) {
-      console.error('[WebAuthn Login Complete] Step 6 Error: Failed to decode authenticator data:', {
-        credentialID: credentialMatch.credentialID,
-        publicKey: credentialMatch.publicKey,
-        error: err.message,
-      });
-      return res.status(400).json({ msg: 'Invalid authenticator data' });
-    }
-    console.log('[WebAuthn Login Complete] Step 6: Authenticator data:', {
-      credentialID: Buffer.from(authenticator.credentialID).toString('base64'),
-      publicKey: Buffer.from(authenticator.credentialPublicKey).toString('base64').substring(0, 50) + '...',
-      counter: authenticator.counter,
+      },
     });
 
-    console.log('[WebAuthn Login Complete] Step 7: Verifying authentication response');
-    let verification;
-    try {
-      verification = await verifyAuthenticationResponse({
-        response: credential,
-        expectedChallenge: req.session.challenge,
-        expectedOrigin,
-        expectedRPID: rpID,
-        authenticator,
-      });
-      console.log('[WebAuthn Login Complete] Step 7: Verification result:', {
-        verified: verification.verified,
-        authenticationInfo: verification.authenticationInfo,
-      });
-    } catch (verifyError) {
-      console.error('[WebAuthn Login Complete] Step 7 Error: Verification failed:', {
-        message: verifyError.message,
-        stack: verifyError.stack,
-        credential,
-        expectedChallenge: req.session.challenge,
-        expectedOrigin,
-        expectedRPID: rpID,
-        authenticator: {
-          credentialID: Buffer.from(authenticator.credentialID).toString('base64'),
-          publicKey: Buffer.from(authenticator.credentialPublicKey).toString('base64').substring(0, 50) + '...',
-          counter: authenticator.counter,
-        },
-      });
-      return res.status(400).json({ msg: 'Fingerprint authentication failed', details: verifyError.message });
-    }
-
     if (!verification.verified) {
-      console.error('[WebAuthn Login Complete] Step 7 Error: Verification not successful:', {
-        email,
-        verification,
-      });
-      return res.status(400).json({ msg: 'Fingerprint authentication failed', details: verification });
+      console.error('[WebAuthn Login Complete] Verification failed for:', email);
+      return res.status(400).json({ msg: 'Fingerprint authentication failed' });
     }
 
-    console.log('[WebAuthn Login Complete] Step 8: Updating credential counter');
     credentialMatch.counter = verification.authenticationInfo.newCounter;
-    try {
-      await user.save();
-      console.log('[WebAuthn Login Complete] Step 8: User saved with updated counter:', {
-        username: user.username,
-        newCounter: credentialMatch.counter,
-      });
-    } catch (saveError) {
-      console.error('[WebAuthn Login Complete] Step 8 Error: Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to update user data' });
-    }
+    await user.save();
 
-    console.log('[WebAuthn Login Complete] Step 9: Generating JWT token');
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    console.log('[WebAuthn Login Complete] Step 10: Updating session');
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.challenge = null;
     req.session.email = null;
     req.session.webauthnUserID = null;
     req.session.challengeExpires = null;
-    try {
-      await req.session.save();
-      console.log('[WebAuthn Login Complete] Step 10: Session updated successfully:', {
-        sessionId: req.sessionID,
-        userId: user.id,
-        username: user.username,
-      });
-    } catch (sessionError) {
-      console.error('[WebAuthn Login Complete] Step 10 Error: Failed to save session:', {
-        message: sessionError.message,
-        stack: sessionError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to update session data' });
-    }
+    await req.session.save();
 
-    console.log(`[WebAuthn Login Complete] Step 11: User logged in: ${user.username} (ID: ${user.id})`);
+    console.log(`[WebAuthn Login Complete] User logged in: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('[WebAuthn Login Complete] Step 12 Error: Unexpected server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
-    res.status(500).json({ msg: `Server error: ${err.message}` });
+    console.error('[WebAuthn Login Complete] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
   }
 });
 
@@ -895,10 +542,7 @@ router.get('/me', auth, async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('[Get User] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Get User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -928,19 +572,7 @@ router.post('/forgot-password', async (req, res) => {
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
     user.resetPasswordExpires = Date.now() + 3600000;
-    try {
-      await user.save();
-      console.log('[Forgot Password] User saved with reset token:', {
-        email: user.email,
-        resetToken,
-      });
-    } catch (saveError) {
-      console.error('[Forgot Password] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save reset token' });
-    }
+    await user.save();
 
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
     const subject = 'Password Reset Request';
@@ -992,23 +624,11 @@ router.post('/forgot-password', async (req, res) => {
 </body>
 </html>`;
 
-    try {
-      await sendEmail(user.email, subject, html);
-      console.log(`[Forgot Password] Reset link sent to: ${user.email}`);
-    } catch (emailError) {
-      console.error('[Forgot Password] Failed to send email:', {
-        message: emailError.message,
-        stack: emailError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to send reset email' });
-    }
-
+    await sendEmail(user.email, subject, html);
+    console.log(`[Forgot Password] Reset link sent to: ${email}`);
     res.json({ msg: 'Password reset link sent to your email' });
   } catch (err) {
-    console.error('[Forgot Password] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Forgot Password] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1038,23 +658,12 @@ router.post('/reset-password/:token', async (req, res) => {
     user.password = password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
-    try {
-      await user.save();
-      console.log(`[Reset Password] Password reset for: ${user.email}`);
-    } catch (saveError) {
-      console.error('[Reset Password] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save password reset' });
-    }
+    await user.save();
 
+    console.log(`[Reset Password] Password reset for: ${user.email}`);
     res.json({ msg: 'Password successfully reset' });
   } catch (err) {
-    console.error('[Reset Password] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Reset Password] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1072,10 +681,7 @@ router.get('/friends', auth, async (req, res) => {
     console.log(`[Get Friends] Friends fetched for: ${user.username}`);
     res.json(user.friends);
   } catch (err) {
-    console.error('[Get Friends] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Get Friends] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1108,24 +714,13 @@ router.post('/add-friend', auth, async (req, res) => {
     }
 
     user.friends.push(friend._id);
-    try {
-      await user.save();
-      console.log(`[Add Friend] Friend added: ${friendUsername} for user: ${user.username}`);
-    } catch (saveError) {
-      console.error('[Add Friend] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save friend data' });
-    }
+    await user.save();
 
     const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
+    console.log(`[Add Friend] Friend added: ${friendUsername} for user: ${user.username}`);
     res.json(updatedFriends.friends);
   } catch (err) {
-    console.error('[Add Friend] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Add Friend] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1153,24 +748,13 @@ router.post('/remove-friend', auth, async (req, res) => {
     }
 
     user.friends = user.friends.filter(id => id.toString() !== friendId);
-    try {
-      await user.save();
-      console.log(`[Remove Friend] Friend removed: ${friendId} for user: ${user.username}`);
-    } catch (saveError) {
-      console.error('[Remove Friend] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save friend data' });
-    }
+    await user.save();
 
     const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
+    console.log(`[Remove Friend] Friend removed: ${friendId} for user: ${user.username}`);
     res.json(updatedFriends.friends);
   } catch (err) {
-    console.error('[Remove Friend] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Remove Friend] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1197,17 +781,9 @@ router.put('/profile', auth, async (req, res) => {
     if (status !== undefined) user.status = status;
     if (allowFriendRequests !== undefined) user.privacy.allowFriendRequests = allowFriendRequests;
 
-    try {
-      await user.save();
-      console.log(`[Update Profile] Profile updated for: ${user.username}`);
-    } catch (saveError) {
-      console.error('[Update Profile] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save profile data' });
-    }
+    await user.save();
 
+    console.log(`[Update Profile] Profile updated for: ${user.username}`);
     res.json({
       id: user.id,
       email: user.email,
@@ -1218,10 +794,7 @@ router.put('/profile', auth, async (req, res) => {
       privacy: user.privacy,
     });
   } catch (err) {
-    console.error('[Update Profile] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Update Profile] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1254,10 +827,7 @@ router.get('/profile', auth, async (req, res) => {
       blockedUsers: user.blockedUsers,
     });
   } catch (err) {
-    console.error('[Get Profile] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Get Profile] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1279,11 +849,6 @@ router.put('/change-password', auth, async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    if (!user.password) {
-      console.error('[Change Password] Account uses biometric login:', user.email);
-      return res.status(400).json({ msg: 'This account uses biometric login.' });
-    }
-
     const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) {
       console.error('[Change Password] Current password incorrect:', req.user);
@@ -1291,23 +856,12 @@ router.put('/change-password', auth, async (req, res) => {
     }
 
     user.password = newPassword;
-    try {
-      await user.save();
-      console.log(`[Change Password] Password changed for: ${user.username}`);
-    } catch (saveError) {
-      console.error('[Change Password] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save password change' });
-    }
+    await user.save();
 
+    console.log(`[Change Password] Password changed for: ${user.username}`);
     res.json({ msg: 'Password changed successfully' });
   } catch (err) {
-    console.error('[Change Password] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Change Password] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1322,31 +876,14 @@ router.delete('/delete-account', auth, async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    try {
-      await User.deleteOne({ _id: req.user });
-      console.log(`[Delete Account] Account deleted for: ${user.username}`);
-    } catch (deleteError) {
-      console.error('[Delete Account] Failed to delete user:', {
-        message: deleteError.message,
-        stack: deleteError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to delete account' });
-    }
-
+    await User.deleteOne({ _id: req.user });
     req.session.destroy((err) => {
-      if (err) {
-        console.error('[Delete Account] Failed to destroy session:', {
-          message: err.message,
-          stack: err.stack,
-        });
-      }
+      if (err) console.error('[Delete Account] Failed to destroy session:', err.message);
+      console.log(`[Delete Account] Account deleted for: ${user.username}`);
       res.json({ msg: 'Account deleted successfully' });
     });
   } catch (err) {
-    console.error('[Delete Account] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Delete Account] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1379,24 +916,13 @@ router.post('/block-user', auth, async (req, res) => {
     }
 
     user.blockedUsers.push(userToBlock._id);
-    try {
-      await user.save();
-      console.log(`[Block User] User blocked: ${username} by: ${user.username}`);
-    } catch (saveError) {
-      console.error('[Block User] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save block data' });
-    }
+    await user.save();
 
     const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    console.log(`[Block User] User blocked: ${username} by: ${user.username}`);
     res.json({ blockedUsers: updatedUser.blockedUsers });
   } catch (err) {
-    console.error('[Block User] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Block User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1413,30 +939,19 @@ router.post('/unblock-user', auth, async (req, res) => {
 
     const { userId } = req.body;
     const user = await User.findById(req.user);
-    if (!user.blockedUsers.includes(userId) && userId !== req.user) {
+    if (!user.blockedUsers.includes(userId)) {
       console.error('[Unblock User] User not blocked:', userId);
       return res.status(400).json({ msg: 'User not blocked' });
     }
 
     user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
-    try {
-      await user.save();
-      console.log(`[Unblock User] User unblocked: ${userId} by: ${user.username}`);
-    } catch (saveError) {
-      console.error('[Unblock User] Failed to save user:', {
-        message: saveError.message,
-        stack: saveError.stack,
-      });
-      return res.status(500).json({ msg: 'Failed to save unblock data' });
-    }
+    await user.save();
 
     const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    console.log(`[Unblock User] User unblocked: ${userId} by: ${user.username}`);
     res.json({ blockedUsers: updatedUser.blockedUsers });
   } catch (err) {
-    console.error('[Unblock User] Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[Unblock User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
