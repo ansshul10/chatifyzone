@@ -41,7 +41,6 @@ const Profile = () => {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true' || true);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [newFriendRequest, setNewFriendRequest] = useState(null);
   const [friendSearch, setFriendSearch] = useState('');
   const [activityLog, setActivityLog] = useState([]);
@@ -89,7 +88,6 @@ const Profile = () => {
         }
       } finally {
         setLoading(false);
-        setIsInitialLoad(false);
       }
     };
     fetchProfile();
@@ -131,7 +129,7 @@ const Profile = () => {
       setProfile((prev) => ({ ...prev, blockedUsers: validBlocked }));
     });
 
-    socket.on('actionResponse', ({ type, success, msg }) => {
+    socket.on('actionResponse', ({ success, msg }) => {
       setError(success ? '' : msg);
       setSuccess(success ? msg : '');
       setTimeout(() => { setError(''); setSuccess(''); }, 3000);
@@ -979,9 +977,10 @@ const Profile = () => {
             </motion.div>
           )}
         </AnimatePresence>
-      
-      </div> </motion.div>
-    );
+
+      </div>
+    </motion.div>
+  );
 };
 
 export default Profile;
