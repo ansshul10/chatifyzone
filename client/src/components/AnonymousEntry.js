@@ -10,7 +10,6 @@ import {
   FaShieldAlt,
   FaRocket,
   FaGlobe,
-  FaStar,
   FaEnvelope,
   FaQuestionCircle,
   FaSun,
@@ -134,7 +133,6 @@ const AnonymousEntry = () => {
     { icon: <FaUsers className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Create Groups', desc: 'Start and manage groups' },
     { icon: <FaUserEdit className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Profile', desc: 'Customize your identity' },
   ];
-
 
   // FAQ Data
   const faqs = [
