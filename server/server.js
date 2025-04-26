@@ -20,7 +20,7 @@ const server = http.createServer(app);
 
 // Validate environment variables
 if (!process.env.MONGO_URI || !process.env.SESSION_SECRET || !process.env.JWT_SECRET) {
-  console.error('Missing required environment variables: MONGO_URI, SESSION_SECRET, JWT_SECRET');
+  console.error('[Server] Missing required environment variables: MONGO_URI, SESSION_SECRET, JWT_SECRET');
   process.exit(1);
 }
 
@@ -60,7 +60,9 @@ const io = new Server(server, {
 io.use(wrap(sessionMiddleware));
 
 // Connect to MongoDB
-connectDB();
+connectDB().then(() => {
+  console.log('[Server] MongoDB connected successfully');
+});
 
 // Middleware
 app.use(cors({
@@ -103,11 +105,12 @@ const getPreviousMessages = async (userId) => {
 };
 
 io.on('connection', (socket) => {
-  console.log(`[${new Date().toISOString()}] User connected: ${socket.id}`);
+  console.log(`[Socket.IO] User connected: ${socket.id}`);
 
   socket.on('join', async (userId) => {
     try {
       if (!userId) {
+        console.error('[Socket.IO Join] No user ID provided');
         socket.emit('error', { msg: 'No user ID provided' });
         return;
       }
@@ -116,6 +119,7 @@ io.on('connection', (socket) => {
 
       const username = socket.request.session.username || socket.handshake.query.username;
       if (!username) {
+        console.error('[Socket.IO Join] Username is required');
         socket.emit('error', { msg: 'Username is required' });
         return;
       }
@@ -140,6 +144,7 @@ io.on('connection', (socket) => {
           socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
           socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
         } else {
+          console.error('[Socket.IO Join] User not found:', userId);
           socket.emit('error', { msg: 'User not found' });
           return;
         }
@@ -151,9 +156,9 @@ io.on('connection', (socket) => {
       const onlineUsers = await getOnlineUsers();
       io.emit('userListUpdate', onlineUsers);
 
-      console.log(`[${new Date().toISOString()}] User joined: ${userId} (${username})`);
+      console.log(`[Socket.IO Join] User joined: ${userId} (${username})`);
     } catch (err) {
-      console.error('Error in join event:', err);
+      console.error('[Socket.IO Join] Error:', err.message);
       socket.emit('error', { msg: 'Failed to join' });
     }
   });
@@ -161,6 +166,7 @@ io.on('connection', (socket) => {
   socket.on('sendMessage', async ({ sender, receiver, content }) => {
     try {
       if (!sender || !receiver || !content) {
+        console.error('[Socket.IO SendMessage] Missing message data');
         socket.emit('error', { msg: 'Missing message data' });
         return;
       }
@@ -169,10 +175,12 @@ io.on('connection', (socket) => {
       const receiverExists = receiver.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: receiver }) : await User.findById(receiver);
 
       if (sender.startsWith('anon-') && !receiver.startsWith('anon-')) {
+        console.error('[Socket.IO SendMessage] Anonymous users cannot message registered users');
         socket.emit('error', { msg: 'Anonymous users cannot send messages to registered users' });
         return;
       }
       if (!senderExists || !receiverExists) {
+        console.error('[Socket.IO SendMessage] User not found:', { sender, receiver });
         socket.emit('error', { msg: 'User not found' });
         return;
       }
@@ -180,6 +188,7 @@ io.on('connection', (socket) => {
       if (!sender.startsWith('anon-')) {
         const receiverUser = await User.findById(receiver);
         if (receiverUser && receiverUser.blockedUsers.includes(sender)) {
+          console.error('[Socket.IO SendMessage] Sender blocked by receiver:', sender);
           socket.emit('error', { msg: 'You are blocked by this user' });
           return;
         }
@@ -190,24 +199,29 @@ io.on('connection', (socket) => {
       io.to(receiver).emit('receiveMessage', message);
       io.to(sender).emit('receiveMessage', message);
       io.to(receiver).emit('notification', { text: `New message from ${senderExists.username}`, senderId: sender });
+
+      console.log(`[Socket.IO SendMessage] Message sent from ${sender} to ${receiver}`);
     } catch (err) {
-      console.error('Error sending message:', err);
+      console.error('[Socket.IO SendMessage] Error:', err.message);
       socket.emit('error', { msg: 'Failed to send message' });
     }
   });
 
   socket.on('typing', ({ sender, receiver, username }) => {
     io.to(receiver).emit('userTyping', { sender, username });
+    console.log(`[Socket.IO Typing] ${username} is typing to ${receiver}`);
   });
 
   socket.on('stopTyping', ({ sender, receiver }) => {
     io.to(receiver).emit('userStoppedTyping', { sender });
+    console.log(`[Socket.IO StopTyping] ${sender} stopped typing to ${receiver}`);
   });
 
   socket.on('updateMessageStatus', async ({ messageId, userId, status }) => {
     try {
       const message = await Message.findById(messageId);
       if (!message) {
+        console.error('[Socket.IO UpdateMessageStatus] Message not found:', messageId);
         socket.emit('error', { msg: 'Message not found' });
         return;
       }
@@ -222,8 +236,9 @@ io.on('connection', (socket) => {
 
       io.to(message.sender).emit('messageStatusUpdate', message);
       io.to(message.receiver).emit('messageStatusUpdate', message);
+      console.log(`[Socket.IO UpdateMessageStatus] Updated status for message ${messageId} to ${status}`);
     } catch (err) {
-      console.error('Error updating message status:', err);
+      console.error('[Socket.IO UpdateMessageStatus] Error:', err.message);
       socket.emit('error', { msg: 'Failed to update message status' });
     }
   });
@@ -232,10 +247,12 @@ io.on('connection', (socket) => {
     try {
       const message = await Message.findById(messageId);
       if (!message) {
+        console.error('[Socket.IO EditMessage] Message not found:', messageId);
         socket.emit('error', { msg: 'Message not found' });
         return;
       }
       if (message.sender.toString() !== userId) {
+        console.error('[Socket.IO EditMessage] Unauthorized edit attempt by:', userId);
         socket.emit('error', { msg: 'Only the sender can edit the message' });
         return;
       }
@@ -246,8 +263,9 @@ io.on('connection', (socket) => {
 
       io.to(message.sender).emit('messageEdited', message);
       io.to(message.receiver).emit('messageEdited', message);
+      console.log(`[Socket.IO EditMessage] Message ${messageId} edited by ${userId}`);
     } catch (err) {
-      console.error('Error editing message:', err);
+      console.error('[Socket.IO EditMessage] Error:', err.message);
       socket.emit('error', { msg: 'Failed to edit message' });
     }
   });
@@ -256,10 +274,12 @@ io.on('connection', (socket) => {
     try {
       const message = await Message.findById(messageId);
       if (!message) {
+        console.error('[Socket.IO DeleteMessage] Message not found:', messageId);
         socket.emit('error', { msg: 'Message not found' });
         return;
       }
       if (message.sender.toString() !== userId) {
+        console.error('[Socket.IO DeleteMessage] Unauthorized delete attempt by:', userId);
         socket.emit('error', { msg: 'Only the sender can delete the message' });
         return;
       }
@@ -267,8 +287,9 @@ io.on('connection', (socket) => {
       await Message.deleteOne({ _id: messageId });
       io.to(message.sender).emit('messageDeleted', messageId);
       io.to(message.receiver).emit('messageDeleted', messageId);
+      console.log(`[Socket.IO DeleteMessage] Message ${messageId} deleted by ${userId}`);
     } catch (err) {
-      console.error('Error deleting message:', err);
+      console.error('[Socket.IO DeleteMessage] Error:', err.message);
       socket.emit('error', { msg: 'Failed to delete message' });
     }
   });
@@ -277,18 +298,21 @@ io.on('connection', (socket) => {
     try {
       const group = await Group.findById(groupId);
       if (!group) {
+        console.error('[Socket.IO JoinGroup] Group not found:', groupId);
         socket.emit('error', { msg: 'Group not found' });
         return;
       }
       if (!group.members.includes(userId)) {
+        console.error('[Socket.IO JoinGroup] User not a member:', userId);
         socket.emit('error', { msg: 'You are not a member of this group' });
         return;
       }
 
       socket.join(groupId);
       socket.emit('loadGroupMessages', { groupId, messages: group.messages });
+      console.log(`[Socket.IO JoinGroup] User ${userId} joined group ${groupId}`);
     } catch (err) {
-      console.error('Error joining group:', err);
+      console.error('[Socket.IO JoinGroup] Error:', err.message);
       socket.emit('error', { msg: 'Failed to join group' });
     }
   });
@@ -296,16 +320,19 @@ io.on('connection', (socket) => {
   socket.on('sendGroupMessage', async ({ groupId, userId, content, sender, createdAt }) => {
     try {
       if (!groupId || !userId || !content || !sender) {
+        console.error('[Socket.IO SendGroupMessage] Missing required fields');
         socket.emit('error', { msg: 'Missing required fields' });
         return;
       }
 
       const group = await Group.findById(groupId);
       if (!group) {
+        console.error('[Socket.IO SendGroupMessage] Group not found:', groupId);
         socket.emit('error', { msg: 'Group not found' });
         return;
       }
       if (!group.members.includes(userId)) {
+        console.error('[Socket.IO SendGroupMessage] User not a member:', userId);
         socket.emit('error', { msg: 'You are not a member of this group' });
         return;
       }
@@ -319,8 +346,9 @@ io.on('connection', (socket) => {
 
       const newMessage = group.messages[group.messages.length - 1];
       io.to(groupId).emit('receiveGroupMessage', { ...message, groupId, _id: newMessage._id });
+      console.log(`[Socket.IO SendGroupMessage] Message sent to group ${groupId} by ${userId}`);
     } catch (err) {
-      console.error('Error sending group message:', err);
+      console.error('[Socket.IO SendGroupMessage] Error:', err.message);
       socket.emit('error', { msg: 'Failed to send group message' });
     }
   });
@@ -329,16 +357,19 @@ io.on('connection', (socket) => {
     try {
       const group = await Group.findById(groupId);
       if (!group) {
+        console.error('[Socket.IO EditGroupMessage] Group not found:', groupId);
         socket.emit('error', { msg: 'Group not found' });
         return;
       }
 
       const message = group.messages.id(messageId);
       if (!message) {
+        console.error('[Socket.IO EditGroupMessage] Message not found:', messageId);
         socket.emit('error', { msg: 'Message not found' });
         return;
       }
       if (message.sender.toString() !== userId) {
+        console.error('[Socket.IO EditGroupMessage] Unauthorized edit attempt by:', userId);
         socket.emit('error', { msg: 'Only the sender can edit the message' });
         return;
       }
@@ -348,8 +379,9 @@ io.on('connection', (socket) => {
       await group.save();
 
       io.to(groupId).emit('groupMessageEdited', { groupId, messageId, content, edited: true });
+      console.log(`[Socket.IO EditGroupMessage] Message ${messageId} edited in group ${groupId} by ${userId}`);
     } catch (err) {
-      console.error('Error editing group message:', err);
+      console.error('[Socket.IO EditGroupMessage] Error:', err.message);
       socket.emit('error', { msg: 'Failed to edit group message' });
     }
   });
@@ -358,16 +390,19 @@ io.on('connection', (socket) => {
     try {
       const group = await Group.findById(groupId);
       if (!group) {
+        console.error('[Socket.IO DeleteGroupMessage] Group not found:', groupId);
         socket.emit('error', { msg: 'Group not found' });
         return;
       }
 
       const message = group.messages.id(messageId);
       if (!message) {
+        console.error('[Socket.IO DeleteGroupMessage] Message not found:', messageId);
         socket.emit('error', { msg: 'Message not found' });
         return;
       }
       if (message.sender.toString() !== userId) {
+        console.error('[Socket.IO DeleteGroupMessage] Unauthorized delete attempt by:', userId);
         socket.emit('error', { msg: 'Only the sender can delete the message' });
         return;
       }
@@ -376,8 +411,9 @@ io.on('connection', (socket) => {
       await group.save();
 
       io.to(groupId).emit('groupMessageDeleted', { groupId, messageId });
+      console.log(`[Socket.IO DeleteGroupMessage] Message ${messageId} deleted in group ${groupId} by ${userId}`);
     } catch (err) {
-      console.error('Error deleting group message:', err);
+      console.error('[Socket.IO DeleteGroupMessage] Error:', err.message);
       socket.emit('error', { msg: 'Failed to delete group message' });
     }
   });
@@ -387,16 +423,19 @@ io.on('connection', (socket) => {
       if (groupId) {
         const group = await Group.findById(groupId);
         if (!group) {
+          console.error('[Socket.IO AddReaction] Group not found:', groupId);
           socket.emit('error', { msg: 'Group not found' });
           return;
         }
         if (!group.members.includes(userId)) {
+          console.error('[Socket.IO AddReaction] User not a member:', userId);
           socket.emit('error', { msg: 'You are not a member of this group' });
           return;
         }
 
         const message = group.messages.id(messageId);
         if (!message) {
+          console.error('[Socket.IO AddReaction] Message not found:', messageId);
           socket.emit('error', { msg: 'Message not found' });
           return;
         }
@@ -407,13 +446,16 @@ io.on('connection', (socket) => {
         await group.save();
 
         io.to(groupId).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+        console.log(`[Socket.IO AddReaction] Reaction added to message ${messageId} in group ${groupId} by ${userId}`);
       } else {
         const message = await Message.findById(messageId);
         if (!message) {
+          console.error('[Socket.IO AddReaction] Message not found:', messageId);
           socket.emit('error', { msg: 'Message not found' });
           return;
         }
         if (![message.sender.toString(), message.receiver.toString()].includes(userId)) {
+          console.error('[Socket.IO AddReaction] Unauthorized reaction attempt by:', userId);
           socket.emit('error', { msg: 'Unauthorized' });
           return;
         }
@@ -425,9 +467,10 @@ io.on('connection', (socket) => {
 
         io.to(message.sender).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
         io.to(message.receiver).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+        console.log(`[Socket.IO AddReaction] Reaction added to message ${messageId} by ${userId}`);
       }
     } catch (err) {
-      console.error('Error adding reaction:', err);
+      console.error('[Socket.IO AddReaction] Error:', err.message);
       socket.emit('error', { msg: 'Failed to add reaction' });
     }
   });
@@ -436,14 +479,17 @@ io.on('connection', (socket) => {
     try {
       const group = await Group.findById(groupId);
       if (!group) {
+        console.error('[Socket.IO LeaveGroup] Group not found:', groupId);
         socket.emit('error', { msg: 'Group not found' });
         return;
       }
       if (!group.members.includes(userId)) {
+        console.error('[Socket.IO LeaveGroup] User not a member:', userId);
         socket.emit('error', { msg: 'You are not a member of this group' });
         return;
       }
       if (group.creator === userId) {
+        console.error('[Socket.IO LeaveGroup] Creator cannot leave:', userId);
         socket.emit('error', { msg: 'Creator cannot leave the group; delete it instead' });
         return;
       }
@@ -454,8 +500,9 @@ io.on('connection', (socket) => {
       socket.leave(groupId);
       io.to(groupId).emit('groupUpdate', group);
       socket.emit('actionResponse', { type: 'leaveGroup', success: true, msg: 'Left group successfully' });
+      console.log(`[Socket.IO LeaveGroup] User ${userId} left group ${groupId}`);
     } catch (err) {
-      console.error('Error leaving group:', err);
+      console.error('[Socket.IO LeaveGroup] Error:', err.message);
       socket.emit('error', { msg: 'Failed to leave group' });
     }
   });
@@ -464,10 +511,12 @@ io.on('connection', (socket) => {
     try {
       const group = await Group.findById(groupId);
       if (!group) {
+        console.error('[Socket.IO DeleteGroup] Group not found:', groupId);
         socket.emit('error', { msg: 'Group not found' });
         return;
       }
       if (group.creator !== userId) {
+        console.error('[Socket.IO DeleteGroup] Unauthorized delete attempt by:', userId);
         socket.emit('error', { msg: 'Only the creator can delete the group' });
         return;
       }
@@ -475,8 +524,9 @@ io.on('connection', (socket) => {
       await Group.deleteOne({ _id: groupId });
       io.to(groupId).emit('groupUpdate', { _id: groupId, deleted: true });
       socket.emit('actionResponse', { type: 'deleteGroup', success: true, msg: 'Group deleted successfully' });
+      console.log(`[Socket.IO DeleteGroup] Group ${groupId} deleted by ${userId}`);
     } catch (err) {
-      console.error('Error deleting group:', err);
+      console.error('[Socket.IO DeleteGroup] Error:', err.message);
       socket.emit('error', { msg: 'Failed to delete group' });
     }
   });
@@ -485,10 +535,12 @@ io.on('connection', (socket) => {
     try {
       const user = await User.findById(userId);
       if (!user) {
+        console.error('[Socket.IO BlockUser] User not found:', userId);
         socket.emit('error', { msg: 'User not found' });
         return;
       }
       if (user.blockedUsers.includes(targetId)) {
+        console.error('[Socket.IO BlockUser] User already blocked:', targetId);
         socket.emit('error', { msg: 'User already blocked' });
         return;
       }
@@ -502,8 +554,9 @@ io.on('connection', (socket) => {
       socket.emit('friendsUpdate', user.friends);
       io.to(targetId).emit('friendRemoved', { friendId: userId });
       socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully', targetId });
+      console.log(`[Socket.IO BlockUser] User ${targetId} blocked by ${userId}`);
     } catch (err) {
-      console.error('Error blocking user:', err);
+      console.error('[Socket.IO BlockUser] Error:', err.message);
       socket.emit('error', { msg: 'Failed to block user' });
     }
   });
@@ -512,10 +565,12 @@ io.on('connection', (socket) => {
     try {
       const user = await User.findById(userId);
       if (!user) {
+        console.error('[Socket.IO UnblockUser] User not found:', userId);
         socket.emit('error', { msg: 'User not found' });
         return;
       }
       if (!user.blockedUsers.includes(targetId)) {
+        console.error('[Socket.IO UnblockUser] User not blocked:', targetId);
         socket.emit('error', { msg: 'User not blocked' });
         return;
       }
@@ -525,8 +580,9 @@ io.on('connection', (socket) => {
 
       socket.emit('blockedUsersUpdate', user.blockedUsers.map(id => id.toString()));
       socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully', targetId });
+      console.log(`[Socket.IO UnblockUser] User ${targetId} unblocked by ${userId}`);
     } catch (err) {
-      console.error('Error unblocking user:', err);
+      console.error('[Socket.IO UnblockUser] Error:', err.message);
       socket.emit('error', { msg: 'Failed to unblock user' });
     }
   });
@@ -536,19 +592,23 @@ io.on('connection', (socket) => {
       const sender = await User.findById(userId);
       const receiver = await User.findById(friendId);
       if (!sender || !receiver) {
+        console.error('[Socket.IO SendFriendRequest] User not found:', { userId, friendId });
         socket.emit('error', { msg: 'User not found' });
         return;
       }
       if (receiver.friendRequests.includes(userId) || receiver.friends.includes(userId)) {
+        console.error('[Socket.IO SendFriendRequest] Friend request already sent or already friends:', friendId);
         socket.emit('error', { msg: 'Friend request already sent or already friends' });
         return;
       }
       if (receiver.blockedUsers.includes(userId)) {
+        console.error('[Socket.IO SendFriendRequest] Sender blocked by receiver:', userId);
         socket.emit('error', { msg: 'You are blocked by this user' });
         return;
       }
       const allowFriendRequests = receiver.privacy?.allowFriendRequests ?? true;
       if (!allowFriendRequests) {
+        console.error('[Socket.IO SendFriendRequest] Receiver not accepting friend requests:', friendId);
         socket.emit('error', { msg: 'This user is not accepting friend requests' });
         return;
       }
@@ -558,8 +618,9 @@ io.on('connection', (socket) => {
 
       io.to(friendId).emit('friendRequestReceived', { _id: userId, username: sender.username });
       socket.emit('actionResponse', { type: 'sendFriendRequest', success: true, msg: 'Friend request sent', friendId });
+      console.log(`[Socket.IO SendFriendRequest] Friend request sent from ${userId} to ${friendId}`);
     } catch (err) {
-      console.error('Error sending friend request:', err);
+      console.error('[Socket.IO SendFriendRequest] Error:', err.message);
       socket.emit('error', { msg: 'Failed to send friend request' });
     }
   });
@@ -572,6 +633,7 @@ io.on('connection', (socket) => {
         { new: true }
       );
       if (!userUpdate) {
+        console.error('[Socket.IO AcceptFriendRequest] User not found:', userId);
         socket.emit('error', { msg: 'User not found' });
         return;
       }
@@ -582,6 +644,7 @@ io.on('connection', (socket) => {
         { new: true }
       );
       if (!friendUpdate) {
+        console.error('[Socket.IO AcceptFriendRequest] Friend not found:', friendId);
         socket.emit('error', { msg: 'Friend not found' });
         return;
       }
@@ -598,8 +661,9 @@ io.on('connection', (socket) => {
       io.to(friendId).emit('friendsUpdate', updatedFriendFriends);
       io.to(friendId).emit('friendRequestAccepted', { userId });
       socket.emit('actionResponse', { type: 'acceptFriendRequest', success: true, msg: 'Friend request accepted', friendId });
+      console.log(`[Socket.IO AcceptFriendRequest] Friend request accepted: ${userId} and ${friendId}`);
     } catch (err) {
-      console.error('Error accepting friend request:', err);
+      console.error('[Socket.IO AcceptFriendRequest] Error:', err.message);
       socket.emit('error', { msg: 'Failed to accept friend request' });
     }
   });
@@ -612,6 +676,7 @@ io.on('connection', (socket) => {
         { new: true }
       );
       if (!userUpdate) {
+        console.error('[Socket.IO DeclineFriendRequest] User not found:', userId);
         socket.emit('error', { msg: 'User not found' });
         return;
       }
@@ -621,8 +686,9 @@ io.on('connection', (socket) => {
 
       socket.emit('friendRequestsUpdate', updatedFriendRequests);
       socket.emit('actionResponse', { type: 'declineFriendRequest', success: true, msg: 'Friend request declined', friendId });
+      console.log(`[Socket.IO DeclineFriendRequest] Friend request declined: ${userId} declined ${friendId}`);
     } catch (err) {
-      console.error('Error declining friend request:', err);
+      console.error('[Socket.IO DeclineFriendRequest] Error:', err.message);
       socket.emit('error', { msg: 'Failed to decline friend request' });
     }
   });
@@ -640,6 +706,7 @@ io.on('connection', (socket) => {
         { new: true }
       );
       if (!userUpdate || !friendUpdate) {
+        console.error('[Socket.IO Unfriend] User not found:', { userId, friendId });
         socket.emit('error', { msg: 'User not found' });
         return;
       }
@@ -654,8 +721,9 @@ io.on('connection', (socket) => {
       io.to(friendId).emit('friendsUpdate', updatedFriendFriends);
       io.to(friendId).emit('friendRemoved', { friendId: userId });
       socket.emit('actionResponse', { type: 'unfriend', success: true, msg: 'Unfriended successfully', friendId });
+      console.log(`[Socket.IO Unfriend] Unfriended: ${userId} and ${friendId}`);
     } catch (err) {
-      console.error('Error unfriending:', err);
+      console.error('[Socket.IO Unfriend] Error:', err.message);
       socket.emit('error', { msg: 'Failed to unfriend' });
     }
   });
@@ -674,31 +742,31 @@ io.on('connection', (socket) => {
       io.emit('userStatus', { userId, status: 'offline' });
       const onlineUsers = await getOnlineUsers();
       io.emit('userListUpdate', onlineUsers);
-      console.log(`[${new Date().toISOString()}] User disconnected: ${userId}`);
+      console.log(`[Socket.IO Disconnect] User disconnected: ${userId}`);
     } catch (err) {
-      console.error('Error in disconnect event:', err);
+      console.error('[Socket.IO Disconnect] Error:', err.message);
     }
   });
 });
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
-  console.error(`[${new Date().toISOString()}] Server error:`, err);
+  console.error(`[Server Error] ${req.method} ${req.url}:`, err.message);
   res.status(500).json({ msg: 'Server error' });
 });
 
 // Start Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`[${new Date().toISOString()}] Server running on port ${PORT}`);
+  console.log(`[Server] Server running on port ${PORT}`);
 });
 
 // Graceful Shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Closing server...');
+  console.log('[Server] SIGTERM received. Closing server...');
   server.close(() => {
     mongoose.connection.close(false, () => {
-      console.log('MongoDB connection closed.');
+      console.log('[Server] MongoDB connection closed.');
       process.exit(0);
     });
   });
