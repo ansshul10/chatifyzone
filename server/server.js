@@ -17,6 +17,30 @@ require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+
+// Session middleware configuration
+const sessionMiddleware = session({
+  secret: process.env.SESSION_SECRET || 'your-session-secret',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    collectionName: 'sessions',
+    ttl: 24 * 60 * 60, // 24 hours
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Required for cross-origin
+  },
+});
+
+// Apply session middleware to Express
+app.use(sessionMiddleware);
+
+// Convert session middleware for Socket.IO
+const wrap = middleware => (socket, next) => middleware(socket.request, {}, next);
 const io = new Server(server, {
   cors: {
     origin: process.env.CLIENT_URL || 'http://localhost:5173',
@@ -25,6 +49,9 @@ const io = new Server(server, {
   },
 });
 
+// Apply session middleware to Socket.IO
+io.use(wrap(sessionMiddleware));
+
 // Connect to MongoDB
 connectDB();
 
@@ -32,26 +59,10 @@ connectDB();
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true,
+  credentials: true, // Allow cookies to be sent
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || 'your-session-secret',
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
-      collectionName: 'sessions',
-    }),
-    cookie: {
-      secure: process.env.NODE_ENV === 'production',
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    },
-  })
-);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -93,7 +104,7 @@ io.on('connection', (socket) => {
       socket.join(userId);
       userSocketMap.set(userId, socket.id);
 
-      const username = socket.handshake.query.username;
+      const username = socket.request.session.username || socket.handshake.query.username;
       if (!username) return socket.emit('error', { msg: 'Username is required' });
 
       if (userId.startsWith('anon-')) {
