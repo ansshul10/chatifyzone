@@ -18,12 +18,6 @@ const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
 const rpName = 'Chatify';
 const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
 
-// Validate environment variables
-if (!process.env.JWT_SECRET || !process.env.MONGO_URI) {
-  console.error('[Auth Routes] Missing required environment variables: JWT_SECRET or MONGO_URI');
-  process.exit(1);
-}
-
 // Validation schemas
 const loginSchema = Joi.object({
   email: Joi.string().email().required(),
