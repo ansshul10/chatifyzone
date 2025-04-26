@@ -18,23 +18,28 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 
+// Validate environment variables
+if (!process.env.MONGO_URI || !process.env.SESSION_SECRET || !process.env.JWT_SECRET) {
+  console.error('Missing required environment variables: MONGO_URI, SESSION_SECRET, JWT_SECRET');
+  process.exit(1);
+}
+
 // Session middleware configuration
 const sessionMiddleware = session({
-  secret: process.env.SESSION_SECRET || 'your-session-secret',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({
     mongoUrl: process.env.MONGO_URI,
     collectionName: 'sessions',
     ttl: 24 * 60 * 60, // 24 hours
-    autoRemove: 'native', // Automatically remove expired sessions
   }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production' ? true : false,
+    secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    path: '/', // Ensure cookie is sent for all routes
+    domain: process.env.NODE_ENV === 'production' ? process.env.COOKIE_DOMAIN : undefined,
   },
 });
 
@@ -65,14 +70,6 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Debug middleware to log session data
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] Request: ${req.method} ${req.url}`);
-  console.log('Session ID:', req.sessionID);
-  console.log('Session Data:', JSON.stringify(req.session, null, 2));
-  next();
-});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -106,16 +103,22 @@ const getPreviousMessages = async (userId) => {
 };
 
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+  console.log(`[${new Date().toISOString()}] User connected: ${socket.id}`);
 
   socket.on('join', async (userId) => {
     try {
-      if (!userId) return socket.emit('error', { msg: 'No user ID provided' });
+      if (!userId) {
+        socket.emit('error', { msg: 'No user ID provided' });
+        return;
+      }
       socket.join(userId);
       userSocketMap.set(userId, socket.id);
 
       const username = socket.request.session.username || socket.handshake.query.username;
-      if (!username) return socket.emit('error', { msg: 'Username is required' });
+      if (!username) {
+        socket.emit('error', { msg: 'Username is required' });
+        return;
+      }
 
       if (userId.startsWith('anon-')) {
         let session = await AnonymousSession.findOne({ anonymousId: userId });
@@ -137,7 +140,8 @@ io.on('connection', (socket) => {
           socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
           socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
         } else {
-          return socket.emit('error', { msg: 'User not found' });
+          socket.emit('error', { msg: 'User not found' });
+          return;
         }
       }
 
@@ -146,6 +150,8 @@ io.on('connection', (socket) => {
       socket.emit('loadPreviousMessages', previousMessages);
       const onlineUsers = await getOnlineUsers();
       io.emit('userListUpdate', onlineUsers);
+
+      console.log(`[${new Date().toISOString()}] User joined: ${userId} (${username})`);
     } catch (err) {
       console.error('Error in join event:', err);
       socket.emit('error', { msg: 'Failed to join' });
@@ -154,17 +160,29 @@ io.on('connection', (socket) => {
 
   socket.on('sendMessage', async ({ sender, receiver, content }) => {
     try {
-      if (!sender || !receiver || !content) return socket.emit('error', { msg: 'Missing message data' });
+      if (!sender || !receiver || !content) {
+        socket.emit('error', { msg: 'Missing message data' });
+        return;
+      }
 
       const senderExists = sender.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: sender }) : await User.findById(sender);
       const receiverExists = receiver.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: receiver }) : await User.findById(receiver);
 
-      if (sender.startsWith('anon-') && !receiver.startsWith('anon-')) return socket.emit('error', { msg: 'Anonymous users cannot send messages to registered users' });
-      if (!senderExists || !receiverExists) return socket.emit('error', { msg: 'User not found' });
+      if (sender.startsWith('anon-') && !receiver.startsWith('anon-')) {
+        socket.emit('error', { msg: 'Anonymous users cannot send messages to registered users' });
+        return;
+      }
+      if (!senderExists || !receiverExists) {
+        socket.emit('error', { msg: 'User not found' });
+        return;
+      }
 
       if (!sender.startsWith('anon-')) {
         const receiverUser = await User.findById(receiver);
-        if (receiverUser && receiverUser.blockedUsers.includes(sender)) return socket.emit('error', { msg: 'You are blocked by this user' });
+        if (receiverUser && receiverUser.blockedUsers.includes(sender)) {
+          socket.emit('error', { msg: 'You are blocked by this user' });
+          return;
+        }
       }
 
       const message = new Message({ sender, receiver, content, isAnonymous: sender.startsWith('anon-'), deliveredAt: new Date() });
@@ -189,7 +207,10 @@ io.on('connection', (socket) => {
   socket.on('updateMessageStatus', async ({ messageId, userId, status }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) return socket.emit('error', { msg: 'Message not found' });
+      if (!message) {
+        socket.emit('error', { msg: 'Message not found' });
+        return;
+      }
       if (message.receiver.toString() !== userId) return;
 
       if (status === 'delivered' && !message.deliveredAt) {
@@ -210,8 +231,14 @@ io.on('connection', (socket) => {
   socket.on('editMessage', async ({ messageId, content, userId }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) return socket.emit('error', { msg: 'Message not found' });
-      if (message.sender.toString() !== userId) return socket.emit('error', { msg: 'Only the sender can edit the message' });
+      if (!message) {
+        socket.emit('error', { msg: 'Message not found' });
+        return;
+      }
+      if (message.sender.toString() !== userId) {
+        socket.emit('error', { msg: 'Only the sender can edit the message' });
+        return;
+      }
 
       message.content = content;
       message.edited = true;
@@ -228,8 +255,14 @@ io.on('connection', (socket) => {
   socket.on('deleteMessage', async ({ messageId, userId }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) return socket.emit('error', { msg: 'Message not found' });
-      if (message.sender.toString() !== userId) return socket.emit('error', { msg: 'Only the sender can delete the message' });
+      if (!message) {
+        socket.emit('error', { msg: 'Message not found' });
+        return;
+      }
+      if (message.sender.toString() !== userId) {
+        socket.emit('error', { msg: 'Only the sender can delete the message' });
+        return;
+      }
 
       await Message.deleteOne({ _id: messageId });
       io.to(message.sender).emit('messageDeleted', messageId);
@@ -243,8 +276,14 @@ io.on('connection', (socket) => {
   socket.on('joinGroup', async ({ groupId, userId }) => {
     try {
       const group = await Group.findById(groupId);
-      if (!group) return socket.emit('error', { msg: 'Group not found' });
-      if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
+      if (!group) {
+        socket.emit('error', { msg: 'Group not found' });
+        return;
+      }
+      if (!group.members.includes(userId)) {
+        socket.emit('error', { msg: 'You are not a member of this group' });
+        return;
+      }
 
       socket.join(groupId);
       socket.emit('loadGroupMessages', { groupId, messages: group.messages });
@@ -256,11 +295,20 @@ io.on('connection', (socket) => {
 
   socket.on('sendGroupMessage', async ({ groupId, userId, content, sender, createdAt }) => {
     try {
-      if (!groupId || !userId || !content || !sender) return socket.emit('error', { msg: 'Missing required fields' });
+      if (!groupId || !userId || !content || !sender) {
+        socket.emit('error', { msg: 'Missing required fields' });
+        return;
+      }
 
       const group = await Group.findById(groupId);
-      if (!group) return socket.emit('error', { msg: 'Group not found' });
-      if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
+      if (!group) {
+        socket.emit('error', { msg: 'Group not found' });
+        return;
+      }
+      if (!group.members.includes(userId)) {
+        socket.emit('error', { msg: 'You are not a member of this group' });
+        return;
+      }
 
       const senderData = userId.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: userId }) : await User.findById(userId);
       const senderUsername = senderData ? senderData.username : 'Unknown';
@@ -280,11 +328,20 @@ io.on('connection', (socket) => {
   socket.on('editGroupMessage', async ({ groupId, messageId, content, userId }) => {
     try {
       const group = await Group.findById(groupId);
-      if (!group) return socket.emit('error', { msg: 'Group not found' });
+      if (!group) {
+        socket.emit('error', { msg: 'Group not found' });
+        return;
+      }
 
       const message = group.messages.id(messageId);
-      if (!message) return socket.emit('error', { msg: 'Message not found' });
-      if (message.sender.toString() !== userId) return socket.emit('error', { msg: 'Only the sender can edit the message' });
+      if (!message) {
+        socket.emit('error', { msg: 'Message not found' });
+        return;
+      }
+      if (message.sender.toString() !== userId) {
+        socket.emit('error', { msg: 'Only the sender can edit the message' });
+        return;
+      }
 
       message.content = content;
       message.edited = true;
@@ -300,11 +357,20 @@ io.on('connection', (socket) => {
   socket.on('deleteGroupMessage', async ({ groupId, messageId, userId }) => {
     try {
       const group = await Group.findById(groupId);
-      if (!group) return socket.emit('error', { msg: 'Group not found' });
+      if (!group) {
+        socket.emit('error', { msg: 'Group not found' });
+        return;
+      }
 
       const message = group.messages.id(messageId);
-      if (!message) return socket.emit('error', { msg: 'Message not found' });
-      if (message.sender.toString() !== userId) return socket.emit('error', { msg: 'Only the sender can delete the message' });
+      if (!message) {
+        socket.emit('error', { msg: 'Message not found' });
+        return;
+      }
+      if (message.sender.toString() !== userId) {
+        socket.emit('error', { msg: 'Only the sender can delete the message' });
+        return;
+      }
 
       group.messages.pull(messageId);
       await group.save();
@@ -320,11 +386,20 @@ io.on('connection', (socket) => {
     try {
       if (groupId) {
         const group = await Group.findById(groupId);
-        if (!group) return socket.emit('error', { msg: 'Group not found' });
-        if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
+        if (!group) {
+          socket.emit('error', { msg: 'Group not found' });
+          return;
+        }
+        if (!group.members.includes(userId)) {
+          socket.emit('error', { msg: 'You are not a member of this group' });
+          return;
+        }
 
         const message = group.messages.id(messageId);
-        if (!message) return socket.emit('error', { msg: 'Message not found' });
+        if (!message) {
+          socket.emit('error', { msg: 'Message not found' });
+          return;
+        }
 
         message.reactions = message.reactions || new Map();
         const currentCount = message.reactions.get(emoji) || 0;
@@ -334,8 +409,14 @@ io.on('connection', (socket) => {
         io.to(groupId).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
       } else {
         const message = await Message.findById(messageId);
-        if (!message) return socket.emit('error', { msg: 'Message not found' });
-        if (![message.sender.toString(), message.receiver.toString()].includes(userId)) return socket.emit('error', { msg: 'Unauthorized' });
+        if (!message) {
+          socket.emit('error', { msg: 'Message not found' });
+          return;
+        }
+        if (![message.sender.toString(), message.receiver.toString()].includes(userId)) {
+          socket.emit('error', { msg: 'Unauthorized' });
+          return;
+        }
 
         message.reactions = message.reactions || new Map();
         const currentCount = message.reactions.get(emoji) || 0;
@@ -354,9 +435,18 @@ io.on('connection', (socket) => {
   socket.on('leaveGroup', async ({ groupId, userId }) => {
     try {
       const group = await Group.findById(groupId);
-      if (!group) return socket.emit('error', { msg: 'Group not found' });
-      if (!group.members.includes(userId)) return socket.emit('error', { msg: 'You are not a member of this group' });
-      if (group.creator === userId) return socket.emit('error', { msg: 'Creator cannot leave the group; delete it instead' });
+      if (!group) {
+        socket.emit('error', { msg: 'Group not found' });
+        return;
+      }
+      if (!group.members.includes(userId)) {
+        socket.emit('error', { msg: 'You are not a member of this group' });
+        return;
+      }
+      if (group.creator === userId) {
+        socket.emit('error', { msg: 'Creator cannot leave the group; delete it instead' });
+        return;
+      }
 
       group.members = group.members.filter((member) => member !== userId);
       await group.save();
@@ -373,8 +463,14 @@ io.on('connection', (socket) => {
   socket.on('deleteGroup', async ({ groupId, userId }) => {
     try {
       const group = await Group.findById(groupId);
-      if (!group) return socket.emit('error', { msg: 'Group not found' });
-      if (group.creator !== userId) return socket.emit('error', { msg: 'Only the creator can delete the group' });
+      if (!group) {
+        socket.emit('error', { msg: 'Group not found' });
+        return;
+      }
+      if (group.creator !== userId) {
+        socket.emit('error', { msg: 'Only the creator can delete the group' });
+        return;
+      }
 
       await Group.deleteOne({ _id: groupId });
       io.to(groupId).emit('groupUpdate', { _id: groupId, deleted: true });
@@ -388,8 +484,14 @@ io.on('connection', (socket) => {
   socket.on('blockUser', async ({ userId, targetId }) => {
     try {
       const user = await User.findById(userId);
-      if (!user) return socket.emit('error', { msg: 'User not found' });
-      if (user.blockedUsers.includes(targetId)) return socket.emit('error', { msg: 'User already blocked' });
+      if (!user) {
+        socket.emit('error', { msg: 'User not found' });
+        return;
+      }
+      if (user.blockedUsers.includes(targetId)) {
+        socket.emit('error', { msg: 'User already blocked' });
+        return;
+      }
 
       user.blockedUsers.push(targetId);
       user.friends = user.friends.filter((friend) => friend.toString() !== targetId);
@@ -409,8 +511,14 @@ io.on('connection', (socket) => {
   socket.on('unblockUser', async ({ userId, targetId }) => {
     try {
       const user = await User.findById(userId);
-      if (!user) return socket.emit('error', { msg: 'User not found' });
-      if (!user.blockedUsers.includes(targetId)) return socket.emit('error', { msg: 'User not blocked' });
+      if (!user) {
+        socket.emit('error', { msg: 'User not found' });
+        return;
+      }
+      if (!user.blockedUsers.includes(targetId)) {
+        socket.emit('error', { msg: 'User not blocked' });
+        return;
+      }
 
       user.blockedUsers = user.blockedUsers.filter((id) => id.toString() !== targetId);
       await user.save();
@@ -427,16 +535,22 @@ io.on('connection', (socket) => {
     try {
       const sender = await User.findById(userId);
       const receiver = await User.findById(friendId);
-      if (!sender || !receiver) return socket.emit('error', { msg: 'User not found' });
+      if (!sender || !receiver) {
+        socket.emit('error', { msg: 'User not found' });
+        return;
+      }
       if (receiver.friendRequests.includes(userId) || receiver.friends.includes(userId)) {
-        return socket.emit('error', { msg: 'Friend request already sent or already friends' });
+        socket.emit('error', { msg: 'Friend request already sent or already friends' });
+        return;
       }
       if (receiver.blockedUsers.includes(userId)) {
-        return socket.emit('error', { msg: 'You are blocked by this user' });
+        socket.emit('error', { msg: 'You are blocked by this user' });
+        return;
       }
       const allowFriendRequests = receiver.privacy?.allowFriendRequests ?? true;
       if (!allowFriendRequests) {
-        return socket.emit('error', { msg: 'This user is not accepting friend requests' });
+        socket.emit('error', { msg: 'This user is not accepting friend requests' });
+        return;
       }
 
       receiver.friendRequests.push(userId);
@@ -457,14 +571,20 @@ io.on('connection', (socket) => {
         { $pull: { friendRequests: friendId }, $push: { friends: friendId } },
         { new: true }
       );
-      if (!userUpdate) return socket.emit('error', { msg: 'User not found' });
+      if (!userUpdate) {
+        socket.emit('error', { msg: 'User not found' });
+        return;
+      }
 
       const friendUpdate = await User.findByIdAndUpdate(
         friendId,
         { $push: { friends: userId } },
         { new: true }
       );
-      if (!friendUpdate) return socket.emit('error', { msg: 'Friend not found' });
+      if (!friendUpdate) {
+        socket.emit('error', { msg: 'Friend not found' });
+        return;
+      }
 
       const user = await User.findById(userId).populate('friendRequests', 'username').populate('friends', 'username');
       const friend = await User.findById(friendId).populate('friends', 'username');
@@ -491,7 +611,10 @@ io.on('connection', (socket) => {
         { $pull: { friendRequests: friendId } },
         { new: true }
       );
-      if (!userUpdate) return socket.emit('error', { msg: 'User not found' });
+      if (!userUpdate) {
+        socket.emit('error', { msg: 'User not found' });
+        return;
+      }
 
       const user = await User.findById(userId).populate('friendRequests', 'username');
       const updatedFriendRequests = user.friendRequests.map((req) => ({ _id: req._id.toString(), username: req.username }));
@@ -516,7 +639,10 @@ io.on('connection', (socket) => {
         { $pull: { friends: userId } },
         { new: true }
       );
-      if (!userUpdate || !friendUpdate) return socket.emit('error', { msg: 'User not found' });
+      if (!userUpdate || !friendUpdate) {
+        socket.emit('error', { msg: 'User not found' });
+        return;
+      }
 
       const user = await User.findById(userId).populate('friends', 'username');
       const friend = await User.findById(friendId).populate('friends', 'username');
@@ -548,7 +674,7 @@ io.on('connection', (socket) => {
       io.emit('userStatus', { userId, status: 'offline' });
       const onlineUsers = await getOnlineUsers();
       io.emit('userListUpdate', onlineUsers);
-      console.log('User disconnected:', userId);
+      console.log(`[${new Date().toISOString()}] User disconnected: ${userId}`);
     } catch (err) {
       console.error('Error in disconnect event:', err);
     }
@@ -557,13 +683,15 @@ io.on('connection', (socket) => {
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);
+  console.error(`[${new Date().toISOString()}] Server error:`, err);
   res.status(500).json({ msg: 'Server error' });
 });
 
 // Start Server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`[${new Date().toISOString()}] Server running on port ${PORT}`);
+});
 
 // Graceful Shutdown
 process.on('SIGTERM', () => {
