@@ -203,8 +203,9 @@ router.post('/webauthn/register/begin', async (req, res) => {
       challenge: options.challenge,
     });
 
+    // Return a clean response with challenge and userID
     res.json({
-      ...options,
+      publicKey: options,
       challenge: options.challenge,
       userID: userID.toString('base64'),
       email,
@@ -227,6 +228,10 @@ router.post('/webauthn/register/complete', async (req, res) => {
     }
 
     const { email, username, credential, challenge, userID } = req.body;
+    if (!challenge || !userID) {
+      console.error('[WebAuthn Register Complete] Missing challenge or userID:', { challenge, userID });
+      return res.status(400).json({ msg: 'Missing challenge or userID' });
+    }
 
     const verification = await verifyRegistrationResponse({
       response: credential,
@@ -271,7 +276,6 @@ router.post('/webauthn/register/complete', async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
-
 // WebAuthn login: Begin
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
