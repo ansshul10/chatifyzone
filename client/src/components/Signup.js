@@ -5,6 +5,7 @@ import { FaEnvelope, FaUser, FaLock, FaArrowRight, FaCheckCircle, FaSun, FaMoon,
 import { startRegistration } from '@simplewebauthn/browser';
 import * as faceapi from 'face-api.js';
 import { RadioGroup } from '@headlessui/react';
+import PropTypes from 'prop-types';
 import api from '../utils/api';
 import Navbar from './Navbar';
 
@@ -266,6 +267,7 @@ const Signup = () => {
     }
 
     try {
+      /* eslint-disable no-undef */
       if (!window.PublicKeyCredential) {
         console.warn('WebAuthn not supported');
         setError('Fingerprint signup is not supported in this browser. Try Chrome or Safari on a mobile device.');
@@ -273,6 +275,7 @@ const Signup = () => {
       }
 
       const isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      /* eslint-enable no-undef */
       if (!isAvailable) {
         console.warn('Platform authenticator not available');
         setError('This device does not support fingerprint authentication. Please ensure your device has a fingerprint sensor.');
@@ -474,6 +477,15 @@ const Signup = () => {
     </RadioGroup.Option>
   );
 
+  User.propTypes = {
+    user: PropTypes.shape({
+      id: PropTypes.string.isRequired,
+      type: PropTypes.string.isRequired,
+      picture: PropTypes.string.isRequired,
+      fullName: PropTypes.string.isRequired,
+    }).isRequired,
+  };
+
   return (
     <>
       <Navbar />
@@ -594,7 +606,7 @@ const Signup = () => {
                   {isCameraActive && captureStatus === 'SUCCESS' && faceCaptured && (
                     <h3 className="text-center text-xl font-bold text-gray-900">
                       <span className="block text-red-500 mt-2">
-                        We've successfully captured your face!
+                        We have successfully captured your face!
                       </span>
                       <span className="block text-red-500 mt-2">
                         Please wait {counter} more seconds...
@@ -724,7 +736,7 @@ const Signup = () => {
                                 const suffixArr = name.split('.');
                                 const suffix = suffixArr[suffixArr.length - 1];
                                 if (!['png', 'jpg', 'jpeg'].includes(suffix)) {
-                                  setImageError('Only PNG, JPG, or JPEG files are supported.');
+                                  setImageError('Don\'t upload invalid files.');
                                   return;
                                 }
 
