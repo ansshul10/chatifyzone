@@ -4,8 +4,7 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   username: { type: String, required: true, unique: true, minlength: 3, maxlength: 20 },
-  password: { type: String },
-  faceDescriptors: { type: [[Number]], default: [] },
+  password: { type: String }, // Optional, only for password-based authentication
   online: { type: Boolean, default: false },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date },
@@ -20,7 +19,7 @@ const userSchema = new mongoose.Schema({
   privacy: {
     allowFriendRequests: { type: Boolean, default: true },
   },
-  webauthnUserID: { type: String }, // New field to store base64-encoded userID
+  webauthnUserID: { type: String }, // Stores base64-encoded userID for WebAuthn
   webauthnCredentials: [{
     credentialID: { type: String, required: true },
     publicKey: { type: String, required: true },
@@ -30,8 +29,10 @@ const userSchema = new mongoose.Schema({
   }],
 });
 
+// Hash password before saving if it exists and is modified
 userSchema.pre('save', async function (next) {
   if (this.isModified('password') && this.password) {
+    console.log(`[User Model] Hashing password for user: ${this.email}`);
     this.password = await bcrypt.hash(this.password, 10);
   }
   next();
