@@ -192,6 +192,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
 });
 
 // WebAuthn registration: Complete
+// WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
     console.log('[WebAuthn Register Complete] Received request:', req.body);
@@ -247,15 +248,28 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Fingerprint registration failed', details: verification });
     }
 
-    const { credentialID, publicKey, counter } = verification.registrationInfo || {};
-    if (!credentialID || !publicKey) {
-      console.error('[WebAuthn Register Complete] Missing registrationInfo fields:', {
+    const registrationInfo = verification.registrationInfo || {};
+    const credentialData = registrationInfo.credential || {};
+    const credentialID = credentialData.id;
+    const publicKey = credentialData.publicKey;
+    const counter = credentialData.counter;
+
+    if (!credentialID || !publicKey || counter === undefined) {
+      console.error('[WebAuthn Register Complete] Missing credential fields:', {
         credentialID,
         publicKey,
-        registrationInfo: verification.registrationInfo,
+        counter,
+        registrationInfo,
+        credentialData,
       });
-      return res.status(500).json({ msg: 'Invalid registration response from server' });
+      return res.status(500).json({ msg: 'Invalid credential data from server' });
     }
+
+    console.log('[WebAuthn Register Complete] Extracted credential data:', {
+      credentialID,
+      publicKey: Buffer.from(publicKey).toString('base64').substring(0, 50) + '...',
+      counter,
+    });
 
     const user = new User({
       email,
