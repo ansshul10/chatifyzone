@@ -284,20 +284,20 @@ const Signup = () => {
 
       console.log('Starting WebAuthn registration for:', { email, username });
 
-      // Make request to begin WebAuthn registration
-      const response = await api.post('/auth/webauthn/register/begin', { email, username }, {
-        withCredentials: true, // Ensure cookies are sent
-      });
+      // Request WebAuthn registration options
+      const response = await api.post('/auth/webauthn/register/begin', { email, username });
       const publicKey = response.data;
       console.log('Received WebAuthn options:', publicKey);
 
-      // Start WebAuthn registration
+      // Perform WebAuthn registration
       const credential = await startRegistration(publicKey);
       console.log('Fingerprint credential created:', credential);
 
-      // Make request to complete WebAuthn registration
-      const { data } = await api.post('/auth/webauthn/register/complete', { email, username, credential }, {
-        withCredentials: true, // Ensure cookies are sent
+      // Complete WebAuthn registration with all data
+      const { data } = await api.post('/auth/webauthn/register/complete', {
+        email,
+        username,
+        credential,
       });
       console.log('Registration completed:', data);
 
@@ -1014,3 +1014,4 @@ const Signup = () => {
 };
 
 export default Signup;
+
