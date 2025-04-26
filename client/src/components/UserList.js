@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaSearch, FaComment, FaUserSlash, FaInfoCircle } from 'react-icons/fa';
+import PropTypes from 'prop-types';
 import verifiedIcon from '../assets/verified.png'; // Adjust path as needed
 
 const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typingUsers = [] }) => {
@@ -299,6 +300,25 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       </div>
     </motion.div>
   );
+};
+
+UserList.propTypes = {
+  users: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string.isRequired,
+      username: PropTypes.string.isRequired,
+      online: PropTypes.bool.isRequired,
+      isAnonymous: PropTypes.bool.isRequired,
+    })
+  ).isRequired,
+  setSelectedUserId: PropTypes.func.isRequired,
+  currentUserId: PropTypes.string.isRequired,
+  unreadMessages: PropTypes.objectOf(PropTypes.number).isRequired,
+  typingUsers: PropTypes.arrayOf(PropTypes.string),
+};
+
+UserList.defaultProps = {
+  typingUsers: [],
 };
 
 export default UserList;
