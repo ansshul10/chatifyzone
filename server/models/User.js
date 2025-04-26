@@ -20,12 +20,13 @@ const userSchema = new mongoose.Schema({
   privacy: {
     allowFriendRequests: { type: Boolean, default: true },
   },
+  webauthnUserID: { type: String }, // New field to store base64-encoded userID
   webauthnCredentials: [{
     credentialID: { type: String, required: true },
     publicKey: { type: String, required: true },
     counter: { type: Number, required: true },
     deviceName: { type: String },
-    authenticatorType: { type: String, default: 'fingerprint' }, // Optional: track authenticator type
+    authenticatorType: { type: String, default: 'fingerprint' },
   }],
 });
 
