@@ -283,39 +283,53 @@ const Signup = () => {
       }
 
       console.log('Starting WebAuthn registration for:', { email, username });
-      const response = await api.post('/auth/webauthn/register/begin', { email, username });
-      const { challenge, userID, ...publicKey } = response.data;
-      console.log('Received WebAuthn options:', publicKey);
+    const response = await api.post('/auth/webauthn/register/begin', { email, username });
+    console.log('Full response from /auth/webauthn/register/begin:', response.data);
 
-      const credential = await startRegistration(publicKey);
-      console.log('Fingerprint credential created:', credential);
-
-      console.log('Completing WebAuthn registration for:', { email, username });
-      const { data } = await api.post('/auth/webauthn/register/complete', {
-        email,
-        username,
-        credential,
-        challenge,
-        userID,
-      });
-      console.log('Registration completed:', data);
-
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      api.defaults.headers.common['x-auth-token'] = data.token;
-      setSuccess(true);
-      setTimeout(() => navigate('/'), 2000);
-    } catch (err) {
-      console.error('Fingerprint signup error:', err);
-      let errorMessage = 'Fingerprint signup failed. Please try again.';
-      if (err.response?.data?.msg) {
-        errorMessage = err.response.data.msg;
-      } else if (err.message) {
-        errorMessage = `Fingerprint signup failed: ${err.message}`;
-      }
-      setError(errorMessage);
+    if (!response.data || !response.data.challenge || !response.data.userID) {
+      console.error('Invalid response from /auth/webauthn/register/begin:', response.data);
+      setError('Failed to initiate fingerprint registration: invalid response');
+      return;
     }
-  };
+
+    const { challenge, userID, ...publicKey } = response.data;
+    console.log('Received WebAuthn options:', { challenge, userID, publicKey });
+
+    const credential = await startRegistration(publicKey);
+    console.log('Fingerprint credential created:', credential);
+
+    console.log('Sending to /auth/webauthn/register/complete:', {
+      email,
+      username,
+      credential,
+      challenge,
+      userID,
+    });
+    const { data } = await api.post('/auth/webauthn/register/complete', {
+      email,
+      username,
+      credential,
+      challenge,
+      userID,
+    });
+    console.log('Registration completed:', data);
+
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('user', JSON.stringify(data.user));
+    api.defaults.headers.common['x-auth-token'] = data.token;
+    setSuccess(true);
+    setTimeout(() => navigate('/'), 2000);
+  } catch (err) {
+    console.error('Fingerprint signup error:', err);
+    let errorMessage = 'Fingerprint signup failed. Please try again.';
+    if (err.response?.data?.msg) {
+      errorMessage = err.response.data.msg;
+    } else if (err.message) {
+      errorMessage = `Fingerprint signup failed: ${err.message}`;
+    }
+    setError(errorMessage);
+  }
+};
 
   const handleFaceSignup = async () => {
     setError('');
