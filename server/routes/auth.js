@@ -263,14 +263,16 @@ router.post('/webauthn/register/begin', async (req, res) => {
       challenge: options.challenge,
     });
 
-    // Return challenge and userID to the client
-    res.json({
+    const responseData = {
       ...options,
       challenge: options.challenge,
       userID: userID.toString('base64'),
       email,
       username,
-    });
+    };
+    console.log('Sending response:', responseData); // Log the response
+
+    res.json(responseData);
   } catch (err) {
     console.error('WebAuthn register begin error:', err);
     res.status(500).json({ msg: 'Server error' });
@@ -280,8 +282,12 @@ router.post('/webauthn/register/begin', async (req, res) => {
 // WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
+    console.log('Received /auth/webauthn/register/complete request:', req.body); // Log the request body
     const { error } = webauthnRegisterCompleteSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('Validation error:', error.details);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { email, username, credential, challenge, userID } = req.body;
 
@@ -292,7 +298,6 @@ router.post('/webauthn/register/complete', async (req, res) => {
       challenge,
     });
 
-    // Verify the provided challenge and credential
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: challenge,
