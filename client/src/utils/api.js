@@ -8,14 +8,15 @@ const api = axios.create({
   withCredentials: true, // Ensure cookies are sent with every request
 });
 
-// Optional: Add response interceptor for error handling
+// Response interceptor for error handling and debugging
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log(`API Response [${response.config.method.toUpperCase()} ${response.config.url}]:`, response.status);
+    return response;
+  },
   (error) => {
-    console.error('API request error:', error);
-    // Optionally handle specific errors (e.g., 401 Unauthorized)
+    console.error(`API Error [${error.config?.method.toUpperCase()} ${error.config?.url}]:`, error.response?.data || error.message);
     if (error.response?.status === 401) {
-      // Handle unauthorized errors (e.g., redirect to login)
       console.warn('Unauthorized request, please log in again.');
     }
     return Promise.reject(error);
