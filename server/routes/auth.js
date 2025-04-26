@@ -14,9 +14,9 @@ const {
   verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 
-const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
+const rpID = process.env.WEBAUTHN_RP_ID || 'chatify-10.vercel.app';
 const rpName = 'Chatify';
-const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
+const expectedOrigin = process.env.CLIENT_URL || 'https://chatify-10.vercel.app';
 
 // Validation schemas
 const loginSchema = Joi.object({
@@ -91,16 +91,12 @@ const unblockUserSchema = Joi.object({
 // WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
-    // Step 0: Log deployment confirmation
     console.log('[WebAuthn Register Begin] Deployed Version: Buffer Fix 2025-04-26 v2');
-
-    // Step 1: Log incoming request
     console.log('[WebAuthn Register Begin] Step 1: Received request:', {
       headers: req.headers,
       body: req.body,
     });
 
-    // Step 2: Validate request body
     console.log('[WebAuthn Register Begin] Step 2: Validating request body');
     const { error } = webauthnRegisterBeginSchema.validate(req.body);
     if (error) {
@@ -112,7 +108,6 @@ router.post('/webauthn/register/begin', async (req, res) => {
     }
     console.log('[WebAuthn Register Begin] Step 2: Validation passed');
 
-    // Step 3: Check for existing user
     const { username, email } = req.body;
     console.log('[WebAuthn Register Begin] Step 3: Checking for existing user:', { email, username });
     let user;
@@ -135,16 +130,15 @@ router.post('/webauthn/register/begin', async (req, res) => {
     }
     console.log('[WebAuthn Register Begin] Step 3: No existing user found');
 
-    // Step 4: Generate WebAuthn registration options
     console.log('[WebAuthn Register Begin] Step 4: Generating WebAuthn registration options');
-    const userID = crypto.randomBytes(32); // Generate a 32-byte Buffer
+    const userID = crypto.randomBytes(32);
     console.log('[WebAuthn Register Begin] Step 4: Generated userID (Buffer length):', userID.length);
     let options;
     try {
       options = await generateRegistrationOptions({
         rpName,
         rpID,
-        userID, // Pass the raw Buffer
+        userID,
         userName: username,
         userDisplayName: username,
         attestationType: 'none',
@@ -153,6 +147,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
           userVerification: 'required',
         },
         excludeCredentials: [],
+        supportedAlgorithmIDs: [-8, -7, -257],
       });
       console.log('[WebAuthn Register Begin] Step 4: Options generated successfully:', {
         userID: userID.toString('base64'),
@@ -169,17 +164,15 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(500).json({ msg: 'Failed to generate WebAuthn registration options' });
     }
 
-    // Step 5: Prepare response
     console.log('[WebAuthn Register Begin] Step 5: Preparing response');
     const response = {
       publicKey: options,
       challenge: options.challenge,
-      userID: userID.toString('base64'), // Send base64-encoded userID to client
+      userID: userID.toString('base64'),
       email,
       username,
     };
 
-    // Step 6: Verify response structure
     console.log('[WebAuthn Register Begin] Step 6: Verifying response structure');
     if (!response.publicKey || !response.challenge || !response.userID) {
       console.error('[WebAuthn Register Begin] Step 6 Error: Invalid response structure:', response);
@@ -187,7 +180,6 @@ router.post('/webauthn/register/begin', async (req, res) => {
     }
     console.log('[WebAuthn Register Begin] Step 6: Response structure valid');
 
-    // Step 7: Send response
     console.log('[WebAuthn Register Begin] Step 7: Sending response:', response);
     res.json(response);
   } catch (err) {
@@ -196,6 +188,102 @@ router.post('/webauthn/register/begin', async (req, res) => {
       stack: err.stack,
     });
     res.status(500).json({ msg: 'Unexpected server error' });
+  }
+});
+
+// WebAuthn registration: Complete
+router.post('/webauthn/register/complete', async (req, res) => {
+  try {
+    console.log('[WebAuthn Register Complete] Received request:', req.body);
+    const { error } = webauthnRegisterCompleteSchema.validate(req.body);
+    if (error) {
+      console.error('[WebAuthn Register Complete] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email, username, credential, challenge, userID } = req.body;
+    if (!challenge || !userID) {
+      console.error('[WebAuthn Register Complete] Missing challenge or userID:', { challenge, userID });
+      return res.status(400).json({ msg: 'Missing challenge or userID' });
+    }
+
+    console.log('[WebAuthn Register Complete] Verifying credential with userID:', userID);
+    console.log('[WebAuthn Register Complete] Credential structure:', {
+      id: credential.id,
+      rawId: credential.rawId,
+      type: credential.type,
+      response: {
+        attestationObject: credential.response.attestationObject?.substring(0, 50) + '...',
+        clientDataJSON: credential.response.clientDataJSON?.substring(0, 50) + '...',
+        transports: credential.response.transports,
+        publicKeyAlgorithm: credential.response.publicKeyAlgorithm,
+        publicKey: credential.response.publicKey?.substring(0, 50) + '...',
+        authenticatorData: credential.response.authenticatorData?.substring(0, 50) + '...',
+      },
+      clientExtensionResults: credential.clientExtensionResults,
+      authenticatorAttachment: credential.authenticatorAttachment,
+    });
+
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response: credential,
+        expectedChallenge: challenge,
+        expectedOrigin,
+        expectedRPID: rpID,
+      });
+    } catch (verifyError) {
+      console.error('[WebAuthn Register Complete] Verification error:', {
+        message: verifyError.message,
+        stack: verifyError.stack,
+      });
+      return res.status(400).json({ msg: 'Fingerprint registration verification failed', details: verifyError.message });
+    }
+
+    console.log('[WebAuthn Register Complete] Verification result:', verification);
+
+    if (!verification.verified) {
+      console.error('[WebAuthn Register Complete] Verification failed for:', email, verification);
+      return res.status(400).json({ msg: 'Fingerprint registration failed', details: verification });
+    }
+
+    const { credentialID, publicKey, counter } = verification.registrationInfo || {};
+    if (!credentialID || !publicKey) {
+      console.error('[WebAuthn Register Complete] Missing registrationInfo fields:', {
+        credentialID,
+        publicKey,
+        registrationInfo: verification.registrationInfo,
+      });
+      return res.status(500).json({ msg: 'Invalid registration response from server' });
+    }
+
+    const user = new User({
+      email,
+      username,
+      webauthnUserID: userID,
+      webauthnCredentials: [{
+        credentialID: Buffer.from(credentialID).toString('base64'),
+        publicKey: Buffer.from(publicKey).toString('base64'),
+        counter,
+        deviceName: 'Fingerprint Authenticator',
+        authenticatorType: 'fingerprint',
+      }],
+    });
+
+    await user.save();
+
+    const payload = { userId: user.id };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    await req.session.save();
+
+    console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  } catch (err) {
+    console.error('[WebAuthn Register Complete] Server error:', err.message, err.stack);
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
@@ -274,83 +362,6 @@ router.post('/register', async (req, res) => {
   } catch (err) {
     console.error('[Password Register] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// WebAuthn registration: Complete
-router.post('/webauthn/register/complete', async (req, res) => {
-  try {
-    console.log('[WebAuthn Register Complete] Received request:', req.body);
-    const { error } = webauthnRegisterCompleteSchema.validate(req.body);
-    if (error) {
-      console.error('[WebAuthn Register Complete] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { email, username, credential, challenge, userID } = req.body;
-    if (!challenge || !userID) {
-      console.error('[WebAuthn Register Complete] Missing challenge or userID:', { challenge, userID });
-      return res.status(400).json({ msg: 'Missing challenge or userID' });
-    }
-
-    console.log('[WebAuthn Register Complete] Verifying credential with userID:', userID);
-    console.log('[WebAuthn Register Complete] Credential structure:', {
-      id: credential.id,
-      rawId: credential.rawId,
-      type: credential.type,
-      response: {
-        attestationObject: credential.response.attestationObject?.substring(0, 50) + '...',
-        clientDataJSON: credential.response.clientDataJSON?.substring(0, 50) + '...',
-        transports: credential.response.transports,
-        publicKeyAlgorithm: credential.response.publicKeyAlgorithm,
-        publicKey: credential.response.publicKey?.substring(0, 50) + '...',
-        authenticatorData: credential.response.authenticatorData?.substring(0, 50) + '...',
-      },
-      clientExtensionResults: credential.clientExtensionResults,
-      authenticatorAttachment: credential.authenticatorAttachment,
-    });
-
-    const verification = await verifyRegistrationResponse({
-      response: credential,
-      expectedChallenge: challenge,
-      expectedOrigin,
-      expectedRPID: rpID,
-    });
-
-    if (!verification.verified) {
-      console.error('[WebAuthn Register Complete] Verification failed for:', email, verification);
-      return res.status(400).json({ msg: 'Fingerprint registration failed', details: verification });
-    }
-
-    const { credentialID, publicKey, counter } = verification.registrationInfo;
-
-    const user = new User({
-      email,
-      username,
-      webauthnUserID: userID, // Store the base64-encoded userID
-      webauthnCredentials: [{
-        credentialID: Buffer.from(credentialID).toString('base64'),
-        publicKey: Buffer.from(publicKey).toString('base64'),
-        counter,
-        deviceName: 'Fingerprint Authenticator',
-        authenticatorType: 'fingerprint',
-      }],
-    });
-
-    await user.save();
-
-    const payload = { userId: user.id };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
-
-    console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
-  } catch (err) {
-    console.error('[WebAuthn Register Complete] Server error:', err.message, err.stack);
-    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
@@ -929,6 +940,12 @@ router.post('/unblock-user', auth, async (req, res) => {
     console.error('[Unblock User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
+});
+
+// Debug endpoint to check library version
+router.get('/debug', (req, res) => {
+  const webauthnVersion = require('@simplewebauthn/server/package.json').version;
+  res.json({ webauthnVersion });
 });
 
 module.exports = router;
