@@ -16,100 +16,48 @@ const Signup = () => {
   const [signupMethod, setSignupMethod] = useState('password');
   const navigate = useNavigate();
 
-  const handleBiometricSignup = async () => {
-    console.log('[Fingerprint Signup] Initiating fingerprint signup process');
+  const handleFingerprintSignup = async () => {
     setError('');
-    setSuccess(false);
-
-    if (!email.trim()) {
-      console.error('[Fingerprint Signup] Email is missing');
-      setError('Please enter your email');
-      return;
-    }
-    if (!username.trim()) {
-      console.error('[Fingerprint Signup] Username is missing');
-      setError('Please enter your username');
-      return;
-    }
+    setSuccess('');
+    setIsLoading(true);
 
     try {
-      console.log('[Fingerprint Signup] Checking WebAuthn support');
-      if (!window.PublicKeyCredential) {
-        console.error('[Fingerprint Signup] WebAuthn not supported');
-        setError('Fingerprint signup is not supported in this browser. Try Chrome or Safari on a mobile device.');
-        return;
+      console.log('[Signup] Initiating fingerprint signup:', { email, username });
+      const beginResponse = await axios.post('http://localhost:5000/api/auth/webauthn/register/begin', {
+        email,
+        username,
+      }, { withCredentials: true });
+
+      console.log('[Signup] WebAuthn begin response:', beginResponse.data);
+      const { publicKey, challenge, userID } = beginResponse.data;
+
+      if (!publicKey || !challenge || !userID) {
+        console.error('[Signup] Missing WebAuthn options:', { publicKey, challenge, userID });
+        throw new Error('Invalid WebAuthn registration options');
       }
 
-      console.log('[Fingerprint Signup] Checking platform authenticator availability');
-      const isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!isAvailable) {
-        console.error('[Fingerprint Signup] Platform authenticator not available');
-        setError('This device does not support fingerprint authentication. Please ensure your device has a fingerprint sensor.');
-        return;
-      }
+      const credential = await startRegistration(publicKey);
+      console.log('[Signup] WebAuthn credential created:', credential);
 
-      console.log('[Fingerprint Signup] Sending registration begin request to server', { email, username });
-      const response = await api.post('/auth/webauthn/register/begin', { email, username });
-      console.log('[Fingerprint Signup] Received registration options from server:', response.data);
-
-      if (!response.data || !response.data.challenge || !response.data.userID) {
-        console.error('[Fingerprint Signup] Invalid server response:', response.data);
-        setError('Failed to initiate fingerprint registration: invalid server response');
-        return;
-      }
-
-      const { challenge, userID, ...publicKey } = response.data;
-      console.log('[Fingerprint Signup] Prepared public key options:', { challenge, userID });
-
-      console.log('[Fingerprint Signup] Starting WebAuthn registration');
-      const credential = await startRegistration({
-        ...publicKey,
-        user: {
-          ...publicKey.user,
-          id: userID,
-        },
-      });
-      console.log('[Fingerprint Signup] Credential created successfully:', credential);
-
-      console.log('[Fingerprint Signup] Sending registration complete request', {
+      const completeResponse = await axios.post('http://localhost:5000/api/auth/webauthn/register/complete', {
         email,
         username,
         credential,
         challenge,
         userID,
-      });
-      const { data } = await api.post('/auth/webauthn/register/complete', {
-        email,
-        username,
-        credential,
-        challenge,
-        userID,
-      });
-      console.log('[Fingerprint Signup] Registration completed successfully:', data);
+      }, { withCredentials: true });
 
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      api.defaults.headers.common['x-auth-token'] = data.token;
-
-      console.log('[Fingerprint Signup] Setting success state');
-      setSuccess(true);
-
-      console.log('[Fingerprint Signup] Redirecting to home page in 2 seconds');
-      setTimeout(() => {
-        console.log('[Fingerprint Signup] Navigating to home page');
-        navigate('/');
-      }, 2000);
+      console.log('[Signup] Fingerprint signup successful:', completeResponse.data);
+      setSuccess('Fingerprint signup successful! Redirecting to login...');
+      setTimeout(() => navigate('/login'), 2000);
     } catch (err) {
-      console.error('[Fingerprint Signup] Error during fingerprint signup:', err);
-      let errorMessage = 'Fingerprint signup failed. Please try again.';
-      if (err.response?.data?.msg) {
-        errorMessage = err.response.data.msg;
-      } else if (err.message) {
-        errorMessage = `Fingerprint signup failed: ${err.message}`;
-      }
-      setError(errorMessage);
+      console.error('[Signup] Fingerprint signup error:', err.response?.data?.msg || err.message);
+      setError(err.response?.data?.msg || 'Fingerprint signup failed. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
