@@ -92,7 +92,7 @@ const unblockUserSchema = Joi.object({
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
     // Step 0: Log deployment confirmation
-    console.log('[WebAuthn Register Begin] Deployed Version: Buffer Fix 2025-04-26');
+    console.log('[WebAuthn Register Begin] Deployed Version: Buffer Fix 2025-04-26 v2');
 
     // Step 1: Log incoming request
     console.log('[WebAuthn Register Begin] Step 1: Received request:', {
@@ -138,6 +138,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
     // Step 4: Generate WebAuthn registration options
     console.log('[WebAuthn Register Begin] Step 4: Generating WebAuthn registration options');
     const userID = crypto.randomBytes(32); // Generate a 32-byte Buffer
+    console.log('[WebAuthn Register Begin] Step 4: Generated userID (Buffer length):', userID.length);
     let options;
     try {
       options = await generateRegistrationOptions({
