@@ -19,153 +19,159 @@ const Signup = () => {
   const navigate = useNavigate();
 
   const handleFingerprintSignup = async () => {
-    setError('');
-    setSuccess(false);
-    setIsLoading(true);
+  setError('');
+  setSuccess(false);
+  setIsLoading(true);
 
+  try {
+    // Step 1: Validate input fields
+    console.log('[Fingerprint Signup Step 1] Validating input fields:', { email, username });
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      console.error('[Fingerprint Signup Step 1 Error] Email is empty or invalid');
+      setError('Please enter a valid email address');
+      setIsLoading(false);
+      return;
+    }
+    if (!username.trim() || username.length < 3 || username.length > 30) {
+      console.error('[Fingerprint Signup Step 1 Error] Username is empty or invalid');
+      setError('Please enter a valid username (3-30 characters)');
+      setIsLoading(false);
+      return;
+    }
+    console.log('[Fingerprint Signup Step 1] Input validation passed');
+
+    // Step 2: Send request to /webauthn/register/begin
+    console.log('[Fingerprint Signup Step 2] Sending request to /webauthn/register/begin:', { email, username });
+    let beginResponse;
     try {
-      // Step 1: Validate input fields
-      console.log('[Fingerprint Signup Step 1] Validating input fields:', { email, username });
-      if (!email.trim()) {
-        console.error('[Fingerprint Signup Step 1 Error] Email is empty or invalid');
-        setError('Please enter a valid email address');
-        setIsLoading(false);
-        return;
-      }
-      if (!username.trim()) {
-        console.error('[Fingerprint Signup Step 1 Error] Username is empty or invalid');
-        setError('Please enter a valid username');
-        setIsLoading(false);
-        return;
-      }
-      console.log('[Fingerprint Signup Step 1] Input validation passed');
+      beginResponse = await api.post('/auth/webauthn/register/begin', { email, username });
+      console.log('[Fingerprint Signup Step 2] Received response from /webauthn/register/begin:', beginResponse.data);
+    } catch (apiError) {
+      console.error('[Fingerprint Signup Step 2 Error] Failed to fetch WebAuthn registration options:', apiError.message);
+      console.error('[Fingerprint Signup Step 2 Error] API error details:', {
+        status: apiError.response?.status,
+        data: apiError.response?.data,
+      });
+      setError(apiError.response?.data?.msg || 'Failed to start fingerprint registration. Please try again.');
+      setIsLoading(false);
+      return;
+    }
 
-      // Step 2: Send request to /webauthn/register/begin
-      console.log('[Fingerprint Signup Step 2] Sending request to /webauthn/register/begin:', { email, username });
-      let beginResponse;
-      try {
-        beginResponse = await api.post('/auth/webauthn/register/begin', { email, username });
-        console.log('[Fingerprint Signup Step 2] Received response from /webauthn/register/begin:', beginResponse.data);
-      } catch (apiError) {
-        console.error('[Fingerprint Signup Step 2 Error] Failed to fetch WebAuthn registration options:', apiError.message);
-        console.error('[Fingerprint Signup Step 2 Error] API error details:', {
-          status: apiError.response?.status,
-          data: apiError.response?.data,
-        });
-        setError(apiError.response?.data?.msg || 'Failed to start fingerprint registration. Please try again.');
-        setIsLoading(false);
-        return;
-      }
+    // Step 3: Validate WebAuthn registration options
+    console.log('[Fingerprint Signup Step 3] Validating WebAuthn registration options');
+    const { publicKey, challenge, userID, email: responseEmail, username: responseUsername } = beginResponse.data;
+    console.log('[Fingerprint Signup Step 3] Extracted options:', { publicKey, challenge, userID, responseEmail, responseUsername });
 
-      // Step 3: Validate WebAuthn registration options
-      console.log('[Fingerprint Signup Step 3] Validating WebAuthn registration options');
-      const { publicKey, challenge, userID, email: responseEmail, username: responseUsername } = beginResponse.data;
-      console.log('[Fingerprint Signup Step 3] Extracted options:', { publicKey, challenge, userID, responseEmail, responseUsername });
+    if (!publicKey) {
+      console.error('[Fingerprint Signup Step 3 Error] Missing publicKey in API response');
+      setError('Invalid server response: missing publicKey');
+      setIsLoading(false);
+      return;
+    }
+    if (!challenge) {
+      console.error('[Fingerprint Signup Step 3 Error] Missing challenge in API response');
+      setError('Invalid server response: missing challenge');
+      setIsLoading(false);
+      return;
+    }
+    if (!userID) {
+      console.error('[Fingerprint Signup Step 3 Error] Missing userID in API response');
+      setError('Invalid server response: missing userID');
+      setIsLoading(false);
+      return;
+    }
+    if (responseEmail !== email || responseUsername !== username) {
+      console.error('[Fingerprint Signup Step 3 Error] Mismatch in email or username:', {
+        expectedEmail: email,
+        receivedEmail: responseEmail,
+        expectedUsername: username,
+        receivedUsername: responseUsername,
+      });
+      setError('Server returned incorrect email or username');
+      setIsLoading(false);
+      return;
+    }
+    console.log('[Fingerprint Signup Step 3] WebAuthn options validation passed');
 
-      if (!publicKey) {
-        console.error('[Fingerprint Signup Step 3 Error] Missing publicKey in API response');
-        setError('Invalid server response: missing publicKey');
-        setIsLoading(false);
-        return;
-      }
-      if (!challenge) {
-        console.error('[Fingerprint Signup Step 3 Error] Missing challenge in API response');
-        setError('Invalid server response: missing challenge');
-        setIsLoading(false);
-        return;
-      }
-      if (!userID) {
-        console.error('[Fingerprint Signup Step 3 Error] Missing userID in API response');
-        setError('Invalid server response: missing userID');
-        setIsLoading(false);
-        return;
-      }
-      if (responseEmail !== email || responseUsername !== username) {
-        console.error('[Fingerprint Signup Step 3 Error] Mismatch in email or username:', {
-          expectedEmail: email,
-          receivedEmail: responseEmail,
-          expectedUsername: username,
-          receivedUsername: responseUsername,
-        });
-        setError('Server returned incorrect email or username');
-        setIsLoading(false);
-        return;
-      }
-      console.log('[Fingerprint Signup Step 3] WebAuthn options validation passed');
-
-      // Step 4: Start WebAuthn registration
-      console.log('[Fingerprint Signup Step 4] Starting WebAuthn registration with publicKey:', publicKey);
-      let credential;
-      try {
-        credential = await startRegistration(publicKey);
-        console.log('[Fingerprint Signup Step 4] WebAuthn credential created:', credential);
-      } catch (webauthnError) {
-        console.error('[Fingerprint Signup Step 4 Error] Failed to create WebAuthn credential:', webauthnError.message);
-        console.error('[Fingerprint Signup Step 4 Error] WebAuthn error details:', webauthnError);
+    // Step 4: Start WebAuthn registration
+    console.log('[Fingerprint Signup Step 4] Starting WebAuthn registration with publicKey:', publicKey);
+    let credential;
+    try {
+      credential = await startRegistration(publicKey);
+      console.log('[Fingerprint Signup Step 4] WebAuthn credential created:', credential);
+    } catch (webauthnError) {
+      console.error('[Fingerprint Signup Step 4 Error] Failed to create WebAuthn credential:', webauthnError.message);
+      console.error('[Fingerprint Signup Step 4 Error] WebAuthn error details:', webauthnError);
+      if (webauthnError.name === 'NotAllowedError') {
+        setError('Fingerprint registration was cancelled or not allowed by the browser.');
+      } else if (webauthnError.name === 'SecurityError') {
+        setError('Security error: Ensure you’re using a secure connection (HTTPS) or localhost.');
+      } else {
         setError('Failed to register fingerprint. Ensure your device supports fingerprint authentication.');
-        setIsLoading(false);
-        return;
       }
+      setIsLoading(false);
+      return;
+    }
 
-      // Step 5: Send request to /webauthn/register/complete
-      console.log('[Fingerprint Signup Step 5] Sending request to /webauthn/register/complete:', {
+    // Step 5: Send request to /webauthn/register/complete
+    console.log('[Fingerprint Signup Step 5] Sending request to /webauthn/register/complete:', {
+      email,
+      username,
+      challenge,
+      userID,
+    });
+    let completeResponse;
+    try {
+      completeResponse = await api.post('/auth/webauthn/register/complete', {
         email,
         username,
+        credential,
         challenge,
         userID,
       });
-      let completeResponse;
-      try {
-        completeResponse = await api.post('/auth/webauthn/register/complete', {
-          email,
-          username,
-          credential,
-          challenge,
-          userID,
-        });
-        console.log('[Fingerprint Signup Step 5] Fingerprint signup successful:', completeResponse.data);
-      } catch (completeError) {
-        console.error('[Fingerprint Signup Step 5 Error] Failed to complete WebAuthn registration:', completeError.message);
-        console.error('[Fingerprint Signup Step 5 Error] API error details:', {
-          status: completeError.response?.status,
-          data: completeError.response?.data,
-        });
-        setError(completeError.response?.data?.msg || 'Failed to complete fingerprint registration. Please try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 6: Store token and user data
-      console.log('[Fingerprint Signup Step 6] Storing token and user data');
-      try {
-        localStorage.setItem('token', completeResponse.data.token);
-        localStorage.setItem('user', JSON.stringify(completeResponse.data.user));
-        api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
-        console.log('[Fingerprint Signup Step 6] Token and user data stored successfully');
-      } catch (storageError) {
-        console.error('[Fingerprint Signup Step 6 Error] Failed to store token or user data:', storageError.message);
-        setError('Failed to save authentication data. Please try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 7: Update UI and redirect
-      console.log('[Fingerprint Signup Step 7] Setting success state and preparing to redirect');
-      setSuccess(true);
-      console.log('[Fingerprint Signup Step 7] Success state set, redirecting in 2 seconds');
-      setTimeout(() => {
-        console.log('[Fingerprint Signup Step 7] Navigating to home page');
-        navigate('/');
-      }, 2000);
-    } catch (unexpectedError) {
-      // Step 8: Catch any unexpected errors
-      console.error('[Fingerprint Signup Step 8 Error] Unexpected error during fingerprint signup:', unexpectedError.message);
-      console.error('[Fingerprint Signup Step 8 Error] Full error details:', unexpectedError);
-      setError('An unexpected error occurred during fingerprint signup. Please try again.');
+      console.log('[Fingerprint Signup Step 5] Fingerprint signup successful:', completeResponse.data);
+    } catch (completeError) {
+      console.error('[Fingerprint Signup Step 5 Error] Failed to complete WebAuthn registration:', completeError.message);
+      console.error('[Fingerprint Signup Step 5 Error] API error details:', {
+        status: completeError.response?.status,
+        data: completeError.response?.data,
+      });
+      setError(completeError.response?.data?.msg || 'Failed to complete fingerprint registration. Please try again.');
       setIsLoading(false);
+      return;
     }
-  };
 
+    // Step 6: Store token and user data
+    console.log('[Fingerprint Signup Step 6] Storing token and user data');
+    try {
+      localStorage.setItem('token', completeResponse.data.token);
+      localStorage.setItem('user', JSON.stringify(completeResponse.data.user));
+      api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
+      console.log('[Fingerprint Signup Step 6] Token and user data stored successfully');
+    } catch (storageError) {
+      console.error('[Fingerprint Signup Step 6 Error] Failed to store token or user data:', storageError.message);
+      setError('Failed to save authentication data. Please try again.');
+      setIsLoading(false);
+      return;
+    }
+
+    // Step 7: Update UI and redirect
+    console.log('[Fingerprint Signup Step 7] Setting success state and preparing to redirect');
+    setSuccess(true);
+    console.log('[Fingerprint Signup Step 7] Success state set, redirecting in 2 seconds');
+    setTimeout(() => {
+      console.log('[Fingerprint Signup Step 7] Navigating to home page');
+      navigate('/');
+    }, 2000);
+  } catch (unexpectedError) {
+    // Step 8: Catch any unexpected errors
+    console.error('[Fingerprint Signup Step 8 Error] Unexpected error during fingerprint signup:', unexpectedError.message);
+    console.error('[Fingerprint Signup Step 8 Error] Full error details:', unexpectedError);
+    setError('An unexpected error occurred during fingerprint signup. Please try again.');
+    setIsLoading(false);
+  }
+};
+  
   const handleSubmit = async (e) => {
     e.preventDefault();
     console.log('[Password Signup] Starting password signup process');
