@@ -29,10 +29,10 @@ const sessionMiddleware = session({
     ttl: 24 * 60 * 60, // 24 hours
   }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+    secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Required for cross-origin
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   },
 });
 
@@ -59,7 +59,7 @@ connectDB();
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true, // Allow cookies to be sent
+  credentials: true,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -179,7 +179,7 @@ io.on('connection', (socket) => {
   socket.on('updateMessageStatus', async ({ messageId, userId, status }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) return socket.emit('error', { msg: 'Message not found' });
+      if (!message) return socket.emit('　　　error', { msg: 'Message not found' });
       if (message.receiver.toString() !== userId) return;
 
       if (status === 'delivered' && !message.deliveredAt) {
