@@ -284,8 +284,10 @@ const Signup = () => {
 
       console.log('Starting WebAuthn registration for:', { email, username });
     const response = await api.post('/auth/webauthn/register/begin', { email, username });
-      console.log('Full response from /auth/webauthn/register/begin:', response); // Log the entire response object
-      console.log('Response data:', response.data); // Log response.data specifically
+    console.log('Full Axios response:', response); // Log the entire response
+    console.log('Response data:', response.data); // Log response.data
+    console.log('Response status:', response.status); // Log status code
+    console.log('Response headers:', response.headers); // Log headers
 
     if (!response.data || !response.data.challenge || !response.data.userID) {
       console.error('Invalid response from /auth/webauthn/register/begin:', response.data);
