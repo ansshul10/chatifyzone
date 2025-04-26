@@ -91,6 +91,9 @@ const unblockUserSchema = Joi.object({
 // WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
+    // Step 0: Log deployment confirmation
+    console.log('[WebAuthn Register Begin] Deployed Version: Buffer Fix 2025-04-26');
+
     // Step 1: Log incoming request
     console.log('[WebAuthn Register Begin] Step 1: Received request:', {
       headers: req.headers,
@@ -194,6 +197,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
     res.status(500).json({ msg: 'Unexpected server error' });
   }
 });
+
 // Password-based login
 router.post('/login', async (req, res) => {
   try {
