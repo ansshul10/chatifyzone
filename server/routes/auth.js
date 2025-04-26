@@ -237,17 +237,23 @@ router.post('/face/login', async (req, res) => {
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
     const { error } = webauthnRegisterBeginSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('Validation error:', error.details);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { username, email } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) return res.status(400).json({ msg: 'User already exists with this email or username' });
+    if (user) {
+      console.error('User already exists:', { email, username });
+      return res.status(400).json({ msg: 'User already exists with this email or username' });
+    }
 
-    const userID = crypto.randomBytes(32); // Generate Buffer for userID
+    const userID = crypto.randomBytes(32);
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID, // Pass Buffer directly
+      userID,
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
@@ -258,11 +264,6 @@ router.post('/webauthn/register/begin', async (req, res) => {
       excludeCredentials: [],
     });
 
-    console.log(`[${new Date().toISOString()}] WebAuthn registration begin for ${username}:`, {
-      userID: userID.toString('base64'),
-      challenge: options.challenge,
-    });
-
     const responseData = {
       ...options,
       challenge: options.challenge,
@@ -270,12 +271,17 @@ router.post('/webauthn/register/begin', async (req, res) => {
       email,
       username,
     };
-    console.log('Sending response:', responseData); // Log the response
+
+    console.log(`[${new Date().toISOString()}] WebAuthn registration begin for ${username}:`, {
+      userID: userID.toString('base64'),
+      challenge: options.challenge,
+    });
+    console.log('Sending response:', responseData);
 
     res.json(responseData);
   } catch (err) {
     console.error('WebAuthn register begin error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
