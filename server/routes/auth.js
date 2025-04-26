@@ -185,12 +185,12 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    const userID = crypto.randomBytes(32).toString('base64');
+    const userID = crypto.randomBytes(32); // Generate Buffer
 
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID,
+      userID, // Pass Buffer directly
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
@@ -202,7 +202,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
     });
 
     req.session.challenge = options.challenge;
-    req.session.pendingUser = { email, username, userID };
+    req.session.pendingUser = { email, username, userID: userID.toString('base64') }; // Store as base64 for session
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000; // 5 minutes
     console.log('WebAuthn registration options generated:', {
       sessionId: req.sessionID,
@@ -256,7 +256,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
-    const userID = req.session.pendingUser.userID;
+    const userID = Buffer.from(req.session.pendingUser.userID, 'base64'); // Convert back to Buffer
 
     const verification = await verifyRegistrationResponse({
       response: credential,
@@ -275,7 +275,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const user = new User({
       email,
       username,
-      webauthnUserID: userID,
+      webauthnUserID: userID.toString('base64'), // Store as base64 in DB
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
         publicKey: Buffer.from(publicKey).toString('base64'),
