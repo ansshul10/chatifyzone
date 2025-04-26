@@ -9,7 +9,6 @@ import {
   FaRocket,
   FaGlobe,
   FaStar,
-  FaEnvelope,
   FaQuestionCircle,
   FaArrowRight,
   FaSun,
@@ -17,16 +16,15 @@ import {
   FaUsers,
   FaPaperPlane,
   FaHistory,
-  FaUserSecret,
   FaUserPlus,
   FaBan,
   FaUserEdit,
-  FaLock,
   FaVideo,
   FaMicrophone,
   FaGem,
 } from 'react-icons/fa';
 import { Link, useNavigate } from 'react-router-dom';
+import PropTypes from 'prop-types';
 import Navbar from '../components/Navbar'; // Adjust path as needed
 
 const Home = () => {
@@ -62,13 +60,17 @@ const Home = () => {
   const VoiceVideoRoom = ({ roomName }) => (
     <motion.div variants={cardVariants} className="w-full h-96 rounded-lg overflow-hidden shadow-md border border-gray-700">
       <iframe
-        src={`https://meet.jit.si/${roomName}?config.defaultLanguage="en"`}
+        src={`https://meet.jit.si/${roomName}?config.defaultLanguage=\"en\"`}
         allow="camera; microphone; fullscreen"
         className="w-full h-full border-none"
         title="Voice and Video Chat"
       />
     </motion.div>
   );
+
+  VoiceVideoRoom.propTypes = {
+    roomName: PropTypes.string.isRequired,
+  };
 
   // Feature Data for Normal Home
   const features = [
