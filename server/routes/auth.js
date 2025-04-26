@@ -132,7 +132,9 @@ router.post('/login', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save();
+    await req.session.save((err) => {
+      if (err) console.error('Session save error in login:', err);
+    });
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -166,7 +168,9 @@ router.post('/register', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save();
+    await req.session.save((err) => {
+      if (err) console.error('Session save error in register:', err);
+    });
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -197,7 +201,9 @@ router.post('/face/register', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save();
+    await req.session.save((err) => {
+      if (err) console.error('Session save error in face/register:', err);
+    });
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -234,7 +240,9 @@ router.post('/face/login', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save();
+    await req.session.save((err) => {
+      if (err) console.error('Session save error in face/login:', err);
+    });
 
     res.json({
       token,
@@ -278,9 +286,24 @@ router.post('/webauthn/register/begin', async (req, res) => {
 
     // Store challenge and user data in session for verification
     req.session.challenge = options.challenge;
-    req.session.pendingUser = { email, username, userID: userID.toString('base64') }; // Store as base64 for DB
+    req.session.pendingUser = { email, username, userID: userID.toString('base64') };
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
-    await req.session.save();
+
+    // Ensure session is saved before responding
+    await new Promise((resolve, reject) => {
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session save error in webauthn/register/begin:', err);
+          return reject(err);
+        }
+        console.log(`[${new Date().toISOString()}] Session saved in /webauthn/register/begin:`, {
+          sessionId: req.sessionID,
+          challenge: req.session.challenge,
+          pendingUser: req.session.pendingUser,
+        });
+        resolve();
+      });
+    });
 
     res.json(options);
   } catch (err) {
@@ -299,6 +322,16 @@ router.post('/webauthn/register/complete', async (req, res) => {
 
     const { email, username, credential } = req.body;
 
+    // Log session data for debugging
+    console.log(`[${new Date().toISOString()}] Session data in /webauthn/register/complete:`, {
+      sessionId: req.sessionID,
+      sessionChallenge: req.session.challenge,
+      sessionPendingUser: req.session.pendingUser,
+      providedEmail: email,
+      providedUsername: username,
+      challengeExpired: req.session.challengeExpires < Date.now(),
+    });
+
     // Verify session data
     if (
       !req.session.challenge ||
@@ -307,14 +340,6 @@ router.post('/webauthn/register/complete', async (req, res) => {
       req.session.pendingUser.username !== username ||
       req.session.challengeExpires < Date.now()
     ) {
-      console.error('Invalid session data:', {
-        sessionId: req.sessionID,
-        sessionChallenge: req.session.challenge,
-        sessionPendingUser: req.session.pendingUser,
-        providedEmail: email,
-        providedUsername: username,
-        challengeExpired: req.session.challengeExpires < Date.now(),
-      });
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
@@ -356,7 +381,9 @@ router.post('/webauthn/register/complete', async (req, res) => {
     req.session.challengeExpires = null;
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save();
+    await req.session.save((err) => {
+      if (err) console.error('Session save error in webauthn/register/complete:', err);
+    });
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -393,7 +420,10 @@ router.post('/webauthn/login/begin', async (req, res) => {
     req.session.webauthnUserID = user.webauthnUserID;
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
 
-    await req.session.save();
+    await req.session.save((err) => {
+      if (err) console.error('Session save error in webauthn/login/begin:', err);
+    });
+
     res.json(options);
   } catch (err) {
     console.error('WebAuthn login begin error:', err);
@@ -470,7 +500,9 @@ router.post('/webauthn/login/complete', async (req, res) => {
     req.session.email = null;
     req.session.webauthnUserID = null;
     req.session.challengeExpires = null;
-    await req.session.save();
+    await req.session.save((err) => {
+      if (err) console.error('Session save error in webauthn/login/complete:', err);
+    });
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
