@@ -294,6 +294,22 @@ router.post('/webauthn/register/complete', async (req, res) => {
     }
 
     console.log('[WebAuthn Register Complete] Verifying credential with userID:', userID);
+    console.log('[WebAuthn Register Complete] Credential structure:', {
+      id: credential.id,
+      rawId: credential.rawId,
+      type: credential.type,
+      response: {
+        attestationObject: credential.response.attestationObject?.substring(0, 50) + '...',
+        clientDataJSON: credential.response.clientDataJSON?.substring(0, 50) + '...',
+        transports: credential.response.transports,
+        publicKeyAlgorithm: credential.response.publicKeyAlgorithm,
+        publicKey: credential.response.publicKey?.substring(0, 50) + '...',
+        authenticatorData: credential.response.authenticatorData?.substring(0, 50) + '...',
+      },
+      clientExtensionResults: credential.clientExtensionResults,
+      authenticatorAttachment: credential.authenticatorAttachment,
+    });
+
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: challenge,
@@ -333,8 +349,8 @@ router.post('/webauthn/register/complete', async (req, res) => {
     console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('[WebAuthn Register Complete] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
+    console.error('[WebAuthn Register Complete] Server error:', err.message, err.stack);
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
