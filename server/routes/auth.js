@@ -20,15 +20,9 @@ const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
 
 // Validate environment variables
 if (!process.env.JWT_SECRET || !process.env.MONGO_URI) {
-  console.error('Missing required environment variables');
+  console.error('[Auth Routes] Missing required environment variables: JWT_SECRET or MONGO_URI');
   process.exit(1);
 }
-
-// Euclidean distance for face recognition
-const peste = (arr1, arr2) => {
-  if (!arr1 || !arr2 || arr1.length !== arr2.length) return Infinity;
-  return Math.sqrt(arr1.reduce((sum, val, i) => sum + Math.pow(val - arr2[i], 2), 0));
-};
 
 // Validation schemas
 const loginSchema = Joi.object({
@@ -40,12 +34,6 @@ const registerSchema = Joi.object({
   email: Joi.string().email().required(),
   username: Joi.string().min(3).max(30).required(),
   password: Joi.string().min(6).required(),
-});
-
-const faceRegisterSchema = Joi.object({
-  email: Joi.string().email().required(),
-  username: Joi.string().min(3).max(30).required(),
-  descriptor: Joi.array().length(128).items(Joi.number()).required(),
 });
 
 const webauthnRegisterBeginSchema = Joi.object({
@@ -109,17 +97,30 @@ const unblockUserSchema = Joi.object({
 // Password-based login
 router.post('/login', async (req, res) => {
   try {
+    console.log('[Password Login] Received login request:', req.body.email);
     const { error } = loginSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Password Login] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { email, password } = req.body;
     const user = await User.findOne({ email }).select('+password');
-    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
+    if (!user) {
+      console.error('[Password Login] User not found for email:', email);
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
 
-    if (!user.password) return res.status(400).json({ msg: 'This account uses biometric or face login.' });
+    if (!user.password) {
+      console.error('[Password Login] Account uses biometric login only:', email);
+      return res.status(400).json({ msg: 'This account uses biometric login.' });
+    }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
+    if (!isMatch) {
+      console.error('[Password Login] Password mismatch for email:', email);
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
 
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -128,11 +129,10 @@ router.post('/login', async (req, res) => {
     req.session.username = user.username;
     await req.session.save();
 
-    console.log(`[${new Date().toISOString()}] User logged in: ${user.username} (ID: ${user.id})`);
-
+    console.log(`[Password Login] User logged in: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('[Password Login] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -140,17 +140,21 @@ router.post('/login', async (req, res) => {
 // Password-based registration
 router.post('/register', async (req, res) => {
   try {
+    console.log('[Password Register] Received registration request:', req.body.email, req.body.username);
     const { error } = registerSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Password Register] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { email, username, password } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) return res.status(400).json({ msg: 'User already exists with this email or username' });
+    if (user) {
+      console.error('[Password Register] User already exists:', { email, username });
+      return res.status(400).json({ msg: 'User already exists with this email or username' });
+    }
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    user = new User({ email, username, password: hashedPassword });
+    user = new User({ email, username, password });
     await user.save();
 
     const payload = { userId: user.id };
@@ -160,75 +164,10 @@ router.post('/register', async (req, res) => {
     req.session.username = user.username;
     await req.session.save();
 
-    console.log(`[${new Date().toISOString()}] User registered: ${user.username} (ID: ${user.id})`);
-
+    console.log(`[Password Register] User registered: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('Register error:', err);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Face recognition registration
-router.post('/face/register', async (req, res) => {
-  try {
-    const { error } = faceRegisterSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
-
-    const { email, username, descriptor } = req.body;
-    let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) return res.status(400).json({ msg: 'User already exists with this email or username' });
-
-    user = new User({ email, username, faceDescriptor: descriptor });
-    await user.save();
-
-    const payload = { userId: user.id };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
-
-    console.log(`[${new Date().toISOString()}] Face registration completed for ${username} (ID: ${user.id})`);
-
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
-  } catch (err) {
-    console.error('Face register error:', err);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Face recognition login
-router.post('/face/login', async (req, res) => {
-  try {
-    const { error } = faceRegisterSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
-
-    const { email, descriptor } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ msg: 'User not found' });
-
-    if (!user.faceDescriptor) return res.status(400).json({ msg: 'This account does not have face recognition enabled' });
-
-    const distance = peste(user.faceDescriptor, descriptor);
-    if (distance > 0.4) return res.status(401).json({ msg: 'Invalid face', distance });
-
-    const payload = { userId: user.id };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
-
-    console.log(`[${new Date().toISOString()}] Face login completed for ${user.username} (ID: ${user.id})`);
-
-    res.json({
-      token,
-      user: { id: user.id, email: user.email, username: user.username },
-      distance,
-    });
-  } catch (err) {
-    console.error('Face login error:', err);
+    console.error('[Password Register] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -236,20 +175,21 @@ router.post('/face/login', async (req, res) => {
 // WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
+    console.log('[WebAuthn Register Begin] Received request:', req.body.email, req.body.username);
     const { error } = webauthnRegisterBeginSchema.validate(req.body);
     if (error) {
-      console.error('Validation error:', error.details);
+      console.error('[WebAuthn Register Begin] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { username, email } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
-      console.error('User already exists:', { email, username });
+      console.error('[WebAuthn Register Begin] User already exists:', { email, username });
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    const userID = crypto.randomBytes(32);
+    const userID = crypto.randomBytes(32); // Generate Buffer for userID
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
@@ -264,45 +204,35 @@ router.post('/webauthn/register/begin', async (req, res) => {
       excludeCredentials: [],
     });
 
-    const responseData = {
+    console.log(`[WebAuthn Register Begin] Generated options for ${username}:`, {
+      userID: userID.toString('base64'),
+      challenge: options.challenge,
+    });
+
+    res.json({
       ...options,
       challenge: options.challenge,
       userID: userID.toString('base64'),
       email,
       username,
-    };
-
-    console.log(`[${new Date().toISOString()}] WebAuthn registration begin for ${username}:`, {
-      userID: userID.toString('base64'),
-      challenge: options.challenge,
     });
-    console.log('Sending response:', responseData);
-
-    res.json(responseData);
   } catch (err) {
-    console.error('WebAuthn register begin error:', err);
-    res.status(500).json({ msg: `Server error: ${err.message}` });
+    console.error('[WebAuthn Register Begin] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
   }
 });
 
 // WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
-    console.log('Received /auth/webauthn/register/complete request:', req.body); // Log the request body
+    console.log('[WebAuthn Register Complete] Received request:', req.body.email, req.body.username);
     const { error } = webauthnRegisterCompleteSchema.validate(req.body);
     if (error) {
-      console.error('Validation error:', error.details);
+      console.error('[WebAuthn Register Complete] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { email, username, credential, challenge, userID } = req.body;
-
-    console.log(`[${new Date().toISOString()}] WebAuthn registration complete attempt for ${username}:`, {
-      email,
-      username,
-      userID,
-      challenge,
-    });
 
     const verification = await verifyRegistrationResponse({
       response: credential,
@@ -312,7 +242,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     });
 
     if (!verification.verified) {
-      console.error('WebAuthn verification failed:', verification);
+      console.error('[WebAuthn Register Complete] Verification failed for:', email);
       return res.status(400).json({ msg: 'Fingerprint registration failed' });
     }
 
@@ -340,11 +270,10 @@ router.post('/webauthn/register/complete', async (req, res) => {
     req.session.username = user.username;
     await req.session.save();
 
-    console.log(`[${new Date().toISOString()}] WebAuthn registration completed for ${username} (ID: ${user.id})`);
-
+    console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('WebAuthn register complete error:', err);
+    console.error('[WebAuthn Register Complete] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -352,12 +281,17 @@ router.post('/webauthn/register/complete', async (req, res) => {
 // WebAuthn login: Begin
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
+    console.log('[WebAuthn Login Begin] Received request:', req.body.email);
     const { error } = webauthnLoginBeginSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[WebAuthn Login Begin] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { email } = req.body;
     const user = await User.findOne({ email });
     if (!user || !user.webauthnCredentials.length) {
+      console.error('[WebAuthn Login Begin] No biometric credentials found for:', email);
       return res.status(400).json({ msg: 'No biometric credentials found for this user' });
     }
 
@@ -377,14 +311,14 @@ router.post('/webauthn/login/begin', async (req, res) => {
 
     await req.session.save();
 
-    console.log(`[${new Date().toISOString()}] WebAuthn login begin for ${user.username}:`, {
+    console.log(`[WebAuthn Login Begin] Generated options for ${user.username}:`, {
       sessionId: req.sessionID,
       challenge: options.challenge,
     });
 
     res.json(options);
   } catch (err) {
-    console.error('WebAuthn login begin error:', err);
+    console.error('[WebAuthn Login Begin] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -392,8 +326,12 @@ router.post('/webauthn/login/begin', async (req, res) => {
 // WebAuthn login: Complete
 router.post('/webauthn/login/complete', async (req, res) => {
   try {
+    console.log('[WebAuthn Login Complete] Received request:', req.body.email);
     const { error } = webauthnLoginCompleteSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[WebAuthn Login Complete] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { email, credential } = req.body;
 
@@ -403,7 +341,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
       !req.session.webauthnUserID ||
       req.session.challengeExpires < Date.now()
     ) {
-      console.error('Invalid session data for login:', {
+      console.error('[WebAuthn Login Complete] Invalid session data:', {
         sessionId: req.sessionID,
         sessionChallenge: req.session.challenge,
         sessionEmail: req.session.email,
@@ -415,13 +353,19 @@ router.post('/webauthn/login/complete', async (req, res) => {
     }
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ msg: 'User not found' });
+    if (!user) {
+      console.error('[WebAuthn Login Complete] User not found:', email);
+      return res.status(400).json({ msg: 'User not found' });
+    }
 
     const credentialID = Buffer.from(credential.rawId).toString('base64');
     const credentialMatch = user.webauthnCredentials.find(
       cred => cred.credentialID === credentialID
     );
-    if (!credentialMatch) return res.status(400).json({ msg: 'Invalid credential' });
+    if (!credentialMatch) {
+      console.error('[WebAuthn Login Complete] Invalid credential for:', email);
+      return res.status(400).json({ msg: 'Invalid credential' });
+    }
 
     const verification = await verifyAuthenticationResponse({
       response: credential,
@@ -436,7 +380,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
     });
 
     if (!verification.verified) {
-      console.error('WebAuthn login verification failed:', verification);
+      console.error('[WebAuthn Login Complete] Verification failed for:', email);
       return res.status(400).json({ msg: 'Fingerprint authentication failed' });
     }
 
@@ -454,11 +398,10 @@ router.post('/webauthn/login/complete', async (req, res) => {
     req.session.challengeExpires = null;
     await req.session.save();
 
-    console.log(`[${new Date().toISOString()}] WebAuthn login completed for ${user.username} (ID: ${user.id})`);
-
+    console.log(`[WebAuthn Login Complete] User logged in: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('WebAuthn login complete error:', err);
+    console.error('[WebAuthn Login Complete] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -466,16 +409,19 @@ router.post('/webauthn/login/complete', async (req, res) => {
 // Get authenticated user data
 router.get('/me', auth, async (req, res) => {
   try {
+    console.log('[Get User] Fetching user data for ID:', req.user);
     if (req.user) {
       const user = await User.findById(req.user)
-        .select('-password -faceDescriptor -webauthnCredentials -webauthnUserID')
+        .select('-password -webauthnCredentials -webauthnUserID')
         .populate('friends', 'username online')
         .populate('friendRequests', 'username')
         .populate('blockedUsers', 'username');
-      if (!user) return res.status(404).json({ msg: 'User not found' });
+      if (!user) {
+        console.error('[Get User] User not found:', req.user);
+        return res.status(404).json({ msg: 'User not found' });
+      }
 
-      console.log(`[${new Date().toISOString()}] User data fetched for ${user.username} (ID: ${user.id})`);
-
+      console.log(`[Get User] User data fetched: ${user.username} (ID: ${user.id})`);
       res.json({
         id: user.id,
         email: user.email,
@@ -486,6 +432,7 @@ router.get('/me', auth, async (req, res) => {
         blockedUsers: user.blockedUsers,
       });
     } else if (req.anonymousUser) {
+      console.log(`[Get User] Anonymous user data fetched: ${req.anonymousUser.username}`);
       res.json({
         id: req.anonymousUser.anonymousId,
         username: req.anonymousUser.username,
@@ -494,7 +441,7 @@ router.get('/me', auth, async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('Get me error:', err);
+    console.error('[Get User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -502,14 +449,24 @@ router.get('/me', auth, async (req, res) => {
 // Forgot password
 router.post('/forgot-password', async (req, res) => {
   try {
+    console.log('[Forgot Password] Received request:', req.body.email);
     const { error } = forgotPasswordSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Forgot Password] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { email } = req.body;
     const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ msg: 'No user found with this email' });
+    if (!user) {
+      console.error('[Forgot Password] User not found:', email);
+      return res.status(404).json({ msg: 'No user found with this email' });
+    }
 
-    if (!user.password) return res.status(400).json({ msg: 'This account uses biometric or face login.' });
+    if (!user.password) {
+      console.error('[Forgot Password] Account uses biometric login:', email);
+      return res.status(400).json({ msg: 'This account uses biometric login.' });
+    }
 
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
@@ -567,9 +524,10 @@ router.post('/forgot-password', async (req, res) => {
 </html>`;
 
     await sendEmail(user.email, subject, html);
+    console.log(`[Forgot Password] Reset link sent to: ${email}`);
     res.json({ msg: 'Password reset link sent to your email' });
   } catch (err) {
-    console.error('Forgot password error:', err);
+    console.error('[Forgot Password] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -577,8 +535,12 @@ router.post('/forgot-password', async (req, res) => {
 // Reset password
 router.post('/reset-password/:token', async (req, res) => {
   try {
+    console.log('[Reset Password] Received request for token:', req.params.token);
     const { error } = resetPasswordSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Reset Password] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { token } = req.params;
     const { password } = req.body;
@@ -587,17 +549,20 @@ router.post('/reset-password/:token', async (req, res) => {
       resetPasswordExpires: { $gt: Date.now() },
     });
 
-    if (!user) return res.status(400).json({ msg: 'Invalid or expired reset token' });
+    if (!user) {
+      console.error('[Reset Password] Invalid or expired token:', token);
+      return res.status(400).json({ msg: 'Invalid or expired reset token' });
+    }
 
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(password, salt);
+    user.password = password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();
 
+    console.log(`[Reset Password] Password reset for: ${user.email}`);
     res.json({ msg: 'Password successfully reset' });
   } catch (err) {
-    console.error('Reset password error:', err);
+    console.error('[Reset Password] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -605,12 +570,17 @@ router.post('/reset-password/:token', async (req, res) => {
 // Get friends
 router.get('/friends', auth, async (req, res) => {
   try {
+    console.log('[Get Friends] Fetching friends for user ID:', req.user);
     const user = await User.findById(req.user).populate('friends', 'username online');
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      console.error('[Get Friends] User not found:', req.user);
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
+    console.log(`[Get Friends] Friends fetched for: ${user.username}`);
     res.json(user.friends);
   } catch (err) {
-    console.error('Get friends error:', err);
+    console.error('[Get Friends] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -618,24 +588,38 @@ router.get('/friends', auth, async (req, res) => {
 // Add friend
 router.post('/add-friend', auth, async (req, res) => {
   try {
+    console.log('[Add Friend] Received request:', req.body.friendUsername);
     const { error } = addFriendSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Add Friend] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { friendUsername } = req.body;
     const friend = await User.findOne({ username: friendUsername });
-    if (!friend) return res.status(404).json({ msg: 'User not found' });
-    if (friend._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot add yourself' });
+    if (!friend) {
+      console.error('[Add Friend] Friend not found:', friendUsername);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    if (friend._id.toString() === req.user) {
+      console.error('[Add Friend] Cannot add self:', req.user);
+      return res.status(400).json({ msg: 'Cannot add yourself' });
+    }
 
     const user = await User.findById(req.user);
-    if (user.friends.includes(friend._id)) return res.status(400).json({ msg: 'Already friends' });
+    if (user.friends.includes(friend._id)) {
+      console.error('[Add Friend] Already friends:', friendUsername);
+      return res.status(400).json({ msg: 'Already friends' });
+    }
 
     user.friends.push(friend._id);
     await user.save();
 
     const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
+    console.log(`[Add Friend] Friend added: ${friendUsername} for user: ${user.username}`);
     res.json(updatedFriends.friends);
   } catch (err) {
-    console.error('Add friend error:', err);
+    console.error('[Add Friend] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -643,22 +627,33 @@ router.post('/add-friend', auth, async (req, res) => {
 // Remove friend
 router.post('/remove-friend', auth, async (req, res) => {
   try {
+    console.log('[Remove Friend] Received request:', req.body.friendId);
     const { error } = removeFriendSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Remove Friend] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { friendId } = req.body;
     const user = await User.findById(req.user);
     const friend = await User.findById(friendId);
-    if (!friend) return res.status(404).json({ msg: 'Friend not found' });
-    if (!user.friends.includes(friendId)) return res.status(400).json({ msg: 'Not friends' });
+    if (!friend) {
+      console.error('[Remove Friend] Friend not found:', friendId);
+      return res.status(404).json({ msg: 'Friend not found' });
+    }
+    if (!user.friends.includes(friendId)) {
+      console.error('[Remove Friend] Not friends:', friendId);
+      return res.status(400).json({ msg: 'Not friends' });
+    }
 
     user.friends = user.friends.filter(id => id.toString() !== friendId);
     await user.save();
 
     const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
+    console.log(`[Remove Friend] Friend removed: ${friendId} for user: ${user.username}`);
     res.json(updatedFriends.friends);
   } catch (err) {
-    console.error('Remove friend error:', err);
+    console.error('[Remove Friend] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -666,11 +661,18 @@ router.post('/remove-friend', auth, async (req, res) => {
 // Update profile
 router.put('/profile', auth, async (req, res) => {
   try {
+    console.log('[Update Profile] Received request for user ID:', req.user);
     const { error } = updateProfileSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Update Profile] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const user = await User.findById(req.user);
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      console.error('[Update Profile] User not found:', req.user);
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     const { bio, age, status, allowFriendRequests } = req.body;
     if (bio !== undefined) user.bio = bio;
@@ -680,6 +682,7 @@ router.put('/profile', auth, async (req, res) => {
 
     await user.save();
 
+    console.log(`[Update Profile] Profile updated for: ${user.username}`);
     res.json({
       id: user.id,
       email: user.email,
@@ -690,7 +693,7 @@ router.put('/profile', auth, async (req, res) => {
       privacy: user.privacy,
     });
   } catch (err) {
-    console.error('Update profile error:', err);
+    console.error('[Update Profile] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -698,13 +701,18 @@ router.put('/profile', auth, async (req, res) => {
 // Get profile
 router.get('/profile', auth, async (req, res) => {
   try {
+    console.log('[Get Profile] Fetching profile for user ID:', req.user);
     const user = await User.findById(req.user)
-      .select('-password -faceDescriptor -webauthnCredentials -webauthnUserID')
+      .select('-password -webauthnCredentials -webauthnUserID')
       .populate('friends', 'username online')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      console.error('[Get Profile] User not found:', req.user);
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
+    console.log(`[Get Profile] Profile fetched for: ${user.username}`);
     res.json({
       id: user.id,
       email: user.email,
@@ -718,7 +726,7 @@ router.get('/profile', auth, async (req, res) => {
       blockedUsers: user.blockedUsers,
     });
   } catch (err) {
-    console.error('Get profile error:', err);
+    console.error('[Get Profile] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -726,23 +734,33 @@ router.get('/profile', auth, async (req, res) => {
 // Change password
 router.put('/change-password', auth, async (req, res) => {
   try {
+    console.log('[Change Password] Received request for user ID:', req.user);
     const { error } = changePasswordSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Change Password] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { currentPassword, newPassword } = req.body;
     const user = await User.findById(req.user).select('+password');
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      console.error('[Change Password] User not found:', req.user);
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch) return res.status(400).json({ msg: 'Current password is incorrect' });
+    if (!isMatch) {
+      console.error('[Change Password] Current password incorrect:', req.user);
+      return res.status(400).json({ msg: 'Current password is incorrect' });
+    }
 
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(newPassword, salt);
+    user.password = newPassword;
     await user.save();
 
+    console.log(`[Change Password] Password changed for: ${user.username}`);
     res.json({ msg: 'Password changed successfully' });
   } catch (err) {
-    console.error('Change password error:', err);
+    console.error('[Change Password] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -750,16 +768,21 @@ router.put('/change-password', auth, async (req, res) => {
 // Delete account
 router.delete('/delete-account', auth, async (req, res) => {
   try {
+    console.log('[Delete Account] Received request for user ID:', req.user);
     const user = await User.findById(req.user);
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      console.error('[Delete Account] User not found:', req.user);
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     await User.deleteOne({ _id: req.user });
     req.session.destroy((err) => {
-      if (err) console.error('Failed to destroy session during account deletion:', err);
+      if (err) console.error('[Delete Account] Failed to destroy session:', err.message);
+      console.log(`[Delete Account] Account deleted for: ${user.username}`);
       res.json({ msg: 'Account deleted successfully' });
     });
   } catch (err) {
-    console.error('Delete account error:', err);
+    console.error('[Delete Account] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -767,24 +790,38 @@ router.delete('/delete-account', auth, async (req, res) => {
 // Block user
 router.post('/block-user', auth, async (req, res) => {
   try {
+    console.log('[Block User] Received request:', req.body.username);
     const { error } = blockUserSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Block User] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { username } = req.body;
     const userToBlock = await User.findOne({ username });
-    if (!userToBlock) return res.status(404).json({ msg: 'User not found' });
-    if (userToBlock._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot block yourself' });
+    if (!userToBlock) {
+      console.error('[Block User] User not found:', username);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    if (userToBlock._id.toString() === req.user) {
+      console.error('[Block User] Cannot block self:', req.user);
+      return res.status(400).json({ msg: 'Cannot block yourself' });
+    }
 
     const user = await User.findById(req.user);
-    if (user.blockedUsers.includes(userToBlock._id)) return res.status(400).json({ msg: 'User already blocked' });
+    if (user.blockedUsers.includes(userToBlock._id)) {
+      console.error('[Block User] User already blocked:', username);
+      return res.status(400).json({ msg: 'User already blocked' });
+    }
 
     user.blockedUsers.push(userToBlock._id);
     await user.save();
 
     const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    console.log(`[Block User] User blocked: ${username} by: ${user.username}`);
     res.json({ blockedUsers: updatedUser.blockedUsers });
   } catch (err) {
-    console.error('Block user error:', err);
+    console.error('[Block User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -792,20 +829,28 @@ router.post('/block-user', auth, async (req, res) => {
 // Unblock user
 router.post('/unblock-user', auth, async (req, res) => {
   try {
+    console.log('[Unblock User] Received request:', req.body.userId);
     const { error } = unblockUserSchema.validate(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
+    if (error) {
+      console.error('[Unblock User] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
 
     const { userId } = req.body;
     const user = await User.findById(req.user);
-    if (!user.blockedUsers.includes(userId)) return res.status(400).json({ msg: 'User not blocked' });
+    if (!user.blockedUsers.includes(userId)) {
+      console.error('[Unblock User] User not blocked:', userId);
+      return res.status(400).json({ msg: 'User not blocked' });
+    }
 
     user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
     await user.save();
 
     const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    console.log(`[Unblock User] User unblocked: ${userId} by: ${user.username}`);
     res.json({ blockedUsers: updatedUser.blockedUsers });
   } catch (err) {
-    console.error('Unblock user error:', err);
+    console.error('[Unblock User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
