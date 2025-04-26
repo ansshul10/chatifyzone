@@ -148,13 +148,12 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    // Generate a random 32-byte userID
-    const userID = crypto.randomBytes(32); // Returns a Buffer
+    const userID = crypto.randomBytes(32);
 
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID, // Use binary Buffer
+      userID,
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
@@ -165,10 +164,14 @@ router.post('/webauthn/register/begin', async (req, res) => {
       excludeCredentials: [],
     });
 
-    // Store challenge and user details in session
     req.session.challenge = options.challenge;
-    req.session.pendingUser = { email, username, userID: userID.toString('base64') }; // Store as base64
-    console.log('WebAuthn registration options generated:', { email, username, challenge: options.challenge });
+    req.session.pendingUser = { email, username, userID: userID.toString('base64') };
+    console.log('WebAuthn registration options generated:', {
+      sessionId: req.sessionID,
+      email,
+      username,
+      challenge: options.challenge,
+    });
 
     res.json(options);
   } catch (err) {
@@ -181,6 +184,14 @@ router.post('/webauthn/register/complete', async (req, res) => {
   const { email, username, credential } = req.body;
 
   try {
+    console.log('Session data:', {
+      sessionId: req.sessionID,
+      sessionChallenge: req.session.challenge,
+      sessionPendingUser: req.session.pendingUser,
+      providedEmail: email,
+      providedUsername: username,
+    });
+
     if (
       !req.session.challenge ||
       !req.session.pendingUser ||
@@ -188,6 +199,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
       req.session.pendingUser.username !== username
     ) {
       console.error('Invalid session data:', {
+        sessionId: req.sessionID,
         sessionChallenge: req.session.challenge,
         sessionPendingUser: req.session.pendingUser,
         providedEmail: email,
@@ -196,7 +208,6 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
-    // Convert stored userID back to Buffer for verification
     const userID = Buffer.from(req.session.pendingUser.userID, 'base64');
 
     const verification = await verifyRegistrationResponse({
@@ -216,7 +227,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const user = new User({
       email,
       username,
-      webauthnUserID: req.session.pendingUser.userID, // Store as base64
+      webauthnUserID: req.session.pendingUser.userID,
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
         publicKey: Buffer.from(publicKey).toString('base64'),
@@ -264,7 +275,13 @@ router.post('/webauthn/login/begin', async (req, res) => {
 
     req.session.challenge = options.challenge;
     req.session.email = email;
-    req.session.webauthnUserID = user.webauthnUserID; // Store for verification
+    req.session.webauthnUserID = user.webauthnUserID;
+
+    console.log('WebAuthn login options generated:', {
+      sessionId: req.sessionID,
+      email,
+      challenge: options.challenge,
+    });
 
     res.json(options);
   } catch (err) {
@@ -277,7 +294,22 @@ router.post('/webauthn/login/complete', async (req, res) => {
   const { email, credential } = req.body;
 
   try {
+    console.log('Session data for login:', {
+      sessionId: req.sessionID,
+      sessionChallenge: req.session.challenge,
+      sessionEmail: req.session.email,
+      sessionWebauthnUserID: req.session.webauthnUserID,
+      providedEmail: email,
+    });
+
     if (!req.session.challenge || req.session.email !== email || !req.session.webauthnUserID) {
+      console.error('Invalid session data for login:', {
+        sessionId: req.sessionID,
+        sessionChallenge: req.session.challenge,
+        sessionEmail: req.session.email,
+        sessionWebauthnUserID: req.session.webauthnUserID,
+        providedEmail: email,
+      });
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
 
@@ -306,6 +338,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
     });
 
     if (!verification.verified) {
+      console.error('WebAuthn login verification failed:', verification);
       return res.status(400).json({ msg: 'Fingerprint authentication failed' });
     }
 
@@ -326,7 +359,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
   }
 });
 
-// Other routes remain unchanged
+// Remaining routes unchanged
 router.get('/me', auth, async (req, res) => {
   try {
     if (req.user) {
@@ -405,7 +438,7 @@ router.post('/forgot-password', async (req, res) => {
             <p>We received a request to reset your password. Click the button below to create a new password:</p>
             <a href="${resetUrl}" class="button">Reset Your Password</a>
             <p class="warning">This link will expire in <span class="highlight">1 hour</span>. 
-              If you didn&#39;t request this reset, please ignore this email or contact our support team.</p>
+              If you didn't request this reset, please ignore this email or contact our support team.</p>
           </div>
           <div class="footer">
             <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
