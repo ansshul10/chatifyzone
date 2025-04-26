@@ -284,15 +284,21 @@ const Signup = () => {
 
       console.log('Starting WebAuthn registration for:', { email, username });
 
-      const response = await api.post('/auth/webauthn/register/begin', { email, username });
+      // Make request to begin WebAuthn registration
+      const response = await api.post('/auth/webauthn/register/begin', { email, username }, {
+        withCredentials: true, // Ensure cookies are sent
+      });
       const publicKey = response.data;
-
       console.log('Received WebAuthn options:', publicKey);
 
+      // Start WebAuthn registration
       const credential = await startRegistration(publicKey);
       console.log('Fingerprint credential created:', credential);
 
-      const { data } = await api.post('/auth/webauthn/register/complete', { email, username, credential });
+      // Make request to complete WebAuthn registration
+      const { data } = await api.post('/auth/webauthn/register/complete', { email, username, credential }, {
+        withCredentials: true, // Ensure cookies are sent
+      });
       console.log('Registration completed:', data);
 
       localStorage.setItem('token', data.token);
@@ -302,7 +308,12 @@ const Signup = () => {
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
       console.error('Fingerprint signup error:', err);
-      const errorMessage = err.response?.data.msg || err.message || 'Fingerprint signup failed. Please ensure your device has a fingerprint sensor and is connected to the internet.';
+      let errorMessage = 'Fingerprint signup failed. Please try again.';
+      if (err.response?.data?.msg) {
+        errorMessage = err.response.data.msg;
+      } else if (err.message) {
+        errorMessage = `Fingerprint signup failed: ${err.message}`;
+      }
       setError(errorMessage);
     }
   };
@@ -828,7 +839,7 @@ const Signup = () => {
                     whileHover="hover"
                     whileFocus="focus"
                     variants={inputVariants}
-                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'} mb-4`}
+                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
                   >
                     <FaEnvelope className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
                     <input
