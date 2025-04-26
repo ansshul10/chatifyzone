@@ -93,8 +93,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
   try {
     // Step 1: Log incoming request
     console.log('[WebAuthn Register Begin] Step 1: Received request:', {
-      email: req.body.email,
-      username: req.body.username,
+      headers: req.headers,
       body: req.body,
     });
 
@@ -178,14 +177,14 @@ router.post('/webauthn/register/begin', async (req, res) => {
 
     // Step 6: Verify response structure
     console.log('[WebAuthn Register Begin] Step 6: Verifying response structure');
-    if (!response.publicKey) {
-      console.error('[WebAuthn Register Begin] Step 6 Error: Response missing publicKey:', response);
-      return res.status(500).json({ msg: 'Server failed to prepare publicKey' });
+    if (!response.publicKey || !response.challenge || !response.userID) {
+      console.error('[WebAuthn Register Begin] Step 6 Error: Invalid response structure:', response);
+      return res.status(500).json({ msg: 'Server failed to prepare WebAuthn response' });
     }
     console.log('[WebAuthn Register Begin] Step 6: Response structure valid');
 
     // Step 7: Send response
-    console.log('[WebAuthn Register Begin] Step 7: Sending response:', JSON.stringify(response, null, 2));
+    console.log('[WebAuthn Register Begin] Step 7: Sending response:', response);
     res.json(response);
   } catch (err) {
     console.error('[WebAuthn Register Begin] Step 8 Error: Unexpected server error:', {
