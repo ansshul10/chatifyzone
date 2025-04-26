@@ -13,11 +13,11 @@ const {
   verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 
-const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
+const rpID = process.env.WEBAUTHN_RP_ID || 'your-vercel-domain.vercel.app';
 const rpName = 'Chatify';
-const expectedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
+const expectedOrigin = process.env.CLIENT_URL || 'https://your-vercel-domain.vercel.app';
 
-const calculateEuclideanDistance = (arr1, arr2) => {
+const peste = (arr1, arr2) => {
   if (!arr1 || !arr2 || arr1.length !== arr2.length) return Infinity;
   return Math.sqrt(arr1.reduce((sum, val, i) => sum + Math.pow(val - arr2[i], 2), 0));
 };
@@ -115,7 +115,7 @@ router.post('/face/login', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid face descriptor: A single descriptor with 128 values is required' });
     }
 
-    const distance = calculateEuclideanDistance(user.faceDescriptors[0], descriptor);
+    const distance = peste(user.faceDescriptors[0], descriptor);
 
     if (distance > 0.4) {
       return res.status(401).json({ msg: 'Invalid face', distance });
@@ -135,40 +135,41 @@ router.post('/face/login', async (req, res) => {
   }
 });
 
-// WebAuthn Registration (Signup)
 router.post('/webauthn/register/begin', async (req, res) => {
   const { username, email } = req.body;
 
   try {
-    // Check if user exists
+    if (!username || !email) {
+      return res.status(400).json({ msg: 'Username and email are required' });
+    }
+
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    // Generate WebAuthn registration options
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID: email, // Use email as unique user ID
+      userID: email,
       userName: username,
       userDisplayName: username,
-      attestationType: 'none', // No attestation required
+      attestationType: 'none',
       authenticatorSelection: {
-        authenticatorAttachment: 'platform', // Use device authenticator (e.g., fingerprint)
-        userVerification: 'required', // Require fingerprint verification
+        authenticatorAttachment: 'platform',
+        userVerification: 'required',
       },
-      excludeCredentials: [], // No existing credentials to exclude
+      excludeCredentials: [],
     });
 
-    // Store challenge in session
     req.session.challenge = options.challenge;
     req.session.pendingUser = { email, username };
+    console.log('WebAuthn registration options generated:', { email, username, challenge: options.challenge });
 
     res.json(options);
   } catch (err) {
     console.error('WebAuthn register begin error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
@@ -176,17 +177,21 @@ router.post('/webauthn/register/complete', async (req, res) => {
   const { email, username, credential } = req.body;
 
   try {
-    // Validate session
     if (
       !req.session.challenge ||
       !req.session.pendingUser ||
       req.session.pendingUser.email !== email ||
       req.session.pendingUser.username !== username
     ) {
+      console.error('Invalid session data:', {
+        sessionChallenge: req.session.challenge,
+        sessionPendingUser: req.session.pendingUser,
+        providedEmail: email,
+        providedUsername: username,
+      });
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
-    // Verify WebAuthn registration
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: req.session.challenge,
@@ -195,18 +200,18 @@ router.post('/webauthn/register/complete', async (req, res) => {
     });
 
     if (!verification.verified) {
+      console.error('WebAuthn verification failed:', verification);
       return res.status(400).json({ msg: 'Fingerprint registration failed' });
     }
 
     const { credentialID, publicKey, counter } = verification.registrationInfo;
 
-    // Create new user
     const user = new User({
       email,
       username,
       webauthnCredentials: [{
-        credentialID: Buffer.from(credentialID).toString('base64'), // Store as base64
-        publicKey: Buffer.from(publicKey).toString('base64'), // Store as base64
+        credentialID: Buffer.from(credentialID).toString('base64'),
+        publicKey: Buffer.from(publicKey).toString('base64'),
         counter,
         deviceName: 'Fingerprint Authenticator',
         authenticatorType: 'fingerprint',
@@ -214,47 +219,41 @@ router.post('/webauthn/register/complete', async (req, res) => {
     });
 
     await user.save();
+    console.log('User registered with WebAuthn:', { email, username, userId: user.id });
 
-    // Clear session
     req.session.challenge = null;
     req.session.pendingUser = null;
 
-    // Generate JWT
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
     console.error('WebAuthn register complete error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
-// WebAuthn Authentication (Login)
 router.post('/webauthn/login/begin', async (req, res) => {
   const { email } = req.body;
 
   try {
-    // Find user
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ msg: 'User not found' });
     }
 
-    // Get user's WebAuthn credentials
     const credentials = user.webauthnCredentials.map(cred => ({
-      id: Buffer.from(cred.credentialID, 'base64'), // Decode from base64
+      id: Buffer.from(cred.credentialID, 'base64'),
       type: 'public-key',
     }));
 
-    // Generate authentication options
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: credentials,
-      userVerification: 'required', // Require fingerprint verification
+      userVerification: 'required',
     });
 
-    // Store challenge in session
     req.session.challenge = options.challenge;
     req.session.email = email;
 
@@ -269,18 +268,15 @@ router.post('/webauthn/login/complete', async (req, res) => {
   const { email, credential } = req.body;
 
   try {
-    // Validate session
     if (!req.session.challenge || req.session.email !== email) {
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
 
-    // Find user
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ msg: 'User not found' });
     }
 
-    // Find matching credential
     const credentialMatch = user.webauthnCredentials.find(
       cred => cred.credentialID === Buffer.from(credential.id).toString('base64')
     );
@@ -288,7 +284,6 @@ router.post('/webauthn/login/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid credential' });
     }
 
-    // Verify authentication
     const verification = await verifyAuthenticationResponse({
       response: credential,
       expectedChallenge: req.session.challenge,
@@ -305,15 +300,12 @@ router.post('/webauthn/login/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Fingerprint authentication failed' });
     }
 
-    // Update counter
     credentialMatch.counter = verification.authenticationInfo.newCounter;
     await user.save();
 
-    // Clear session
     req.session.challenge = null;
     req.session.email = null;
 
-    // Generate JWT
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
@@ -352,12 +344,12 @@ router.post('/forgot-password', async (req, res) => {
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ msg: 'No user found with this email' });
+      return res.status(404).json({ msg: 'No user found with this email' });
     }
 
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = Date.now() + 3600000;
+Economiauser.resetPasswordExpires = Date.now() + 3600000;
     await user.save();
 
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
@@ -469,7 +461,7 @@ router.post('/add-friend', auth, async (req, res) => {
 
     user.friends.push(friend._id);
     await user.save();
-    const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
+    const updatedFriends = await User.findById(req.user). populate('friends', 'username online');
     res.json(updatedFriends.friends);
   } catch (err) {
     console.error('Add friend error:', err);
