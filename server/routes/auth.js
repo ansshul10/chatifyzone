@@ -57,6 +57,8 @@ const webauthnRegisterCompleteSchema = Joi.object({
   email: Joi.string().email().required(),
   username: Joi.string().min(3).max(30).required(),
   credential: Joi.object().required(),
+  challenge: Joi.string().required(),
+  userID: Joi.string().required(),
 });
 
 const webauthnLoginBeginSchema = Joi.object({
@@ -108,33 +110,25 @@ const unblockUserSchema = Joi.object({
 router.post('/login', async (req, res) => {
   try {
     const { error } = loginSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { email, password } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ msg: 'Invalid credentials' });
-    }
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
 
-    if (!user.password) {
-      return res.status(400).json({ msg: 'This account uses biometric or face login.' });
-    }
+    if (!user.password) return res.status(400).json({ msg: 'This account uses biometric or face login.' });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ msg: 'Invalid credentials' });
-    }
+    if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
 
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save((err) => {
-      if (err) console.error('Session save error in login:', err);
-    });
+    await req.session.save();
+
+    console.log(`[${new Date().toISOString()}] User logged in: ${user.username} (ID: ${user.id})`);
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -147,15 +141,11 @@ router.post('/login', async (req, res) => {
 router.post('/register', async (req, res) => {
   try {
     const { error } = registerSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { email, username, password } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
-      return res.status(400).json({ msg: 'User already exists with this email or username' });
-    }
+    if (user) return res.status(400).json({ msg: 'User already exists with this email or username' });
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
@@ -168,9 +158,9 @@ router.post('/register', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save((err) => {
-      if (err) console.error('Session save error in register:', err);
-    });
+    await req.session.save();
+
+    console.log(`[${new Date().toISOString()}] User registered: ${user.username} (ID: ${user.id})`);
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -183,17 +173,13 @@ router.post('/register', async (req, res) => {
 router.post('/face/register', async (req, res) => {
   try {
     const { error } = faceRegisterSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { email, username, descriptor } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
-      return res.status(400).json({ msg: 'User already exists with this email or username' });
-    }
+    if (user) return res.status(400).json({ msg: 'User already exists with this email or username' });
 
-    user = new User({ email, username, faceDescriptors: [descriptor] });
+    user = new User({ email, username, faceDescriptor: descriptor });
     await user.save();
 
     const payload = { userId: user.id };
@@ -201,9 +187,9 @@ router.post('/face/register', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save((err) => {
-      if (err) console.error('Session save error in face/register:', err);
-    });
+    await req.session.save();
+
+    console.log(`[${new Date().toISOString()}] Face registration completed for ${username} (ID: ${user.id})`);
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -216,33 +202,25 @@ router.post('/face/register', async (req, res) => {
 router.post('/face/login', async (req, res) => {
   try {
     const { error } = faceRegisterSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { email, descriptor } = req.body;
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ msg: 'User not found' });
-    }
+    if (!user) return res.status(400).json({ msg: 'User not found' });
 
-    if (!user.faceDescriptors || user.faceDescriptors.length === 0) {
-      return res.status(400).json({ msg: 'This account does not have face recognition enabled' });
-    }
+    if (!user.faceDescriptor) return res.status(400).json({ msg: 'This account does not have face recognition enabled' });
 
-    const distance = peste(user.faceDescriptors[0], descriptor);
-    if (distance > 0.4) {
-      return res.status(401).json({ msg: 'Invalid face', distance });
-    }
+    const distance = peste(user.faceDescriptor, descriptor);
+    if (distance > 0.4) return res.status(401).json({ msg: 'Invalid face', distance });
 
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save((err) => {
-      if (err) console.error('Session save error in face/login:', err);
-    });
+    await req.session.save();
+
+    console.log(`[${new Date().toISOString()}] Face login completed for ${user.username} (ID: ${user.id})`);
 
     res.json({
       token,
@@ -259,15 +237,11 @@ router.post('/face/login', async (req, res) => {
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
     const { error } = webauthnRegisterBeginSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { username, email } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
-      return res.status(400).json({ msg: 'User already exists with this email or username' });
-    }
+    if (user) return res.status(400).json({ msg: 'User already exists with this email or username' });
 
     const userID = crypto.randomBytes(32); // Generate Buffer for userID
     const options = await generateRegistrationOptions({
@@ -284,28 +258,19 @@ router.post('/webauthn/register/begin', async (req, res) => {
       excludeCredentials: [],
     });
 
-    // Store challenge and user data in session for verification
-    req.session.challenge = options.challenge;
-    req.session.pendingUser = { email, username, userID: userID.toString('base64') };
-    req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
-
-    // Ensure session is saved before responding
-    await new Promise((resolve, reject) => {
-      req.session.save((err) => {
-        if (err) {
-          console.error('Session save error in webauthn/register/begin:', err);
-          return reject(err);
-        }
-        console.log(`[${new Date().toISOString()}] Session saved in /webauthn/register/begin:`, {
-          sessionId: req.sessionID,
-          challenge: req.session.challenge,
-          pendingUser: req.session.pendingUser,
-        });
-        resolve();
-      });
+    console.log(`[${new Date().toISOString()}] WebAuthn registration begin for ${username}:`, {
+      userID: userID.toString('base64'),
+      challenge: options.challenge,
     });
 
-    res.json(options);
+    // Return challenge and userID to the client
+    res.json({
+      ...options,
+      challenge: options.challenge,
+      userID: userID.toString('base64'),
+      email,
+      username,
+    });
   } catch (err) {
     console.error('WebAuthn register begin error:', err);
     res.status(500).json({ msg: 'Server error' });
@@ -316,37 +281,21 @@ router.post('/webauthn/register/begin', async (req, res) => {
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
     const { error } = webauthnRegisterCompleteSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
-    const { email, username, credential } = req.body;
+    const { email, username, credential, challenge, userID } = req.body;
 
-    // Log session data for debugging
-    console.log(`[${new Date().toISOString()}] Session data in /webauthn/register/complete:`, {
-      sessionId: req.sessionID,
-      sessionChallenge: req.session.challenge,
-      sessionPendingUser: req.session.pendingUser,
-      providedEmail: email,
-      providedUsername: username,
-      challengeExpired: req.session.challengeExpires < Date.now(),
+    console.log(`[${new Date().toISOString()}] WebAuthn registration complete attempt for ${username}:`, {
+      email,
+      username,
+      userID,
+      challenge,
     });
 
-    // Verify session data
-    if (
-      !req.session.challenge ||
-      !req.session.pendingUser ||
-      req.session.pendingUser.email !== email ||
-      req.session.pendingUser.username !== username ||
-      req.session.challengeExpires < Date.now()
-    ) {
-      return res.status(400).json({ msg: 'Invalid session or user data' });
-    }
-
-    const userID = Buffer.from(req.session.pendingUser.userID, 'base64'); // Convert back to Buffer
+    // Verify the provided challenge and credential
     const verification = await verifyRegistrationResponse({
       response: credential,
-      expectedChallenge: req.session.challenge,
+      expectedChallenge: challenge,
       expectedOrigin,
       expectedRPID: rpID,
     });
@@ -357,10 +306,11 @@ router.post('/webauthn/register/complete', async (req, res) => {
     }
 
     const { credentialID, publicKey, counter } = verification.registrationInfo;
+
     const user = new User({
       email,
       username,
-      webauthnUserID: userID.toString('base64'), // Store as base64 in DB
+      webauthnUserID: userID,
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
         publicKey: Buffer.from(publicKey).toString('base64'),
@@ -375,15 +325,11 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    // Clear session data
-    req.session.challenge = null;
-    req.session.pendingUser = null;
-    req.session.challengeExpires = null;
     req.session.userId = user.id;
     req.session.username = user.username;
-    await req.session.save((err) => {
-      if (err) console.error('Session save error in webauthn/register/complete:', err);
-    });
+    await req.session.save();
+
+    console.log(`[${new Date().toISOString()}] WebAuthn registration completed for ${username} (ID: ${user.id})`);
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -396,9 +342,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
     const { error } = webauthnLoginBeginSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { email } = req.body;
     const user = await User.findOne({ email });
@@ -420,8 +364,11 @@ router.post('/webauthn/login/begin', async (req, res) => {
     req.session.webauthnUserID = user.webauthnUserID;
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
 
-    await req.session.save((err) => {
-      if (err) console.error('Session save error in webauthn/login/begin:', err);
+    await req.session.save();
+
+    console.log(`[${new Date().toISOString()}] WebAuthn login begin for ${user.username}:`, {
+      sessionId: req.sessionID,
+      challenge: options.challenge,
     });
 
     res.json(options);
@@ -435,9 +382,7 @@ router.post('/webauthn/login/begin', async (req, res) => {
 router.post('/webauthn/login/complete', async (req, res) => {
   try {
     const { error } = webauthnLoginCompleteSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { email, credential } = req.body;
 
@@ -459,17 +404,13 @@ router.post('/webauthn/login/complete', async (req, res) => {
     }
 
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ msg: 'User not found' });
-    }
+    if (!user) return res.status(400).json({ msg: 'User not found' });
 
     const credentialID = Buffer.from(credential.rawId).toString('base64');
     const credentialMatch = user.webauthnCredentials.find(
       cred => cred.credentialID === credentialID
     );
-    if (!credentialMatch) {
-      return res.status(400).json({ msg: 'Invalid credential' });
-    }
+    if (!credentialMatch) return res.status(400).json({ msg: 'Invalid credential' });
 
     const verification = await verifyAuthenticationResponse({
       response: credential,
@@ -500,9 +441,9 @@ router.post('/webauthn/login/complete', async (req, res) => {
     req.session.email = null;
     req.session.webauthnUserID = null;
     req.session.challengeExpires = null;
-    await req.session.save((err) => {
-      if (err) console.error('Session save error in webauthn/login/complete:', err);
-    });
+    await req.session.save();
+
+    console.log(`[${new Date().toISOString()}] WebAuthn login completed for ${user.username} (ID: ${user.id})`);
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
@@ -516,13 +457,14 @@ router.get('/me', auth, async (req, res) => {
   try {
     if (req.user) {
       const user = await User.findById(req.user)
-        .select('-password -faceDescriptors -webauthnCredentials -webauthnUserID')
+        .select('-password -faceDescriptor -webauthnCredentials -webauthnUserID')
         .populate('friends', 'username online')
         .populate('friendRequests', 'username')
         .populate('blockedUsers', 'username');
-      if (!user) {
-        return res.status(404).json({ msg: 'User not found' });
-      }
+      if (!user) return res.status(404).json({ msg: 'User not found' });
+
+      console.log(`[${new Date().toISOString()}] User data fetched for ${user.username} (ID: ${user.id})`);
+
       res.json({
         id: user.id,
         email: user.email,
@@ -550,19 +492,13 @@ router.get('/me', auth, async (req, res) => {
 router.post('/forgot-password', async (req, res) => {
   try {
     const { error } = forgotPasswordSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { email } = req.body;
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ msg: 'No user found with this email' });
-    }
+    if (!user) return res.status(404).json({ msg: 'No user found with this email' });
 
-    if (!user.password) {
-      return res.status(400).json({ msg: 'This account uses biometric or face login.' });
-    }
+    if (!user.password) return res.status(400).json({ msg: 'This account uses biometric or face login.' });
 
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
@@ -631,9 +567,7 @@ router.post('/forgot-password', async (req, res) => {
 router.post('/reset-password/:token', async (req, res) => {
   try {
     const { error } = resetPasswordSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { token } = req.params;
     const { password } = req.body;
@@ -642,9 +576,7 @@ router.post('/reset-password/:token', async (req, res) => {
       resetPasswordExpires: { $gt: Date.now() },
     });
 
-    if (!user) {
-      return res.status(400).json({ msg: 'Invalid or expired reset token' });
-    }
+    if (!user) return res.status(400).json({ msg: 'Invalid or expired reset token' });
 
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(password, salt);
@@ -663,9 +595,8 @@ router.post('/reset-password/:token', async (req, res) => {
 router.get('/friends', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user).populate('friends', 'username online');
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+
     res.json(user.friends);
   } catch (err) {
     console.error('Get friends error:', err);
@@ -677,23 +608,15 @@ router.get('/friends', auth, async (req, res) => {
 router.post('/add-friend', auth, async (req, res) => {
   try {
     const { error } = addFriendSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { friendUsername } = req.body;
     const friend = await User.findOne({ username: friendUsername });
-    if (!friend) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-    if (friend._id.toString() === req.user) {
-      return res.status(400).json({ msg: 'Cannot add yourself' });
-    }
+    if (!friend) return res.status(404).json({ msg: 'User not found' });
+    if (friend._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot add yourself' });
 
     const user = await User.findById(req.user);
-    if (user.friends.includes(friend._id)) {
-      return res.status(400).json({ msg: 'Already friends' });
-    }
+    if (user.friends.includes(friend._id)) return res.status(400).json({ msg: 'Already friends' });
 
     user.friends.push(friend._id);
     await user.save();
@@ -710,19 +633,13 @@ router.post('/add-friend', auth, async (req, res) => {
 router.post('/remove-friend', auth, async (req, res) => {
   try {
     const { error } = removeFriendSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { friendId } = req.body;
     const user = await User.findById(req.user);
     const friend = await User.findById(friendId);
-    if (!friend) {
-      return res.status(404).json({ msg: 'Friend not found' });
-    }
-    if (!user.friends.includes(friendId)) {
-      return res.status(400).json({ msg: 'Not friends' });
-    }
+    if (!friend) return res.status(404).json({ msg: 'Friend not found' });
+    if (!user.friends.includes(friendId)) return res.status(400).json({ msg: 'Not friends' });
 
     user.friends = user.friends.filter(id => id.toString() !== friendId);
     await user.save();
@@ -739,14 +656,10 @@ router.post('/remove-friend', auth, async (req, res) => {
 router.put('/profile', auth, async (req, res) => {
   try {
     const { error } = updateProfileSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const user = await User.findById(req.user);
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ msg: 'User not found' });
 
     const { bio, age, status, allowFriendRequests } = req.body;
     if (bio !== undefined) user.bio = bio;
@@ -775,13 +688,11 @@ router.put('/profile', auth, async (req, res) => {
 router.get('/profile', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user)
-      .select('-password -faceDescriptors -webauthnCredentials -webauthnUserID')
+      .select('-password -faceDescriptor -webauthnCredentials -webauthnUserID')
       .populate('friends', 'username online')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ msg: 'User not found' });
 
     res.json({
       id: user.id,
@@ -805,20 +716,14 @@ router.get('/profile', auth, async (req, res) => {
 router.put('/change-password', auth, async (req, res) => {
   try {
     const { error } = changePasswordSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { currentPassword, newPassword } = req.body;
-    const user = await User.findById(req.user);
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
+    const user = await User.findById(req.user).select('+password');
+    if (!user) return res.status(404).json({ msg: 'User not found' });
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ msg: 'Current password is incorrect' });
-    }
+    if (!isMatch) return res.status(400).json({ msg: 'Current password is incorrect' });
 
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
@@ -835,15 +740,11 @@ router.put('/change-password', auth, async (req, res) => {
 router.delete('/delete-account', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user);
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ msg: 'User not found' });
 
     await User.deleteOne({ _id: req.user });
     req.session.destroy((err) => {
-      if (err) {
-        console.error('Failed to destroy session during account deletion:', err);
-      }
+      if (err) console.error('Failed to destroy session during account deletion:', err);
       res.json({ msg: 'Account deleted successfully' });
     });
   } catch (err) {
@@ -856,23 +757,15 @@ router.delete('/delete-account', auth, async (req, res) => {
 router.post('/block-user', auth, async (req, res) => {
   try {
     const { error } = blockUserSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { username } = req.body;
     const userToBlock = await User.findOne({ username });
-    if (!userToBlock) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-    if (userToBlock._id.toString() === req.user) {
-      return res.status(400).json({ msg: 'Cannot block yourself' });
-    }
+    if (!userToBlock) return res.status(404).json({ msg: 'User not found' });
+    if (userToBlock._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot block yourself' });
 
     const user = await User.findById(req.user);
-    if (user.blockedUsers.includes(userToBlock._id)) {
-      return res.status(400).json({ msg: 'User already blocked' });
-    }
+    if (user.blockedUsers.includes(userToBlock._id)) return res.status(400).json({ msg: 'User already blocked' });
 
     user.blockedUsers.push(userToBlock._id);
     await user.save();
@@ -889,15 +782,11 @@ router.post('/block-user', auth, async (req, res) => {
 router.post('/unblock-user', auth, async (req, res) => {
   try {
     const { error } = unblockUserSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { userId } = req.body;
     const user = await User.findById(req.user);
-    if (!user.blockedUsers.includes(userId)) {
-      return res.status(400).json({ msg: 'User not blocked' });
-    }
+    if (!user.blockedUsers.includes(userId)) return res.status(400).json({ msg: 'User not blocked' });
 
     user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
     await user.save();
