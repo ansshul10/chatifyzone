@@ -179,7 +179,7 @@ io.on('connection', (socket) => {
   socket.on('updateMessageStatus', async ({ messageId, userId, status }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) return socket.emit('　　　error', { msg: 'Message not found' });
+      if (!message) return socket.emit('error', { msg: 'Message not found' });
       if (message.receiver.toString() !== userId) return;
 
       if (status === 'delivered' && !message.deliveredAt) {
