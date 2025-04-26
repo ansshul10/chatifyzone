@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint } from 'react-icons/fa';
+import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint, FaSpinner } from 'react-icons/fa';
 import { startAuthentication } from '@simplewebauthn/browser';
 import api from '../utils/api';
 import Navbar from './Navbar';
@@ -11,124 +11,163 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [loginMethod, setLoginMethod] = useState('password');
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('[Password Login] Starting password login process');
+    console.log('[Password Login] Step 1: Initiating password login process');
     setError('');
     setSuccess(false);
+    setLoading(true);
 
     if (!email.trim()) {
-      console.error('[Password Login] Email is missing');
+      console.error('[Password Login] Step 2: Email is missing');
       setError('Email is required');
+      setLoading(false);
       return;
     }
     if (loginMethod === 'password' && !password.trim()) {
-      console.error('[Password Login] Password is missing');
+      console.error('[Password Login] Step 2: Password is missing');
       setError('Password is required');
+      setLoading(false);
       return;
     }
 
     try {
-      console.log('[Password Login] Sending login request', { email });
+      console.log('[Password Login] Step 3: Sending login request', { email });
       const { data } = await api.post('/auth/login', { email, password });
-      console.log('[Password Login] Login successful:', data);
+      console.log('[Password Login] Step 4: Login successful:', {
+        userId: data.user.id,
+        username: data.user.username,
+        token: data.token.substring(0, 20) + '...',
+      });
 
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
 
-      console.log('[Password Login] Setting success state');
+      console.log('[Password Login] Step 5: Setting success state');
       setSuccess(true);
 
-      console.log('[Password Login] Redirecting to home page in 2 seconds');
+      console.log('[Password Login] Step 6: Redirecting to home page in 2 seconds');
       setTimeout(() => {
-        console.log('[Password Login] Navigating to home page');
+        console.log('[Password Login] Step 7: Navigating to home page');
         navigate('/');
       }, 2000);
     } catch (err) {
-      console.error('[Password Login] Error during login:', err);
-      setError(err.response?.data.msg || 'Login failed');
+      console.error('[Password Login] Step 8: Error during login:', {
+        message: err.message,
+        response: err.response?.data,
+      });
+      const errorMessage = err.response?.data?.msg || 'Login failed. Please try again.';
+      setError(errorMessage);
+    } finally {
+      console.log('[Password Login] Step 9: Resetting loading state');
+      setLoading(false);
     }
   };
 
   const handleGoogleLogin = () => {
-    console.log('[Google Login] Attempting Google login');
+    console.log('[Google Login] Step 1: Attempting Google login');
     alert('Google login is not implemented. Please use email and password.');
   };
 
   const handleAppleLogin = () => {
-    console.log('[Apple Login] Attempting Apple login');
+    console.log('[Apple Login] Step 1: Attempting Apple login');
     alert('Apple login is not implemented. Please use email and password.');
   };
 
   const handleBiometricLogin = async () => {
-    console.log('[Fingerprint Login] Initiating fingerprint login process');
+    console.log('[Fingerprint Login] Step 1: Initiating fingerprint login process');
     setError('');
     setSuccess(false);
+    setLoading(true);
 
     if (!email.trim()) {
-      console.error('[Fingerprint Login] Email is missing');
+      console.error('[Fingerprint Login] Step 2: Email is missing');
       setError('Please enter your email to use fingerprint login');
+      setLoading(false);
       return;
     }
 
     try {
-      console.log('[Fingerprint Login] Checking WebAuthn support');
+      console.log('[Fingerprint Login] Step 3: Checking WebAuthn support');
       if (!window.PublicKeyCredential) {
-        console.error('[Fingerprint Login] WebAuthn not supported');
+        console.error('[Fingerprint Login] Step 3: WebAuthn not supported');
         throw new Error('WebAuthn is not supported in this browser.');
       }
 
-      console.log('[Fingerprint Login] Checking platform authenticator availability');
+      console.log('[Fingerprint Login] Step 4: Checking platform authenticator availability');
       const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       if (!isAvailable) {
-        console.error('[Fingerprint Login] Platform authenticator not available');
+        console.error('[Fingerprint Login] Step 4: Platform authenticator not available');
         throw new Error('This device does not support fingerprint authentication.');
       }
 
-      console.log('[Fingerprint Login] Sending authentication begin request to server', { email });
+      console.log('[Fingerprint Login] Step 5: Sending authentication begin request to server', { email });
       const response = await api.post('/auth/webauthn/login/begin', { email });
-      console.log('[Fingerprint Login] Received authentication options from server:', response.data);
+      console.log('[Fingerprint Login] Step 6: Received authentication options from server:', response.data);
 
-      if (!response.data || !response.data.challenge) {
-        console.error('[Fingerprint Login] Invalid server response:', response.data);
-        setError('Failed to initiate fingerprint authentication: invalid server response');
-        return;
+      if (!response.data || !response.data.publicKey || !response.data.publicKey.challenge) {
+        console.error('[Fingerprint Login] Step 6: Invalid server response:', response.data);
+        throw new Error('Failed to initiate fingerprint authentication: invalid server response');
       }
 
-      console.log('[Fingerprint Login] Starting WebAuthn authentication');
+      console.log('[Fingerprint Login] Step 7: Starting WebAuthn authentication');
       const credential = await startAuthentication(response.data);
-      console.log('[Fingerprint Login] Credential retrieved successfully:', credential);
+      console.log('[Fingerprint Login] Step 8: Credential retrieved successfully:', {
+        id: credential.id,
+        rawId: Buffer.from(credential.rawId).toString('base64'),
+        type: credential.type,
+        response: {
+          authenticatorData: credential.response.authenticatorData?.substring(0, 50) + '...',
+          clientDataJSON: credential.response.clientDataJSON?.substring(0, 50) + '...',
+          signature: credential.response.signature?.substring(0, 50) + '...',
+          userHandle: credential.response.userHandle,
+        },
+      });
 
-      console.log('[Fingerprint Login] Sending authentication complete request', { email, credential });
+      console.log('[Fingerprint Login] Step 9: Sending authentication complete request', { email });
       const { data } = await api.post('/auth/webauthn/login/complete', { email, credential });
-      console.log('[Fingerprint Login] Authentication completed successfully:', data);
+      console.log('[Fingerprint Login] Step 10: Authentication completed successfully:', {
+        userId: data.user.id,
+        username: data.user.username,
+        token: data.token.substring(0, 20) + '...',
+      });
 
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
 
-      console.log('[Fingerprint Login] Setting success state');
+      console.log('[Fingerprint Login] Step 11: Setting success state');
       setSuccess(true);
 
-      console.log('[Fingerprint Login] Redirecting to home page in 2 seconds');
+      console.log('[Fingerprint Login] Step 12: Redirecting to home page in 2 seconds');
       setTimeout(() => {
-        console.log('[Fingerprint Login] Navigating to home page');
+        console.log('[Fingerprint Login] Step 13: Navigating to home page');
         navigate('/');
       }, 2000);
     } catch (err) {
-      console.error('[Fingerprint Login] Error during fingerprint login:', err);
+      console.error('[Fingerprint Login] Step 14: Error during fingerprint login:', {
+        message: err.message,
+        response: err.response?.data,
+      });
       let errorMessage = 'Fingerprint login failed. Please try again.';
       if (err.response?.data?.msg) {
         errorMessage = err.response.data.msg;
+        if (err.response.data.details) {
+          errorMessage += `: ${err.response.data.details}`;
+        }
       } else if (err.message) {
         errorMessage = `Fingerprint login failed: ${err.message}`;
       }
       setError(errorMessage);
+    } finally {
+      console.log('[Fingerprint Login] Step 15: Resetting loading state');
+      setLoading(false);
     }
   };
 
@@ -216,10 +255,11 @@ const Login = () => {
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => {
-                    console.log('[Login Method] Switching to password login');
+                    console.log('[Login Method] Step 1: Switching to password login');
                     setLoginMethod('password');
                   }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'password' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+                  disabled={loading}
                 >
                   Password
                 </motion.button>
@@ -227,10 +267,11 @@ const Login = () => {
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => {
-                    console.log('[Login Method] Switching to fingerprint login');
+                    console.log('[Login Method] Step 1: Switching to fingerprint login');
                     setLoginMethod('webauthn');
                   }}
                   className={`px-4 py-2 rounded-lg ${loginMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+                  disabled={loading}
                 >
                   Fingerprint
                 </motion.button>
@@ -248,12 +289,13 @@ const Login = () => {
                       type="email"
                       value={email}
                       onChange={(e) => {
-                        console.log('[Input] Email changed:', e.target.value);
+                        console.log('[Input] Step 1: Email changed:', e.target.value);
                         setEmail(e.target.value);
                       }}
                       placeholder="Your Email"
                       className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
                       required
+                      disabled={loading}
                     />
                   </motion.div>
                 </div>
@@ -263,19 +305,20 @@ const Login = () => {
                       whileHover="hover"
                       whileFocus="focus"
                       variants={inputVariants}
-                      className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
+                      className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray- fingerprint login failed: No biometric credentials found for this user700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
                     >
                       <FaLock className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
                       <input
                         type="password"
                         value={password}
                         onChange={(e) => {
-                          console.log('[Input] Password changed');
+                          console.log('[Input] Step 1: Password changed');
                           setPassword(e.target.value);
                         }}
                         placeholder="Your Password"
                         className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
                         required
+                        disabled={loading}
                       />
                     </motion.div>
                   </div>
@@ -312,10 +355,10 @@ const Login = () => {
                     whileHover="hover"
                     whileTap="tap"
                     variants={buttonVariants}
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'}`}
-                    disabled={success}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                    disabled={loading || success}
                   >
-                    Log In Now
+                    {loading ? <FaSpinner className="animate-spin" /> : <span>Log In Now</span>}
                   </motion.button>
                 )}
                 <motion.button
@@ -325,6 +368,7 @@ const Login = () => {
                   variants={buttonVariants}
                   onClick={handleGoogleLogin}
                   className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                  disabled={loading || success}
                 >
                   <FaGoogle />
                   <span>Log In with Google</span>
@@ -336,6 +380,7 @@ const Login = () => {
                   variants={buttonVariants}
                   onClick={handleAppleLogin}
                   className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                  disabled={loading || success}
                 >
                   <FaApple />
                   <span>Log In with Apple</span>
@@ -348,9 +393,10 @@ const Login = () => {
                     variants={buttonVariants}
                     onClick={handleBiometricLogin}
                     className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
+                    disabled={loading || success}
                   >
-                    <FaFingerprint />
-                    <span>Log In with Fingerprint</span>
+                    {loading ? <FaSpinner className="animate-spin" /> : <FaFingerprint />}
+                    <span>{loading ? 'Waiting for Fingerprint...' : 'Log In with Fingerprint'}</span>
                   </motion.button>
                 )}
               </form>
