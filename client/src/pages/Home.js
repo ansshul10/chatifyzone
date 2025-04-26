@@ -60,7 +60,8 @@ const Home = () => {
   const VoiceVideoRoom = ({ roomName }) => (
     <motion.div variants={cardVariants} className="w-full h-96 rounded-lg overflow-hidden shadow-md border border-gray-700">
       <iframe
-        src={`https://meet.jit.si/${roomName}?config.defaultLanguage=\"en\"`}
+        // eslint-disable-next-line react/no-unescaped-entities
+        src={`https://meet.jit.si/${roomName}?config.defaultLanguage="en"`}
         allow="camera; microphone; fullscreen"
         className="w-full h-full border-none"
         title="Voice and Video Chat"
@@ -126,7 +127,7 @@ const Home = () => {
     { icon: <FaVideo className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Private Calls', desc: 'Exclusive voice/video rooms.' },
   ];
 
-  // NormalHome (Updated)
+  // NormalHome
   const NormalHome = () => (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col gap-16 flex-grow">
       {/* Simplified Hero Section */}
@@ -222,7 +223,7 @@ const Home = () => {
           {testimonials.map((testimonial, index) => (
             <motion.div key={index} variants={cardVariants} whileHover={{ y: -10 }} className={`p-6 rounded-lg shadow-md border ${isDarkMode ? 'bg-black border-gray-700' : 'bg-white border-gray-400'}`}>
               <FaStar className="text-yellow-400 text-2xl mb-4 mx-auto" />
-              <p className={`text-center italic ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>"{testimonial.quote}"</p>
+              <p className={`text-center italic ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>&quot{testimonial.quote}&quot</p>
               <p className="text-red-500 font-semibold text-center mt-4">— {testimonial.author}</p>
             </motion.div>
           ))}
@@ -273,7 +274,7 @@ const Home = () => {
     </div>
   );
 
-  // ChatHome (Updated)
+  // ChatHome
   const ChatHome = () => (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col gap-16 flex-grow">
       <section className="flex flex-col items-center space-y-8 bg-gradient-to-r from-green-500/10 to-blue-500/10 rounded-xl p-8">
@@ -312,7 +313,7 @@ const Home = () => {
     </div>
   );
 
-  // AnonymousHome (Updated)
+  // AnonymousHome
   const AnonymousHome = () => (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col gap-16 flex-grow">
       {/* Simplified Hero */}
