@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import PropTypes from 'prop-types';
 import { motion, AnimatePresence } from 'framer-motion';
 import io from 'socket.io-client';
 import { FaCheck, FaUndo, FaTimes } from 'react-icons/fa';
@@ -8,7 +9,6 @@ const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
 const MessageActions = ({
   messageId,
   content,
-  setMessages,
   reactions = {},
   showReactions,
   isSender,
@@ -19,7 +19,6 @@ const MessageActions = ({
 }) => {
   const [editMode, setEditMode] = useState(false);
   const [newContent, setNewContent] = useState(content);
-  const [isDarkMode] = useState(true);
   const [undoVisible, setUndoVisible] = useState(false);
   const [charCount, setCharCount] = useState(content.length);
   const [reactionPreview, setReactionPreview] = useState(null);
@@ -317,6 +316,24 @@ const MessageActions = ({
       </AnimatePresence>
     </div>
   );
+};
+
+// Define PropTypes
+MessageActions.propTypes = {
+  messageId: PropTypes.string.isRequired,
+  content: PropTypes.string.isRequired,
+  reactions: PropTypes.object,
+  showReactions: PropTypes.bool.isRequired,
+  isSender: PropTypes.bool.isRequired,
+  showMenu: PropTypes.bool.isRequired,
+  userId: PropTypes.string.isRequired,
+  context: PropTypes.oneOf(['private', 'group']),
+  groupId: PropTypes.string,
+};
+
+MessageActions.defaultProps = {
+  reactions: {},
+  context: 'private',
 };
 
 export default MessageActions;
