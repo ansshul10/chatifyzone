@@ -220,9 +220,7 @@ router.post('/face/login', async (req, res) => {
       return res.status(400).json({ msg: 'User not found' });
     }
 
-    if (!user.faceDescriptors || user.faceDescriptors.length === 0
-
-) {
+    if (!user.faceDescriptors || user.faceDescriptors.length === 0) {
       return res.status(400).json({ msg: 'This account does not have face recognition enabled' });
     }
 
@@ -263,7 +261,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    const userID = crypto.randomBytes(32);
+    const userID = crypto.randomBytes(32).toString('base64');
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
@@ -278,18 +276,12 @@ router.post('/webauthn/register/begin', async (req, res) => {
       excludeCredentials: [],
     });
 
+    // Store challenge and user data in session for verification
     req.session.challenge = options.challenge;
-    req.session.pendingUser = { email, username, userID: userID.toString('base64') };
+    req.session.pendingUser = { email, username, userID };
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
-    console.log('WebAuthn registration options generated:', {
-      sessionId: req.sessionID,
-      email,
-      username,
-      challenge: options.challenge,
-      pendingUser: req.session.pendingUser,
-    });
-
     await req.session.save();
+
     res.json(options);
   } catch (err) {
     console.error('WebAuthn register begin error:', err);
@@ -306,14 +298,8 @@ router.post('/webauthn/register/complete', async (req, res) => {
     }
 
     const { email, username, credential } = req.body;
-    console.log('WebAuthn complete session data:', {
-      sessionId: req.sessionID,
-      sessionChallenge: req.session.challenge,
-      sessionPendingUser: req.session.pendingUser,
-      providedEmail: email,
-      providedUsername: username,
-    });
 
+    // Verify session data
     if (
       !req.session.challenge ||
       !req.session.pendingUser ||
@@ -332,7 +318,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
-    const userID = Buffer.from(req.session.pendingUser.userID, 'base64');
+    const userID = req.session.pendingUser.userID;
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: req.session.challenge,
@@ -349,7 +335,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const user = new User({
       email,
       username,
-      webauthnUserID: userID.toString('base64'),
+      webauthnUserID: userID,
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
         publicKey: Buffer.from(publicKey).toString('base64'),
@@ -360,16 +346,16 @@ router.post('/webauthn/register/complete', async (req, res) => {
     });
 
     await user.save();
-    console.log('User registered with WebAuthn:', { email, username, userId: user.id });
 
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    req.session.userId = user.id;
-    req.session.username = user.username;
+    // Clear session data
     req.session.challenge = null;
     req.session.pendingUser = null;
     req.session.challengeExpires = null;
+    req.session.userId = user.id;
+    req.session.username = user.username;
     await req.session.save();
 
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
@@ -406,11 +392,6 @@ router.post('/webauthn/login/begin', async (req, res) => {
     req.session.email = email;
     req.session.webauthnUserID = user.webauthnUserID;
     req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
-    console.log('WebAuthn login options generated:', {
-      sessionId: req.sessionID,
-      email,
-      challenge: options.challenge,
-    });
 
     await req.session.save();
     res.json(options);
@@ -429,13 +410,6 @@ router.post('/webauthn/login/complete', async (req, res) => {
     }
 
     const { email, credential } = req.body;
-    console.log('WebAuthn login complete session data:', {
-      sessionId: req.sessionID,
-      sessionChallenge: req.session.challenge,
-      sessionEmail: req.session.email,
-      sessionWebauthnUserID: req.session.webauthnUserID,
-      providedEmail: email,
-    });
 
     if (
       !req.session.challenge ||
@@ -787,7 +761,7 @@ router.get('/profile', auth, async (req, res) => {
       privacy: user.privacy,
       friends: user.friends,
       friendRequests: user.friendRequests,
-      blockedUsers: user.friends,
+      blockedUsers: user.blockedUsers,
     });
   } catch (err) {
     console.error('Get profile error:', err);
