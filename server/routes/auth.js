@@ -140,7 +140,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
       options = await generateRegistrationOptions({
         rpName,
         rpID,
-        userID, // Pass the raw Buffer, not base64 string
+        userID, // Pass the raw Buffer
         userName: username,
         userDisplayName: username,
         attestationType: 'none',
