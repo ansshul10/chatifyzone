@@ -148,10 +148,13 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
+    // Generate a random 32-byte userID
+    const userID = crypto.randomBytes(32); // Returns a Buffer
+
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID: email,
+      userID, // Use binary Buffer
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
@@ -162,8 +165,9 @@ router.post('/webauthn/register/begin', async (req, res) => {
       excludeCredentials: [],
     });
 
+    // Store challenge and user details in session
     req.session.challenge = options.challenge;
-    req.session.pendingUser = { email, username };
+    req.session.pendingUser = { email, username, userID: userID.toString('base64') }; // Store as base64
     console.log('WebAuthn registration options generated:', { email, username, challenge: options.challenge });
 
     res.json(options);
@@ -192,6 +196,9 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
+    // Convert stored userID back to Buffer for verification
+    const userID = Buffer.from(req.session.pendingUser.userID, 'base64');
+
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: req.session.challenge,
@@ -209,6 +216,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const user = new User({
       email,
       username,
+      webauthnUserID: req.session.pendingUser.userID, // Store as base64
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
         publicKey: Buffer.from(publicKey).toString('base64'),
@@ -256,6 +264,7 @@ router.post('/webauthn/login/begin', async (req, res) => {
 
     req.session.challenge = options.challenge;
     req.session.email = email;
+    req.session.webauthnUserID = user.webauthnUserID; // Store for verification
 
     res.json(options);
   } catch (err) {
@@ -268,7 +277,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
   const { email, credential } = req.body;
 
   try {
-    if (!req.session.challenge || req.session.email !== email) {
+    if (!req.session.challenge || req.session.email !== email || !req.session.webauthnUserID) {
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
 
@@ -305,6 +314,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
 
     req.session.challenge = null;
     req.session.email = null;
+    req.session.webauthnUserID = null;
 
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -316,6 +326,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
   }
 });
 
+// Other routes remain unchanged
 router.get('/me', auth, async (req, res) => {
   try {
     if (req.user) {
@@ -349,7 +360,7 @@ router.post('/forgot-password', async (req, res) => {
 
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
-Economiauser.resetPasswordExpires = Date.now() + 3600000;
+    user.resetPasswordExpires = Date.now() + 3600000;
     await user.save();
 
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
@@ -394,7 +405,7 @@ Economiauser.resetPasswordExpires = Date.now() + 3600000;
             <p>We received a request to reset your password. Click the button below to create a new password:</p>
             <a href="${resetUrl}" class="button">Reset Your Password</a>
             <p class="warning">This link will expire in <span class="highlight">1 hour</span>. 
-              If you didn't request this reset, please ignore this email or contact our support team.</p>
+              If you didn&#39;t request this reset, please ignore this email or contact our support team.</p>
           </div>
           <div class="footer">
             <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
@@ -461,7 +472,7 @@ router.post('/add-friend', auth, async (req, res) => {
 
     user.friends.push(friend._id);
     await user.save();
-    const updatedFriends = await User.findById(req.user). populate('friends', 'username online');
+    const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
     res.json(updatedFriends.friends);
   } catch (err) {
     console.error('Add friend error:', err);
