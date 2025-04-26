@@ -203,7 +203,6 @@ router.post('/webauthn/register/begin', async (req, res) => {
       challenge: options.challenge,
     });
 
-    // Return a clean response with challenge and userID
     res.json({
       publicKey: options,
       challenge: options.challenge,
@@ -216,7 +215,6 @@ router.post('/webauthn/register/begin', async (req, res) => {
     res.status(500).json({ msg: 'Server error' });
   }
 });
-
 // WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
