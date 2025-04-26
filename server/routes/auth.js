@@ -22,6 +22,7 @@ const peste = (arr1, arr2) => {
   return Math.sqrt(arr1.reduce((sum, val, i) => sum + Math.pow(val - arr2[i], 2), 0));
 };
 
+// Password-based login
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -43,13 +44,22 @@ router.post('/login', async (req, res) => {
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session during login:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    });
   } catch (err) {
     console.error('Login error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Password-based registration
 router.post('/register', async (req, res) => {
   const { email, username, password } = req.body;
 
@@ -65,13 +75,22 @@ router.post('/register', async (req, res) => {
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session during registration:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    });
   } catch (err) {
     console.error('Register error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Face recognition registration
 router.post('/face/register', async (req, res) => {
   const { email, username, descriptor } = req.body;
 
@@ -91,13 +110,22 @@ router.post('/face/register', async (req, res) => {
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session during face registration:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    });
   } catch (err) {
     console.error('Face register error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Face recognition login
 router.post('/face/login', async (req, res) => {
   const { email, descriptor } = req.body;
 
@@ -124,17 +152,26 @@ router.post('/face/login', async (req, res) => {
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    res.json({
-      token,
-      user: { id: user.id, email: user.email, username: user.username },
-      distance
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session during face login:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json({
+        token,
+        user: { id: user.id, email: user.email, username: user.username },
+        distance,
+      });
     });
   } catch (err) {
     console.error('Face login error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   const { username, email } = req.body;
 
@@ -148,7 +185,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    const userID = crypto.randomBytes(32);
+    const userID = crypto.randomBytes(32).toString('base64');
 
     const options = await generateRegistrationOptions({
       rpName,
@@ -165,26 +202,35 @@ router.post('/webauthn/register/begin', async (req, res) => {
     });
 
     req.session.challenge = options.challenge;
-    req.session.pendingUser = { email, username, userID: userID.toString('base64') };
+    req.session.pendingUser = { email, username, userID };
+    req.session.challengeExpires = Date.now() + 5 * 60 * 1000; // 5 minutes
     console.log('WebAuthn registration options generated:', {
       sessionId: req.sessionID,
       email,
       username,
       challenge: options.challenge,
+      pendingUser: req.session.pendingUser,
     });
 
-    res.json(options);
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session during WebAuthn begin:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json(options);
+    });
   } catch (err) {
     console.error('WebAuthn register begin error:', err);
     res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// WebAuthn registration: Complete
 router.post('/webauthn/register/complete', async (req, res) => {
   const { email, username, credential } = req.body;
 
   try {
-    console.log('Session data:', {
+    console.log('WebAuthn complete session data:', {
       sessionId: req.sessionID,
       sessionChallenge: req.session.challenge,
       sessionPendingUser: req.session.pendingUser,
@@ -196,7 +242,8 @@ router.post('/webauthn/register/complete', async (req, res) => {
       !req.session.challenge ||
       !req.session.pendingUser ||
       req.session.pendingUser.email !== email ||
-      req.session.pendingUser.username !== username
+      req.session.pendingUser.username !== username ||
+      req.session.challengeExpires < Date.now()
     ) {
       console.error('Invalid session data:', {
         sessionId: req.sessionID,
@@ -204,11 +251,12 @@ router.post('/webauthn/register/complete', async (req, res) => {
         sessionPendingUser: req.session.pendingUser,
         providedEmail: email,
         providedUsername: username,
+        challengeExpired: req.session.challengeExpires < Date.now(),
       });
       return res.status(400).json({ msg: 'Invalid session or user data' });
     }
 
-    const userID = Buffer.from(req.session.pendingUser.userID, 'base64');
+    const userID = req.session.pendingUser.userID;
 
     const verification = await verifyRegistrationResponse({
       response: credential,
@@ -227,7 +275,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const user = new User({
       email,
       username,
-      webauthnUserID: req.session.pendingUser.userID,
+      webauthnUserID: userID,
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
         publicKey: Buffer.from(publicKey).toString('base64'),
@@ -240,61 +288,80 @@ router.post('/webauthn/register/complete', async (req, res) => {
     await user.save();
     console.log('User registered with WebAuthn:', { email, username, userId: user.id });
 
-    req.session.challenge = null;
-    req.session.pendingUser = null;
-
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.challenge = null;
+    req.session.pendingUser = null;
+    req.session.challengeExpires = null;
+
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session after WebAuthn complete:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    });
   } catch (err) {
     console.error('WebAuthn register complete error:', err);
     res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// WebAuthn login: Begin
 router.post('/webauthn/login/begin', async (req, res) => {
   const { email } = req.body;
 
   try {
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ msg: 'User not found' });
+    if (!email) {
+      return res.status(400).json({ msg: 'Email is required' });
     }
 
-    const credentials = user.webauthnCredentials.map(cred => ({
-      id: Buffer.from(cred.credentialID, 'base64'),
-      type: 'public-key',
-    }));
+    const user = await User.findOne({ email });
+    if (!user || !user.webauthnCredentials.length) {
+      return res.status(400).json({ msg: 'No biometric credentials found for this user' });
+    }
 
     const options = await generateAuthenticationOptions({
       rpID,
-      allowCredentials: credentials,
+      allowCredentials: user.webauthnCredentials.map(cred => ({
+        id: Buffer.from(cred.credentialID, 'base64'),
+        type: 'public-key',
+      })),
       userVerification: 'required',
     });
 
     req.session.challenge = options.challenge;
     req.session.email = email;
     req.session.webauthnUserID = user.webauthnUserID;
-
+    req.session.challengeExpires = Date.now() + 5 * 60 * 1000; // 5 minutes
     console.log('WebAuthn login options generated:', {
       sessionId: req.sessionID,
       email,
       challenge: options.challenge,
     });
 
-    res.json(options);
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session during WebAuthn login begin:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json(options);
+    });
   } catch (err) {
     console.error('WebAuthn login begin error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// WebAuthn login: Complete
 router.post('/webauthn/login/complete', async (req, res) => {
   const { email, credential } = req.body;
 
   try {
-    console.log('Session data for login:', {
+    console.log('WebAuthn login complete session data:', {
       sessionId: req.sessionID,
       sessionChallenge: req.session.challenge,
       sessionEmail: req.session.email,
@@ -302,13 +369,19 @@ router.post('/webauthn/login/complete', async (req, res) => {
       providedEmail: email,
     });
 
-    if (!req.session.challenge || req.session.email !== email || !req.session.webauthnUserID) {
+    if (
+      !req.session.challenge ||
+      req.session.email !== email ||
+      !req.session.webauthnUserID ||
+      req.session.challengeExpires < Date.now()
+    ) {
       console.error('Invalid session data for login:', {
         sessionId: req.sessionID,
         sessionChallenge: req.session.challenge,
         sessionEmail: req.session.email,
         sessionWebauthnUserID: req.session.webauthnUserID,
         providedEmail: email,
+        challengeExpired: req.session.challengeExpires < Date.now(),
       });
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
@@ -318,8 +391,9 @@ router.post('/webauthn/login/complete', async (req, res) => {
       return res.status(400).json({ msg: 'User not found' });
     }
 
+    const credentialID = Buffer.from(credential.rawId).toString('base64');
     const credentialMatch = user.webauthnCredentials.find(
-      cred => cred.credentialID === Buffer.from(credential.id).toString('base64')
+      cred => cred.credentialID === credentialID
     );
     if (!credentialMatch) {
       return res.status(400).json({ msg: 'Invalid credential' });
@@ -345,29 +419,50 @@ router.post('/webauthn/login/complete', async (req, res) => {
     credentialMatch.counter = verification.authenticationInfo.newCounter;
     await user.save();
 
-    req.session.challenge = null;
-    req.session.email = null;
-    req.session.webauthnUserID = null;
-
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.challenge = null;
+    req.session.email = null;
+    req.session.webauthnUserID = null;
+    req.session.challengeExpires = null;
+
+    req.session.save((err) => {
+      if (err) {
+        console.error('Failed to save session after WebAuthn login complete:', err);
+        return res.status(500).json({ msg: 'Failed to save session' });
+      }
+      res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    });
   } catch (err) {
     console.error('WebAuthn login complete error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
-// Remaining routes unchanged
+// Get authenticated user data
 router.get('/me', auth, async (req, res) => {
   try {
     if (req.user) {
-      const user = await User.findById(req.user).select('-password -faceDescriptors');
+      const user = await User.findById(req.user)
+        .select('-password -faceDescriptors -webauthnCredentials -webauthnUserID')
+        .populate('friends', 'username online')
+        .populate('friendRequests', 'username')
+        .populate('blockedUsers', 'username');
       if (!user) {
         return res.status(404).json({ msg: 'User not found' });
       }
-      res.json({ id: user.id, email: user.email, username: user.username, online: user.online });
+      res.json({
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        online: user.online,
+        friends: user.friends,
+        friendRequests: user.friendRequests,
+        blockedUsers: user.blockedUsers,
+      });
     } else if (req.anonymousUser) {
       res.json({
         id: req.anonymousUser.anonymousId,
@@ -378,10 +473,11 @@ router.get('/me', auth, async (req, res) => {
     }
   } catch (err) {
     console.error('Get me error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Forgot password
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
 
@@ -391,9 +487,13 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(404).json({ msg: 'No user found with this email' });
     }
 
+    if (!user.password) {
+      return res.status(400).json({ msg: 'This account uses biometric or face login. Password reset is not available.' });
+    }
+
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = Date.now() + 3600000;
+    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
     await user.save();
 
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
@@ -453,10 +553,11 @@ router.post('/forgot-password', async (req, res) => {
     res.json({ msg: 'Password reset link sent to your email' });
   } catch (err) {
     console.error('Forgot password error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Reset password
 router.post('/reset-password/:token', async (req, res) => {
   const { token } = req.params;
   const { password } = req.body;
@@ -479,81 +580,114 @@ router.post('/reset-password/:token', async (req, res) => {
     res.json({ msg: 'Password successfully reset' });
   } catch (err) {
     console.error('Reset password error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Get friends
 router.get('/friends', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user).populate('friends', 'username online');
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
     res.json(user.friends);
   } catch (err) {
     console.error('Get friends error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Add friend
 router.post('/add-friend', auth, async (req, res) => {
   const { friendUsername } = req.body;
+
   try {
     const friend = await User.findOne({ username: friendUsername });
-    if (!friend) return res.status(404).json({ msg: 'User not found' });
-    if (friend._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot add yourself' });
+    if (!friend) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    if (friend._id.toString() === req.user) {
+      return res.status(400).json({ msg: 'Cannot add yourself' });
+    }
 
     const user = await User.findById(req.user);
-    if (user.friends.includes(friend._id)) return res.status(400).json({ msg: 'Already friends' });
+    if (user.friends.includes(friend._id)) {
+      return res.status(400).json({ msg: 'Already friends' });
+    }
 
     user.friends.push(friend._id);
     await user.save();
+
     const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
     res.json(updatedFriends.friends);
   } catch (err) {
     console.error('Add friend error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Remove friend
 router.post('/remove-friend', auth, async (req, res) => {
   const { friendId } = req.body;
+
   try {
-    if (!req.user) return res.status(401).json({ msg: 'Only registered users can remove friends' });
+    if (!req.user) {
+      return res.status(401).json({ msg: 'Only registered users can remove friends' });
+    }
 
     const user = await User.findById(req.user);
     const friend = await User.findById(friendId);
-    if (!friend) return res.status(404).json({ msg: 'Friend not found' });
-    if (!user.friends.includes(friendId)) return res.status(400).json({ msg: 'Not friends' });
+    if (!friend) {
+      return res.status(404).json({ msg: 'Friend not found' });
+    }
+    if (!user.friends.includes(friendId)) {
+      return res.status(400).json({ msg: 'Not friends' });
+    }
 
     user.friends = user.friends.filter(id => id.toString() !== friendId);
     await user.save();
 
-    const updatedFriends = await User.findById(req.user).populate('friends', 'username online status');
+    const updatedFriends = await User.findById(req.user).populate('friends', 'username online');
     res.json(updatedFriends.friends);
   } catch (err) {
     console.error('Remove friend error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Update profile
 router.put('/profile', auth, async (req, res) => {
   const { bio, age, status, allowFriendRequests } = req.body;
 
   try {
-    if (!req.user) return res.status(401).json({ msg: 'Only registered users can update profiles' });
+    if (!req.user) {
+      return res.status(401).json({ msg: 'Only registered users can update profiles' });
+    }
 
     const user = await User.findById(req.user);
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
-    if (bio !== undefined) user.bio = bio.substring(0, 150);
+    if (bio !== undefined) {
+      user.bio = bio.substring(0, 150);
+    }
     if (age !== undefined) {
       if (!Number.isInteger(age) || age < 13 || age > 120) {
         return res.status(400).json({ msg: 'Age must be an integer between 13 and 120' });
       }
       user.age = age;
     }
-    if (status !== undefined) user.status = status.substring(0, 30);
-    if (allowFriendRequests !== undefined) user.privacy.allowFriendRequests = allowFriendRequests;
+    if (status !== undefined) {
+      user.status = status.substring(0, 30);
+    }
+    if (allowFriendRequests !== undefined) {
+      user.privacy.allowFriendRequests = allowFriendRequests;
+    }
 
     await user.save();
+
     res.json({
       id: user.id,
       email: user.email,
@@ -565,20 +699,25 @@ router.put('/profile', auth, async (req, res) => {
     });
   } catch (err) {
     console.error('Update profile error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Get profile
 router.get('/profile', auth, async (req, res) => {
   try {
-    if (!req.user) return res.status(401).json({ msg: 'Only registered users have profiles' });
+    if (!req.user) {
+      return res.status(401).json({ msg: 'Only registered users have profiles' });
+    }
 
     const user = await User.findById(req.user)
-      .select('-password -faceDescriptors')
-      .populate('friends', 'username online status')
+      .select('-password -faceDescriptors -webauthnCredentials -webauthnUserID')
+      .populate('friends', 'username online')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     res.json({
       id: user.id,
@@ -594,73 +733,103 @@ router.get('/profile', auth, async (req, res) => {
     });
   } catch (err) {
     console.error('Get profile error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Change password
 router.put('/change-password', auth, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
 
   try {
     const user = await User.findById(req.user);
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch) return res.status(400).json({ msg: 'Current password is incorrect' });
+    if (!isMatch) {
+      return res.status(400).json({ msg: 'Current password is incorrect' });
+    }
 
     user.password = newPassword;
     await user.save();
+
     res.json({ msg: 'Password changed successfully' });
   } catch (err) {
     console.error('Change password error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Delete account
 router.delete('/delete-account', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user);
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     await User.deleteOne({ _id: req.user });
-    res.json({ msg: 'Account deleted successfully' });
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('Failed to destroy session during account deletion:', err);
+      }
+      res.json({ msg: 'Account deleted successfully' });
+    });
   } catch (err) {
     console.error('Delete account error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Block user
 router.post('/block-user', auth, async (req, res) => {
   const { username } = req.body;
+
   try {
     const userToBlock = await User.findOne({ username });
-    if (!userToBlock) return res.status(404).json({ msg: 'User not found' });
-    if (userToBlock._id.toString() === req.user) return res.status(400).json({ msg: 'Cannot block yourself' });
+    if (!userToBlock) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    if (userToBlock._id.toString() === req.user) {
+      return res.status(400).json({ msg: 'Cannot block yourself' });
+    }
 
     const user = await User.findById(req.user);
-    if (user.blockedUsers.includes(userToBlock._id)) return res.status(400).json({ msg: 'User already blocked' });
+    if (user.blockedUsers.includes(userToBlock._id)) {
+      return res.status(400).json({ msg: 'User already blocked' });
+    }
 
     user.blockedUsers.push(userToBlock._id);
     await user.save();
-    res.json({ blockedUsers: user.blockedUsers });
+
+    const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    res.json({ blockedUsers: updatedUser.blockedUsers });
   } catch (err) {
     console.error('Block user error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
+// Unblock user
 router.post('/unblock-user', auth, async (req, res) => {
   const { userId } = req.body;
+
   try {
     const user = await User.findById(req.user);
-    if (!user.blockedUsers.includes(userId)) return res.status(400).json({ msg: 'User not blocked' });
+    if (!user.blockedUsers.includes(userId)) {
+      return res.status(400).json({ msg: 'User not blocked' });
+    }
 
     user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
     await user.save();
-    res.json({ blockedUsers: user.blockedUsers });
+
+    const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    res.json({ blockedUsers: updatedUser.blockedUsers });
   } catch (err) {
     console.error('Unblock user error:', err);
-    res.status(500).json({ msg: 'Server error' });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
