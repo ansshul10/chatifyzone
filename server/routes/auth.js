@@ -91,6 +91,7 @@ const unblockUserSchema = Joi.object({
 // WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
+    // Step 1: Log incoming request
     console.log('[WebAuthn Register Begin] Step 1: Received request:', {
       email: req.body.email,
       username: req.body.username,
@@ -140,7 +141,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
       options = await generateRegistrationOptions({
         rpName,
         rpID,
-        userID,
+        userID: userID.toString('base64'),
         userName: username,
         userDisplayName: username,
         attestationType: 'none',
@@ -155,6 +156,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
         challenge: options.challenge,
         rp: options.rp,
         user: options.user,
+        pubKeyCredParams: options.pubKeyCredParams,
       });
     } catch (webauthnError) {
       console.error('[WebAuthn Register Begin] Step 4 Error: Failed to generate WebAuthn options:', {
@@ -164,7 +166,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
       return res.status(500).json({ msg: 'Failed to generate WebAuthn registration options' });
     }
 
-    // Step 5: Prepare and send response
+    // Step 5: Prepare response
     console.log('[WebAuthn Register Begin] Step 5: Preparing response');
     const response = {
       publicKey: options,
@@ -173,10 +175,20 @@ router.post('/webauthn/register/begin', async (req, res) => {
       email,
       username,
     };
-    console.log('[WebAuthn Register Begin] Step 5: Sending response:', JSON.stringify(response, null, 2));
+
+    // Step 6: Verify response structure
+    console.log('[WebAuthn Register Begin] Step 6: Verifying response structure');
+    if (!response.publicKey) {
+      console.error('[WebAuthn Register Begin] Step 6 Error: Response missing publicKey:', response);
+      return res.status(500).json({ msg: 'Server failed to prepare publicKey' });
+    }
+    console.log('[WebAuthn Register Begin] Step 6: Response structure valid');
+
+    // Step 7: Send response
+    console.log('[WebAuthn Register Begin] Step 7: Sending response:', JSON.stringify(response, null, 2));
     res.json(response);
   } catch (err) {
-    console.error('[WebAuthn Register Begin] Step 6 Error: Unexpected server error:', {
+    console.error('[WebAuthn Register Begin] Step 8 Error: Unexpected server error:', {
       message: err.message,
       stack: err.stack,
     });
@@ -685,7 +697,7 @@ router.post('/remove-friend', auth, async (req, res) => {
       console.error('[Remove Friend] Friend not found:', friendId);
       return res.status(404).json({ msg: 'Friend not found' });
     }
-    if (!user.friends.includes(friendId)) {
+    if (!user.friends.includes(friendId) && friendId !== req.user) {
       console.error('[Remove Friend] Not friends:', friendId);
       return res.status(400).json({ msg: 'Not friends' });
     }
