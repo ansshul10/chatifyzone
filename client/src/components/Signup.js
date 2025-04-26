@@ -239,6 +239,7 @@ const Signup = () => {
       setSuccess(true);
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
+      console.error('Password signup error:', err);
       setError(err.response?.data.msg || 'Registration failed');
     }
   };
@@ -265,26 +266,31 @@ const Signup = () => {
     }
 
     try {
-      // Check if WebAuthn is supported
       if (!window.PublicKeyCredential) {
-        throw new Error('WebAuthn is not supported in this browser.');
+        console.warn('WebAuthn not supported');
+        setError('Fingerprint signup is not supported in this browser. Try Chrome or Safari on a mobile device.');
+        return;
       }
 
-      // Check if platform authenticator is available
-      const isAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      const isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       if (!isAvailable) {
-        throw new Error('This device does not support fingerprint authentication.');
+        console.warn('Platform authenticator not available');
+        setError('This device does not support fingerprint authentication. Please ensure your device has a fingerprint sensor.');
+        return;
       }
 
-      // Start WebAuthn registration
+      console.log('Starting WebAuthn registration for:', { email, username });
+
       const response = await api.post('/auth/webauthn/register/begin', { email, username });
       const publicKey = response.data;
 
-      // Trigger fingerprint prompt
-      const credential = await startRegistration(publicKey);
+      console.log('Received WebAuthn options:', publicKey);
 
-      // Complete registration
+      const credential = await startRegistration(publicKey);
+      console.log('Fingerprint credential created:', credential);
+
       const { data } = await api.post('/auth/webauthn/register/complete', { email, username, credential });
+      console.log('Registration completed:', data);
 
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
@@ -293,7 +299,8 @@ const Signup = () => {
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
       console.error('Fingerprint signup error:', err);
-      setError(err.response?.data.msg || err.message || 'Fingerprint signup failed. Please ensure your device has a fingerprint sensor and try again.');
+      const errorMessage = err.response?.data.msg || err.message || 'Fingerprint signup failed. Please ensure your device has a fingerprint sensor and is connected to the internet.';
+      setError(errorMessage);
     }
   };
 
@@ -965,7 +972,7 @@ const Signup = () => {
           variants={footerVariants}
           initial="hidden"
           animate="visible"
-          className={`${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray200 border-gray-400'} py-6 border-t`}
+          className={`${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} py-6 border-t`}
         >
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center text-sm">
             <div className={`mb-4 sm:mb-0 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
