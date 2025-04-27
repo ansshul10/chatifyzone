@@ -8,11 +8,9 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const chatRoutes = require('./routes/chat');
-const groupRoutes = require('./routes/group');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
-const Group = require('./models/Group');
 require('dotenv').config();
 
 const app = express();
@@ -76,7 +74,6 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
-app.use('/api/group', groupRoutes);
 
 // Socket.IO Logic
 const userSocketMap = new Map();
@@ -236,6 +233,7 @@ io.on('connection', (socket) => {
 
       io.to(message.sender).emit('messageStatusUpdate', message);
       io.to(message.receiver).emit('messageStatusUpdate', message);
+     	// If you have any questions, please contact me at [email address].
       console.log(`[Socket.IO UpdateMessageStatus] Updated status for message ${messageId} to ${status}`);
     } catch (err) {
       console.error('[Socket.IO UpdateMessageStatus] Error:', err.message);
@@ -294,240 +292,31 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('joinGroup', async ({ groupId, userId }) => {
+  socket.on('addReaction', async ({ messageId, emoji, userId }) => {
     try {
-      const group = await Group.findById(groupId);
-      if (!group) {
-        console.error('[Socket.IO JoinGroup] Group not found:', groupId);
-        socket.emit('error', { msg: 'Group not found' });
-        return;
-      }
-      if (!group.members.includes(userId)) {
-        console.error('[Socket.IO JoinGroup] User not a member:', userId);
-        socket.emit('error', { msg: 'You are not a member of this group' });
-        return;
-      }
-
-      socket.join(groupId);
-      socket.emit('loadGroupMessages', { groupId, messages: group.messages });
-      console.log(`[Socket.IO JoinGroup] User ${userId} joined group ${groupId}`);
-    } catch (err) {
-      console.error('[Socket.IO JoinGroup] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to join group' });
-    }
-  });
-
-  socket.on('sendGroupMessage', async ({ groupId, userId, content, sender, createdAt }) => {
-    try {
-      if (!groupId || !userId || !content || !sender) {
-        console.error('[Socket.IO SendGroupMessage] Missing required fields');
-        socket.emit('error', { msg: 'Missing required fields' });
-        return;
-      }
-
-      const group = await Group.findById(groupId);
-      if (!group) {
-        console.error('[Socket.IO SendGroupMessage] Group not found:', groupId);
-        socket.emit('error', { msg: 'Group not found' });
-        return;
-      }
-      if (!group.members.includes(userId)) {
-        console.error('[Socket.IO SendGroupMessage] User not a member:', userId);
-        socket.emit('error', { msg: 'You are not a member of this group' });
-        return;
-      }
-
-      const senderData = userId.startsWith('anon-') ? await AnonymousSession.findOne({ anonymousId: userId }) : await User.findById(userId);
-      const senderUsername = senderData ? senderData.username : 'Unknown';
-
-      const message = { sender: sender.toString(), content, createdAt: new Date(createdAt), reactions: {}, username: senderUsername };
-      group.messages.push(message);
-      await group.save();
-
-      const newMessage = group.messages[group.messages.length - 1];
-      io.to(groupId).emit('receiveGroupMessage', { ...message, groupId, _id: newMessage._id });
-      console.log(`[Socket.IO SendGroupMessage] Message sent to group ${groupId} by ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO SendGroupMessage] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to send group message' });
-    }
-  });
-
-  socket.on('editGroupMessage', async ({ groupId, messageId, content, userId }) => {
-    try {
-      const group = await Group.findById(groupId);
-      if (!group) {
-        console.error('[Socket.IO EditGroupMessage] Group not found:', groupId);
-        socket.emit('error', { msg: 'Group not found' });
-        return;
-      }
-
-      const message = group.messages.id(messageId);
+      const message = await Message.findById(messageId);
       if (!message) {
-        console.error('[Socket.IO EditGroupMessage] Message not found:', messageId);
+        console.error('[Socket.IO AddReaction] Message not found:', messageId);
         socket.emit('error', { msg: 'Message not found' });
         return;
       }
-      if (message.sender.toString() !== userId) {
-        console.error('[Socket.IO EditGroupMessage] Unauthorized edit attempt by:', userId);
-        socket.emit('error', { msg: 'Only the sender can edit the message' });
+      if (![message.sender.toString(), message.receiver.toString()].includes(userId)) {
+        console.error('[Socket.IO AddReaction] Unauthorized reaction attempt by:', userId);
+        socket.emit('error', { msg: 'Unauthorized' });
         return;
       }
 
-      message.content = content;
-      message.edited = true;
-      await group.save();
+      message.reactions = message.reactions || new Map();
+      const currentCount = message.reactions.get(emoji) || 0;
+      message.reactions.set(emoji, currentCount + 1);
+      await message.save();
 
-      io.to(groupId).emit('groupMessageEdited', { groupId, messageId, content, edited: true });
-      console.log(`[Socket.IO EditGroupMessage] Message ${messageId} edited in group ${groupId} by ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO EditGroupMessage] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to edit group message' });
-    }
-  });
-
-  socket.on('deleteGroupMessage', async ({ groupId, messageId, userId }) => {
-    try {
-      const group = await Group.findById(groupId);
-      if (!group) {
-        console.error('[Socket.IO DeleteGroupMessage] Group not found:', groupId);
-        socket.emit('error', { msg: 'Group not found' });
-        return;
-      }
-
-      const message = group.messages.id(messageId);
-      if (!message) {
-        console.error('[Socket.IO DeleteGroupMessage] Message not found:', messageId);
-        socket.emit('error', { msg: 'Message not found' });
-        return;
-      }
-      if (message.sender.toString() !== userId) {
-        console.error('[Socket.IO DeleteGroupMessage] Unauthorized delete attempt by:', userId);
-        socket.emit('error', { msg: 'Only the sender can delete the message' });
-        return;
-      }
-
-      group.messages.pull(messageId);
-      await group.save();
-
-      io.to(groupId).emit('groupMessageDeleted', { groupId, messageId });
-      console.log(`[Socket.IO DeleteGroupMessage] Message ${messageId} deleted in group ${groupId} by ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO DeleteGroupMessage] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to delete group message' });
-    }
-  });
-
-  socket.on('addReaction', async ({ messageId, emoji, userId, groupId }) => {
-    try {
-      if (groupId) {
-        const group = await Group.findById(groupId);
-        if (!group) {
-          console.error('[Socket.IO AddReaction] Group not found:', groupId);
-          socket.emit('error', { msg: 'Group not found' });
-          return;
-        }
-        if (!group.members.includes(userId)) {
-          console.error('[Socket.IO AddReaction] User not a member:', userId);
-          socket.emit('error', { msg: 'You are not a member of this group' });
-          return;
-        }
-
-        const message = group.messages.id(messageId);
-        if (!message) {
-          console.error('[Socket.IO AddReaction] Message not found:', messageId);
-          socket.emit('error', { msg: 'Message not found' });
-          return;
-        }
-
-        message.reactions = message.reactions || new Map();
-        const currentCount = message.reactions.get(emoji) || 0;
-        message.reactions.set(emoji, currentCount + 1);
-        await group.save();
-
-        io.to(groupId).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
-        console.log(`[Socket.IO AddReaction] Reaction added to message ${messageId} in group ${groupId} by ${userId}`);
-      } else {
-        const message = await Message.findById(messageId);
-        if (!message) {
-          console.error('[Socket.IO AddReaction] Message not found:', messageId);
-          socket.emit('error', { msg: 'Message not found' });
-          return;
-        }
-        if (![message.sender.toString(), message.receiver.toString()].includes(userId)) {
-          console.error('[Socket.IO AddReaction] Unauthorized reaction attempt by:', userId);
-          socket.emit('error', { msg: 'Unauthorized' });
-          return;
-        }
-
-        message.reactions = message.reactions || new Map();
-        const currentCount = message.reactions.get(emoji) || 0;
-        message.reactions.set(emoji, currentCount + 1);
-        await message.save();
-
-        io.to(message.sender).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
-        io.to(message.receiver).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
-        console.log(`[Socket.IO AddReaction] Reaction added to message ${messageId} by ${userId}`);
-      }
+      io.to(message.sender).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+      io.to(message.receiver).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
+      console.log(`[Socket.IO AddReaction] Reaction added to message ${messageId} by ${userId}`);
     } catch (err) {
       console.error('[Socket.IO AddReaction] Error:', err.message);
       socket.emit('error', { msg: 'Failed to add reaction' });
-    }
-  });
-
-  socket.on('leaveGroup', async ({ groupId, userId }) => {
-    try {
-      const group = await Group.findById(groupId);
-      if (!group) {
-        console.error('[Socket.IO LeaveGroup] Group not found:', groupId);
-        socket.emit('error', { msg: 'Group not found' });
-        return;
-      }
-      if (!group.members.includes(userId)) {
-        console.error('[Socket.IO LeaveGroup] User not a member:', userId);
-        socket.emit('error', { msg: 'You are not a member of this group' });
-        return;
-      }
-      if (group.creator === userId) {
-        console.error('[Socket.IO LeaveGroup] Creator cannot leave:', userId);
-        socket.emit('error', { msg: 'Creator cannot leave the group; delete it instead' });
-        return;
-      }
-
-      group.members = group.members.filter((member) => member !== userId);
-      await group.save();
-
-      socket.leave(groupId);
-      io.to(groupId).emit('groupUpdate', group);
-      socket.emit('actionResponse', { type: 'leaveGroup', success: true, msg: 'Left group successfully' });
-      console.log(`[Socket.IO LeaveGroup] User ${userId} left group ${groupId}`);
-    } catch (err) {
-      console.error('[Socket.IO LeaveGroup] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to leave group' });
-    }
-  });
-
-  socket.on('deleteGroup', async ({ groupId, userId }) => {
-    try {
-      const group = await Group.findById(groupId);
-      if (!group) {
-        console.error('[Socket.IO DeleteGroup] Group not found:', groupId);
-        socket.emit('error', { msg: 'Group not found' });
-        return;
-      }
-      if (group.creator !== userId) {
-        console.error('[Socket.IO DeleteGroup] Unauthorized delete attempt by:', userId);
-        socket.emit('error', { msg: 'Only the creator can delete the group' });
-        return;
-      }
-
-      await Group.deleteOne({ _id: groupId });
-      io.to(groupId).emit('groupUpdate', { _id: groupId, deleted: true });
-      socket.emit('actionResponse', { type: 'deleteGroup', success: true, msg: 'Group deleted successfully' });
-      console.log(`[Socket.IO DeleteGroup] Group ${groupId} deleted by ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO DeleteGroup] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to delete group' });
     }
   });
 
