@@ -326,11 +326,11 @@ router.post('/webauthn/login/begin', async (req, res) => {
         throw new Error(`Invalid credentialID type for credential at index ${index}`);
       }
       try {
-        // Validate base64 string
-        Buffer.from(cred.credentialID, 'base64').toString('base64');
+        // Validate base64 string by decoding and re-encoding
+        const decoded = Buffer.from(cred.credentialID, 'base64');
         console.log('[WebAuthn Login Begin] Step 3: Valid credentialID at index', index, ':', cred.credentialID.substring(0, 20) + '...');
         return {
-          id: Buffer.from(cred.credentialID, 'base64'),
+          id: cred.credentialID, // Use the base64 string directly
           type: 'public-key',
         };
       } catch (base64Error) {
@@ -392,22 +392,23 @@ router.post('/webauthn/login/begin', async (req, res) => {
 // WebAuthn login: Complete
 router.post('/webauthn/login/complete', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Complete] Received request:', req.body.email);
+    console.log('[WebAuthn Login Complete] Step 1: Received request:', req.body.email);
     const { error } = webauthnLoginCompleteSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Login Complete] Validation error:', error.details[0].message);
+      console.error('[WebAuthn Login Complete] Step 1 Error: Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { email, credential } = req.body;
 
+    console.log('[WebAuthn Login Complete] Step 2: Validating session data');
     if (
       !req.session.challenge ||
       req.session.email !== email ||
       !req.session.webauthnUserID ||
       req.session.challengeExpires < Date.now()
     ) {
-      console.error('[WebAuthn Login Complete] Invalid session data:', {
+      console.error('[WebAuthn Login Complete] Step 2 Error: Invalid session data:', {
         sessionId: req.sessionID,
         sessionChallenge: req.session.challenge,
         sessionEmail: req.session.email,
@@ -418,21 +419,28 @@ router.post('/webauthn/login/complete', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid session or email' });
     }
 
+    console.log('[WebAuthn Login Complete] Step 3: Fetching user for email:', email);
     const user = await User.findOne({ email });
     if (!user) {
-      console.error('[WebAuthn Login Complete] User not found:', email);
+      console.error('[WebAuthn Login Complete] Step 3 Error: User not found:', email);
       return res.status(400).json({ msg: 'User not found' });
     }
 
+    console.log('[WebAuthn Login Complete] Step 4: Matching credential');
     const credentialID = Buffer.from(credential.rawId).toString('base64');
     const credentialMatch = user.webauthnCredentials.find(
       cred => cred.credentialID === credentialID
     );
     if (!credentialMatch) {
-      console.error('[WebAuthn Login Complete] Invalid credential for:', email);
+      console.error('[WebAuthn Login Complete] Step 4 Error: Invalid credential for:', email, 'Provided credentialID:', credentialID);
       return res.status(400).json({ msg: 'Invalid credential' });
     }
+    console.log('[WebAuthn Login Complete] Step 4: Credential matched:', {
+      credentialID: credentialMatch.credentialID.substring(0, 20) + '...',
+      counter: credentialMatch.counter,
+    });
 
+    console.log('[WebAuthn Login Complete] Step 5: Verifying authentication response');
     const verification = await verifyAuthenticationResponse({
       response: credential,
       expectedChallenge: req.session.challenge,
@@ -446,16 +454,22 @@ router.post('/webauthn/login/complete', async (req, res) => {
     });
 
     if (!verification.verified) {
-      console.error('[WebAuthn Login Complete] Verification failed for:', email);
+      console.error('[WebAuthn Login Complete] Step 5 Error: Verification failed for:', email);
       return res.status(400).json({ msg: 'Fingerprint authentication failed' });
     }
+    console.log('[WebAuthn Login Complete] Step 5: Verification successful:', {
+      newCounter: verification.authenticationInfo.newCounter,
+    });
 
+    console.log('[WebAuthn Login Complete] Step 6: Updating credential counter');
     credentialMatch.counter = verification.authenticationInfo.newCounter;
     await user.save();
 
+    console.log('[WebAuthn Login Complete] Step 7: Generating JWT token');
     const payload = { userId: user.id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
+    console.log('[WebAuthn Login Complete] Step 8: Updating session');
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.challenge = null;
@@ -464,11 +478,14 @@ router.post('/webauthn/login/complete', async (req, res) => {
     req.session.challengeExpires = null;
     await req.session.save();
 
-    console.log(`[WebAuthn Login Complete] User logged in: ${user.username} (ID: ${user.id})`);
+    console.log(`[WebAuthn Login Complete] Step 9: User logged in: ${user.username} (ID: ${user.id})`);
     res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
   } catch (err) {
-    console.error('[WebAuthn Login Complete] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
+    console.error('[WebAuthn Login Complete] Step 10 Error: Server error:', {
+      message: err.message,
+      stack: err.stack,
+    });
+    res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
 
