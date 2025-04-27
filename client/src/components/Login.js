@@ -47,7 +47,7 @@ const Login = () => {
     setError('');
     setSuccess(false);
     setIsLoading(true);
-  
+
     try {
       // Step 1: Check WebAuthn support
       console.log('[Fingerprint Login Step 1] Checking WebAuthn support');
@@ -75,7 +75,7 @@ const Login = () => {
         return;
       }
       console.log('[Fingerprint Login Step 1] WebAuthn support verified');
-  
+
       // Step 2: Validate input fields
       console.log('[Fingerprint Login Step 2] Validating input fields:', { email });
       if (!email.trim()) {
@@ -91,7 +91,7 @@ const Login = () => {
         return;
       }
       console.log('[Fingerprint Login Step 2] Input validation passed');
-  
+
       // Step 3: Send request to /webauthn/login/begin
       console.log('[Fingerprint Login Step 3] Sending request to /auth/webauthn/login/begin:', { email });
       let beginResponse;
@@ -108,7 +108,7 @@ const Login = () => {
         setIsLoading(false);
         return;
       }
-  
+
       // Step 4: Validate WebAuthn authentication options
       console.log('[Fingerprint Login Step 4] Validating WebAuthn authentication options');
       const { challenge, allowCredentials } = beginResponse.data;
@@ -120,7 +120,7 @@ const Login = () => {
         return;
       }
       console.log('[Fingerprint Login Step 4] WebAuthn options validation passed');
-  
+
       // Step 5: Start WebAuthn authentication
       console.log('[Fingerprint Login Step 5] Starting WebAuthn authentication');
       let credential;
@@ -130,14 +130,6 @@ const Login = () => {
           allowCredentials,
           rpId: 'chatify-10.vercel.app',
           userVerification: 'required',
-          authenticatorSelection: {
-            authenticatorAttachment: 'platform', // Restrict to platform authenticators
-            userVerification: 'required',
-          },
-          extensions: {
-            // Optional: Request specific authenticator capabilities
-            credProps: true,
-          },
         });
         console.log('[Fingerprint Login Step 5] WebAuthn credential retrieved:', credential);
       } catch (webauthnError) {
@@ -151,15 +143,13 @@ const Login = () => {
           setError('Security error: Ensure you’re using a secure connection (HTTPS) and try again.');
         } else if (webauthnError.name === 'InvalidStateError') {
           setError('Invalid state: Please try again or use password login.');
-        } else if (webauthnError.name === 'NoAuthenticatorsError') {
-          setError('No fingerprint authenticator is available on this device.');
         } else {
           setError(`Failed to authenticate with fingerprint: ${webauthnError.message}`);
         }
         setIsLoading(false);
         return;
       }
-  
+
       // Step 6: Send request to /webauthn/login/complete
       console.log('[Fingerprint Login Step 6] Sending request to /auth/webauthn/login/complete:', { email, credential });
       let completeResponse;
@@ -179,7 +169,7 @@ const Login = () => {
         setIsLoading(false);
         return;
       }
-  
+
       // Step 7: Store token and user data
       console.log('[Fingerprint Login Step 7] Storing authentication data');
       try {
@@ -196,7 +186,7 @@ const Login = () => {
         setIsLoading(false);
         return;
       }
-  
+
       // Step 8: Update UI and redirect
       console.log('[Fingerprint Login Step 8] Setting success state');
       setSuccess(true);
@@ -213,7 +203,7 @@ const Login = () => {
       setIsLoading(false);
     }
   };
-  
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     console.log('[Password Login] Starting password login process');
