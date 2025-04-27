@@ -280,7 +280,6 @@ router.post('/webauthn/register/complete', async (req, res) => {
         counter,
         deviceName: 'Fingerprint Authenticator',
         authenticatorType: 'fingerprint',
-        transports: credential.response.transports || ['internal'],
       }],
     });
 
@@ -327,12 +326,12 @@ router.post('/webauthn/login/begin', async (req, res) => {
         throw new Error(`Invalid credentialID type for credential at index ${index}`);
       }
       try {
+        // Validate base64 string by decoding and re-encoding
         const decoded = Buffer.from(cred.credentialID, 'base64');
         console.log('[WebAuthn Login Begin] Step 3: Valid credentialID at index', index, ':', cred.credentialID.substring(0, 20) + '...');
         return {
-          id: cred.credentialID,
+          id: cred.credentialID, // Use the base64 string directly
           type: 'public-key',
-          transports: ['internal'], // Restrict to internal (platform) authenticators
         };
       } catch (base64Error) {
         console.error('[WebAuthn Login Begin] Step 3 Error: Invalid base64 credentialID at index', index, ':', cred.credentialID);
@@ -348,15 +347,10 @@ router.post('/webauthn/login/begin', async (req, res) => {
         rpID,
         allowCredentials,
         userVerification: 'required',
-        authenticatorSelection: {
-          authenticatorAttachment: 'platform', // Restrict to platform authenticators
-          userVerification: 'required',
-        },
       });
       console.log('[WebAuthn Login Begin] Step 4: Authentication options generated:', {
         challenge: options.challenge,
         allowCredentialsCount: options.allowCredentials.length,
-        authenticatorAttachment: 'platform',
       });
     } catch (webauthnError) {
       console.error('[WebAuthn Login Begin] Step 4 Error: Failed to generate authentication options:', {
@@ -394,6 +388,7 @@ router.post('/webauthn/login/begin', async (req, res) => {
     res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
+
 // WebAuthn login: Complete
 router.post('/webauthn/login/complete', async (req, res) => {
   try {
@@ -892,7 +887,7 @@ router.put('/change-password', auth, async (req, res) => {
 });
 
 // Delete account
-router.post('/delete-account', auth, async (req, res) => {
+router.delete('/delete-account', auth, async (req, res) => {
   try {
     console.log('[Delete Account] Received request for user ID:', req.user);
     const user = await User.findById(req.user);
