@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaBars, FaTimes, FaUser, FaSignOutAlt, FaComments, FaUsers } from 'react-icons/fa';
+import { FaBars, FaTimes, FaUser, FaSignOutAlt, FaComments } from 'react-icons/fa';
 import io from 'socket.io-client';
 
 const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
@@ -107,18 +107,11 @@ const Navbar = () => {
             </motion.div>
           )}
           {(token || anonymousId) && (
-            <>
-              <motion.div whileHover="hover" whileTap="tap" variants={linkVariants}>
-                <Link to="/chat" className="text-lg font-medium hover:text-red-500 transition-colors duration-200">
-                  Chat
-                </Link>
-              </motion.div>
-              <motion.div whileHover="hover" whileTap="tap" variants={linkVariants}>
-                <Link to="/group-chat" className="text-lg font-medium hover:text-red-500 transition-colors duration-200">
-                  Group Chat
-                </Link>
-              </motion.div>
-            </>
+            <motion.div whileHover="hover" whileTap="tap" variants={linkVariants}>
+              <Link to="/chat" className="text-lg font-medium hover:text-red-500 transition-colors duration-200">
+                Chat
+              </Link>
+            </motion.div>
           )}
           {token || anonymousId ? (
             <div className="relative">
@@ -244,17 +237,6 @@ const Navbar = () => {
                   >
                     <FaComments />
                     <span>Chat</span>
-                  </motion.div>
-                  <motion.div
-                    whileHover={{ x: 5, color: '#FF0000' }}
-                    onClick={() => {
-                      navigate('/group-chat');
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className="flex items-center space-x-2 cursor-pointer transition-colors duration-200"
-                  >
-                    <FaUsers />
-                    <span>Group Chat</span>
                   </motion.div>
                   {token && (
                     <motion.div
