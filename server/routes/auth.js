@@ -89,6 +89,66 @@ const unblockUserSchema = Joi.object({
   userId: Joi.string().required(),
 });
 
+// New schema for fetching user profile
+const userIdSchema = Joi.object({
+  userId: Joi.string().required(),
+});
+
+// New route to fetch user profile by ID
+router.get('/profile/:userId', auth, async (req, res) => {
+  try {
+    console.log('[Get User Profile] Fetching profile for user ID:', req.params.userId);
+    const { error } = userIdSchema.validate({ userId: req.params.userId });
+    if (error) {
+      console.error('[Get User Profile] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const user = await User.findById(req.params.userId)
+      .select('-password -webauthnCredentials -webauthnUserID')
+      .populate('friends', 'username')
+      .populate('friendRequests', 'username')
+      .populate('blockedUsers', 'username');
+    if (!user) {
+      console.error('[Get User Profile] User not found:', req.params.userId);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    // Check profile visibility
+    const currentUser = await User.findById(req.user);
+    if (user.privacy.profileVisibility === 'Private' && req.user !== req.params.userId) {
+      console.error('[Get User Profile] Profile is private:', req.params.userId);
+      return res.status(403).json({ msg: 'This profile is private' });
+    }
+    if (
+      user.privacy.profileVisibility === 'Friends' &&
+      req.user !== req.params.userId &&
+      !currentUser.friends.includes(req.params.userId)
+    ) {
+      console.error('[Get User Profile] Profile is visible to friends only:', req.params.userId);
+      return res.status(403).json({ msg: 'This profile is visible to friends only' });
+    }
+
+    console.log(`[Get User Profile] Profile fetched for: ${user.username}`);
+    res.json({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      bio: user.bio || '',
+      age: user.age || null,
+      status: user.status || 'Available',
+      privacy: user.privacy,
+      friends: user.friends,
+      friendRequests: user.friendRequests,
+      blockedUsers: user.blockedUsers,
+      createdAt: user.createdAt,
+    });
+  } catch (err) {
+    console.error('[Get User Profile] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 // WebAuthn registration: Begin
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
