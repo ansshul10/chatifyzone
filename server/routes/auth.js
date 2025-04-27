@@ -73,6 +73,7 @@ const updateProfileSchema = Joi.object({
   age: Joi.number().integer().min(13).max(120).optional(),
   status: Joi.string().max(30).allow('').optional(),
   allowFriendRequests: Joi.boolean().optional(),
+  profileVisibility: Joi.string().valid('Public', 'Friends', 'Private').optional(),
 });
 
 const changePasswordSchema = Joi.object({
@@ -795,11 +796,12 @@ router.put('/profile', auth, async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    const { bio, age, status, allowFriendRequests } = req.body;
+    const { bio, age, status, allowFriendRequests, profileVisibility } = req.body;
     if (bio !== undefined) user.bio = bio;
     if (age !== undefined) user.age = age;
     if (status !== undefined) user.status = status;
     if (allowFriendRequests !== undefined) user.privacy.allowFriendRequests = allowFriendRequests;
+    if (profileVisibility !== undefined) user.privacy.profileVisibility = profileVisibility;
 
     await user.save();
 
@@ -824,7 +826,7 @@ router.get('/profile', auth, async (req, res) => {
   try {
     console.log('[Get Profile] Fetching profile for user ID:', req.user);
     const user = await User.findById(req.user)
-      .select('-password -webauthnCredentials -webauthnUserID')
+      .select('-password')
       .populate('friends', 'username online')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
