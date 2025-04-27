@@ -347,10 +347,15 @@ router.post('/webauthn/login/begin', async (req, res) => {
         rpID,
         allowCredentials,
         userVerification: 'required',
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+        },
       });
       console.log('[WebAuthn Login Begin] Step 4: Authentication options generated:', {
         challenge: options.challenge,
         allowCredentialsCount: options.allowCredentials.length,
+        authenticatorSelection: options.authenticatorSelection,
       });
     } catch (webauthnError) {
       console.error('[WebAuthn Login Begin] Step 4 Error: Failed to generate authentication options:', {
@@ -887,7 +892,7 @@ router.put('/change-password', auth, async (req, res) => {
 });
 
 // Delete account
-router.delete('/delete-account', auth, async (req, res) => {
+router.post('/delete-account', auth, async (req, res) => {
   try {
     console.log('[Delete Account] Received request for user ID:', req.user);
     const user = await User.findById(req.user);
