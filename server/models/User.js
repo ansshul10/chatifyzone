@@ -26,7 +26,6 @@ const userSchema = new mongoose.Schema({
     counter: { type: Number, required: true },
     deviceName: { type: String },
     authenticatorType: { type: String, default: 'fingerprint' },
-    transports: [{ type: String, enum: ['internal', 'usb', 'nfc', 'ble'] }], // Add transports
   }],
 });
 
