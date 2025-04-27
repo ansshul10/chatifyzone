@@ -280,6 +280,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
         counter,
         deviceName: 'Fingerprint Authenticator',
         authenticatorType: 'fingerprint',
+        transports: credential.response.transports || ['internal'],
       }],
     });
 
