@@ -9,7 +9,6 @@ import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import Profile from './components/Profile'; // Add this import
 import NotFound from './pages/NotFound';
-import GroupChat from './components/GroupChat';
 import io from 'socket.io-client';
 
 const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
@@ -41,7 +40,6 @@ function App() {
           <Route path="/signup" element={<Register />} />
           <Route path="/anonymous" element={<AnonymousEntry />} />
           <Route path="/chat" element={<ChatWindow />} />
-          <Route path="/group-chat" element={<GroupChat />} />
           <Route path="/profile" element={<Profile />} /> {/* Add this route */}
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password/:token" element={<ResetPassword />} />
