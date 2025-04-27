@@ -1,13 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaSearch, FaComment, FaUserSlash, FaInfoCircle } from 'react-icons/fa';
+import { FaSearch, FaComment, FaInfoCircle, FaTimes, FaShareAlt } from 'react-icons/fa';
 import PropTypes from 'prop-types';
 import verifiedIcon from '../assets/verified.png'; // Adjust path as needed
+import api from '../utils/api';
 
 const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typingUsers = [] }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
+  const [selectedProfile, setSelectedProfile] = useState(null);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [error, setError] = useState('');
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
+  const [localUsers, setLocalUsers] = useState(users);
   const searchInputRef = useRef(null);
+
+  // Sync localUsers with users prop
+  useEffect(() => {
+    setLocalUsers(users);
+  }, [users]);
 
   // Debounce search input
   const debounce = (func, delay) => {
@@ -23,10 +34,9 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     const cachedColor = localStorage.getItem(`avatarColor-${id}`);
     if (cachedColor) return cachedColor;
 
-    // Generate color using HSL for vibrant, accessible colors
     const hue = Math.floor(Math.random() * 360);
-    const saturation = 60 + Math.floor(Math.random() * 20); // 60-80% for vibrancy
-    const lightness = 50 + Math.floor(Math.random() * 20); // 50-70% for contrast
+    const saturation = 60 + Math.floor(Math.random() * 20);
+    const lightness = 50 + Math.floor(Math.random() * 20);
     const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 
     localStorage.setItem(`avatarColor-${id}`, color);
@@ -35,22 +45,37 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
 
   // Sort users: online first, then offline, alphabetically by username
   const sortedUsers = useMemo(() => {
-    return [...users]
+    return [...localUsers]
       .filter((user) => user.id !== currentUserId && user.username && user.id)
       .sort((a, b) => {
         if (a.online && !b.online) return -1;
         if (!a.online && b.online) return 1;
         return a.username.localeCompare(b.username);
       });
-  }, [users, currentUserId]);
+  }, [localUsers, currentUserId]);
 
   // Handle search input change
   const handleSearch = useCallback(
     debounce((value) => {
       setSearchQuery(value);
+      if (value) {
+        const suggestions = sortedUsers
+          .filter((user) => user.username.toLowerCase().includes(value.toLowerCase()))
+          .slice(0, 5)
+          .map((user) => user.username);
+        setSearchSuggestions(suggestions);
+      } else {
+        setSearchSuggestions([]);
+      }
     }, 300),
-    []
+    [sortedUsers]
   );
+
+  // Select suggestion
+  const handleSuggestionClick = (suggestion) => {
+    setSearchQuery(suggestion);
+    setSearchSuggestions([]);
+  };
 
   // Filter users based on search query
   const filteredUsers = useMemo(() => {
@@ -75,19 +100,28 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     setContextMenu(null);
   };
 
+  // Fetch user profile
+  const fetchUserProfile = async (userId) => {
+    try {
+      const token = localStorage.getItem('token');
+      api.defaults.headers.common['x-auth-token'] = token;
+      const { data } = await api.get(`/auth/profile/${userId}`);
+      setSelectedProfile(data);
+      setIsProfileModalOpen(true);
+      setError('');
+    } catch (err) {
+      setError(err.response?.data.msg || 'Failed to load profile');
+    }
+  };
+
   // Handle context menu actions
-  const handleContextAction = (action, user) => {
+  const handleContextAction = async (action, user) => {
     switch (action) {
       case 'message':
         setSelectedUserId(user.id);
         break;
       case 'profile':
-        console.log(`View profile for ${user.username}`);
-        // Implement profile view logic here
-        break;
-      case 'block':
-        console.log(`Block user ${user.username}`);
-        // Implement block logic here
+        await fetchUserProfile(user.id);
         break;
       default:
         break;
@@ -95,14 +129,30 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     closeContextMenu();
   };
 
+  // Close profile modal
+  const closeProfileModal = () => {
+    setIsProfileModalOpen(false);
+    setSelectedProfile(null);
+    setError('');
+  };
+
+  // Copy profile link
+  const copyProfileLink = () => {
+    const profileLink = `${window.location.origin}/profile/${selectedProfile.username}`;
+    navigator.clipboard.writeText(profileLink);
+    setError(<span className="text-green-400">Link copied</span>);
+  };
+
   // Animation variants
   const listVariants = {
     hidden: { opacity: 0, scale: 0.95 },
-    visible: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: 'easeOut' } },
+    visible: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: 'easeOut', staggerChildren: 0.05 } },
   };
 
   const itemVariants = {
-    hover: { scale: 1.02, backgroundColor: '#1E40AF', transition: { duration: 0.2 } },
+    hidden: { opacity: 0, y: 10 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
+    hover: { scale: 1.02, transition: { duration: 0.2 } },
     tap: { scale: 0.98 },
   };
 
@@ -116,21 +166,34 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     visible: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.2, type: 'spring', stiffness: 200 } },
   };
 
+  const modalVariants = {
+    hidden: { opacity: 0, scale: 0.9 },
+    visible: { opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 300, damping: 20 } },
+  };
+
+  const suggestionVariants = {
+    hidden: { opacity: 0, y: -10 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.2 } },
+  };
+
   useEffect(() => {
     console.log('UserList received users:', users);
+    console.log('Local users:', localUsers);
     console.log('Unread messages:', unreadMessages);
     console.log('Typing users:', typingUsers);
     users.forEach((user) => {
       if (!user.username) console.error('User with no username:', user);
     });
 
-    // Handle clicks outside context menu
-    const handleClickOutside = () => {
+    const handleClickOutside = (e) => {
+      if (searchInputRef.current && !searchInputRef.current.contains(e.target)) {
+        setSearchSuggestions([]);
+      }
       closeContextMenu();
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [users, unreadMessages, typingUsers]);
+  }, [users, localUsers, unreadMessages, typingUsers]);
 
   return (
     <motion.div
@@ -161,10 +224,42 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
             placeholder="Search users..."
             className="w-full pl-10 pr-4 py-2 text-sm text-gray-200 bg-gray-800/30 border border-gray-700/50 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500 backdrop-blur-sm"
             aria-label="Search users"
-            aria-autocomplete="none"
+            aria-autocomplete="list"
           />
+          <AnimatePresence>
+            {searchSuggestions.length > 0 && (
+              <motion.ul
+                variants={suggestionVariants}
+                initial="hidden"
+                animate="visible"
+                exit="hidden"
+                className="absolute top-full left-0 right-0 mt-2 bg-gray-800/90 border border-gray-700/50 rounded-lg shadow-lg z-50"
+              >
+                {searchSuggestions.map((suggestion, index) => (
+                  <motion.li
+                    key={index}
+                    whileHover={{ backgroundColor: '#1E40AF' }}
+                    className="px-4 py-2 text-sm text-gray-200 cursor-pointer"
+                    onClick={() => handleSuggestionClick(suggestion)}
+                  >
+                    {suggestion}
+                  </motion.li>
+                ))}
+              </motion.ul>
+            )}
+          </AnimatePresence>
         </motion.div>
       </div>
+
+      {error && !isProfileModalOpen && (
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="text-red-400 text-center mb-4 bg-red-900/10 p-2 rounded-lg text-sm"
+        >
+          {error}
+        </motion.p>
+      )}
 
       <div
         className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent space-y-3"
@@ -181,12 +276,12 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
               <motion.div
                 key={user.id}
                 variants={itemVariants}
+                whileHover="hover"
                 whileTap="tap"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="p-3 rounded-xl cursor-pointer text-gray-200 bg-gray-800/20 backdrop-blur-md hover:bg-blue-600/20 transition-colors duration-200 flex items-center justify-between border border-gray-700/30"
-                onClick={() => setSelectedUserId(user.id)}
+                className="p-3 rounded-xl cursor-pointer text-gray-200 bg-gray-800/20 backdrop-blur-md hover:bg-red-500/10 transition-colors duration-200 flex items-center justify-between border border-gray-700/30"
                 onContextMenu={(e) => handleContextMenu(e, user)}
                 role="listitem"
                 aria-label={`User ${user.username}`}
@@ -245,6 +340,24 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                       {unreadMessages[user.id]}
                     </motion.span>
                   )}
+                  <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => handleContextAction('message', user)}
+                    className="p-1.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/40 transition-colors"
+                    aria-label={`Message ${user.username}`}
+                  >
+                    <FaComment />
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => handleContextAction('profile', user)}
+                    className="p-1.5 rounded-full bg-gray-700/20 text-gray-400 hover:bg-gray-700/40 transition-colors"
+                    aria-label={`View ${user.username}'s profile`}
+                  >
+                    <FaInfoCircle />
+                  </motion.button>
                 </div>
               </motion.div>
             ))}
@@ -282,15 +395,89 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
               <FaInfoCircle />
               <span>View Profile</span>
             </motion.div>
-            <motion.div
-              whileHover={{ backgroundColor: '#1E40AF', scale: 1.02 }}
-              className="flex items-center space-x-2 p-2 text-sm text-gray-200 rounded-lg cursor-pointer"
-              onClick={() => handleContextAction('block', contextMenu.user)}
-              role="menuitem"
-            >
-              <FaUserSlash />
-              <span>Block User</span>
-            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isProfileModalOpen && selectedProfile && (
+          <motion.div
+            variants={modalVariants}
+            initial="hidden"
+            animate="visible"
+            exit="hidden"
+            className="fixed inset-0 flex items-center justify-center bg-black/40 z-50"
+            role="dialog"
+            aria-label="User profile"
+          >
+            <div className="bg-[#1A1A1A] border border-gray-700/50 p-6 rounded-2xl shadow-lg w-full max-w-sm">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-white">User Profile</h3>
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={closeProfileModal}
+                  className="text-gray-400 hover:text-red-400 transition-colors duration-200"
+                  aria-label="Close profile"
+                >
+                  <FaTimes className="text-xl" />
+                </motion.button>
+              </div>
+              {error && (
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-green-400 text-center mb-4 bg-green-900/10 p-2 rounded-lg text-sm"
+                >
+                  {error}
+                </motion.p>
+              )}
+              <div className="text-center mb-4">
+                <div
+                  className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl font-semibold text-white border-2 border-blue-500"
+                  style={{ backgroundColor: generateRandomColor(selectedProfile.id) }}
+                >
+                  {selectedProfile.username[0].toUpperCase()}
+                </div>
+                <h4 className="mt-2 text-base font-medium text-white">{selectedProfile.username}</h4>
+                <p className="text-xs text-gray-400">Joined {new Date(selectedProfile.createdAt).toLocaleDateString()}</p>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-400">Bio</label>
+                  <p className="text-sm text-gray-300">{selectedProfile.bio || 'No bio available'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-400">Age</label>
+                  <p className="text-sm text-gray-300">{selectedProfile.age || 'Not specified'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-400">Status</label>
+                  <p className="text-sm text-gray-300">{selectedProfile.status || 'Available'}</p>
+                </div>
+              </div>
+              <div className="mt-6 flex justify-between">
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={copyProfileLink}
+                  className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-700 text-white text-sm font-medium transition-colors duration-200 flex items-center space-x-2"
+                  aria-label="Share profile"
+                >
+                  <FaShareAlt />
+                  <span>Share</span>
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={closeProfileModal}
+                  className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-700 text-white text-sm font-medium transition-colors duration-200"
+                  aria-label="Close"
+                >
+                  Close
+                </motion.button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
