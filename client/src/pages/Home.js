@@ -13,7 +13,6 @@ import {
   FaArrowRight,
   FaSun,
   FaMoon,
-  FaUsers,
   FaPaperPlane,
   FaHistory,
   FaUserPlus,
@@ -60,7 +59,6 @@ const Home = () => {
   const VoiceVideoRoom = ({ roomName }) => (
     <motion.div variants={cardVariants} className="w-full h-96 rounded-lg overflow-hidden shadow-md border border-gray-700">
       <iframe
-        // eslint-disable-next-line react/no-unescaped-entities
         src={`https://meet.jit.si/${roomName}?config.defaultLanguage="en"`}
         allow="camera; microphone; fullscreen"
         className="w-full h-full border-none"
@@ -84,7 +82,6 @@ const Home = () => {
 
   // Community Spotlight Data
   const communitySpotlight = [
-    { title: 'Global Chatters', desc: 'Join 10K+ users in our biggest group!', link: '/group-chat' },
     { title: 'Trivia Night', desc: 'Live event every Friday—test your wits!', link: '/events' },
     { title: 'Anon Hangout', desc: 'Casual voice room for anonymous fun.', link: '/chat' },
   ];
@@ -106,14 +103,12 @@ const Home = () => {
   // Chat Home Features
   const chatHomeFeatures = [
     { icon: <FaPaperPlane className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Start a Chat', desc: 'Message instantly.', link: '/chat' },
-    { icon: <FaUsers className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Join Groups', desc: 'Explore or create groups.', link: '/group-chat' },
     { icon: <FaVideo className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Voice/Video Call', desc: 'Connect live with friends.', link: '#' },
   ];
 
   // Anonymous Home Features
   const anonymousHomeFeatures = [
     { icon: <FaPaperPlane className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Quick Chat', desc: 'Start messaging instantly.', link: '/chat' },
-    { icon: <FaUsers className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Join Groups', desc: 'Explore public groups.', link: '/group-chat' },
     { icon: <FaMicrophone className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Voice Room', desc: 'Join live audio chats.', link: '#' },
   ];
 
@@ -122,7 +117,6 @@ const Home = () => {
     { icon: <FaHistory className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Chat History', desc: 'Access past messages anytime.' },
     { icon: <FaUserPlus className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Friend Lists', desc: 'Build and manage contacts.' },
     { icon: <FaBan className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Block Users', desc: 'Control who you chat with.' },
-    { icon: <FaUsers className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Create Groups', desc: 'Start your own communities.' },
     { icon: <FaUserEdit className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Custom Profile', desc: 'Personalize your identity.' },
     { icon: <FaVideo className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Private Calls', desc: 'Exclusive voice/video rooms.' },
   ];
@@ -137,7 +131,7 @@ const Home = () => {
             Chatify : Chat Hub 🌌
           </h1>
           <p className={`text-base sm:text-lg ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} leading-relaxed text-center lg:text-left max-w-xl`}>
-            Connect instantly, chat anonymously, or hop into voice/video rooms Chatify brings the world to your fingertips.
+            Connect instantly, chat anonymously, or hop into voice/video rooms. Chatify brings the world to your fingertips.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start mt-6">
             <motion.div whileHover="hover" whileTap="tap" variants={buttonVariants}>
@@ -201,7 +195,7 @@ const Home = () => {
         <motion.h2 variants={textVariants} className={`text-3xl sm:text-4xl font-extrabold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
           Community Spotlight 🌟
         </motion.h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-1/2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-2xl">
           {communitySpotlight.map((spotlight, index) => (
             <motion.div key={index} variants={cardVariants} whileHover={{ scale: 1.05 }} className={`p-6 rounded-lg shadow-md border ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(0,0,255,0.2),-10px_0_20px_rgba(0,0,255,0.2)] transition-all duration-300`}>
               <h3 className={`text-xl font-semibold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{spotlight.title}</h3>
@@ -223,7 +217,7 @@ const Home = () => {
           {testimonials.map((testimonial, index) => (
             <motion.div key={index} variants={cardVariants} whileHover={{ y: -10 }} className={`p-6 rounded-lg shadow-md border ${isDarkMode ? 'bg-black border-gray-700' : 'bg-white border-gray-400'}`}>
               <FaStar className="text-yellow-400 text-2xl mb-4 mx-auto" />
-              <p className={`text-center italic ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>&quot{testimonial.quote}&quot</p>
+              <p className={`text-center italic ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>"{testimonial.quote}"</p>
               <p className="text-red-500 font-semibold text-center mt-4">— {testimonial.author}</p>
             </motion.div>
           ))}
@@ -282,14 +276,14 @@ const Home = () => {
           Hey, Chatify Pro! 🌟
         </motion.h1>
         <motion.p variants={textVariants} className={`text-base sm:text-lg ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} text-center max-w-2xl`}>
-          Your chats, calls, and communities are ready—dive in!
+          Your chats and calls are ready—dive in!
         </motion.p>
       </section>
       <section className="w-full flex flex-col items-center space-y-12">
         <motion.h2 variants={textVariants} className={`text-2xl sm:text-3xl font-semibold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
           Your Tools
         </motion.h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full">
           {chatHomeFeatures.map((feature, index) => (
             <Tilt key={index} tiltMaxAngleX={15} tiltMaxAngleY={15} perspective={1000}>
               <motion.div variants={cardVariants} whileHover={{ scale: 1.05, rotate: 2 }} onClick={() => navigate(feature.link)} className={`p-6 rounded-lg shadow-md border ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.2),-10px_0_20px_rgba(255,0,0,0.2)] transition-all duration-300 cursor-pointer`}>
@@ -334,7 +328,7 @@ const Home = () => {
         </motion.div>
         <motion.div initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.8, ease: 'easeOut' }} className="w-full lg:w-1/2 flex items-center justify-center">
           <Tilt tiltMaxAngleX={20} tiltMaxAngleY={20} perspective={1000} className="w-full max-w-lg">
-            <div className={`p-6 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.3),-10px_0_20px_rgba(255,0,0,0.3)] transform transition-all duration-300`}>
+            <div className={`p-6 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.3),-10px_0_20px_rgba(255,0,0,0.3)] transform transición-all duration-300`}>
               <h2 className={`text-2xl sm:text-3xl font-bold mb-6 text-center ${isDarkMode ? 'text-white hover:text-red-600' : 'text-gray-900 hover:text-red-500'} transition-colors duration-300`}>
                 Your Anon Toolkit 🚀
               </h2>
@@ -353,7 +347,7 @@ const Home = () => {
         <motion.h2 variants={textVariants} className={`text-2xl sm:text-3xl font-semibold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
           Your Anon Powers
         </motion.h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full">
           {anonymousHomeFeatures.map((feature, index) => (
             <Tilt key={index} tiltMaxAngleX={15} tiltMaxAngleY={15} perspective={1000}>
               <motion.div variants={cardVariants} whileHover={{ scale: 1.05, rotate: 2 }} onClick={() => navigate(feature.link)} className={`p-6 rounded-lg shadow-md border ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.2),-10px_0_20px_rgba(255,0,0,0.2)] transition-all duration-300 cursor-pointer`}>
