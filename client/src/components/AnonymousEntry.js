@@ -15,7 +15,6 @@ import {
   FaSun,
   FaMoon,
   FaDice,
-  FaUsers,
   FaHistory,
   FaUserPlus,
   FaBan,
@@ -28,10 +27,9 @@ const AnonymousEntry = () => {
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(true); // Theme state
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const navigate = useNavigate();
 
-  // Random username generator
   const generateRandomUsername = () => {
     const adjectives = ['Mystic', 'Silent', 'Swift', 'Shadow', 'Clever'];
     const nouns = ['Fox', 'Wolf', 'Eagle', 'Ghost', 'Rider'];
@@ -68,7 +66,6 @@ const AnonymousEntry = () => {
     }
   };
 
-  // Animation Variants
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { opacity: 1, transition: { staggerChildren: 0.2, delayChildren: 0.3 } },
@@ -109,7 +106,6 @@ const AnonymousEntry = () => {
     visible: { opacity: 1, y: 0, transition: { duration: 0.5, delay: 0.5 } },
   };
 
-  // Feature Data for "Why Go Anonymous?"
   const whyAnonymousFeatures = [
     { icon: <FaComment className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Instant Chat', desc: 'Start chatting right away—no delays!' },
     { icon: <FaShieldAlt className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Total Privacy', desc: 'No personal data needed, ever.' },
@@ -117,27 +113,22 @@ const AnonymousEntry = () => {
     { icon: <FaGlobe className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Global Reach', desc: 'Connect with users worldwide.' },
   ];
 
-  // Anonymous User Features
   const anonymousFeatures = [
     { icon: <FaRocket className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Quick Chat', desc: 'Instant messaging without signup' },
     { icon: <FaShieldAlt className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Privacy First', desc: 'No personal info required' },
     { icon: <FaComment className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Basic Messaging', desc: 'Chat with others simply' },
-    { icon: <FaUsers className="text-red-500 text-3xl mb-4 mx-auto" />, title: 'Group Chat', desc: 'Join public groups' },
   ];
 
-  // Signed-Up User Features
   const signedUpFeatures = [
     { icon: <FaHistory className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Chat History', desc: 'Persistent messages across sessions' },
     { icon: <FaUserPlus className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Add Friends', desc: 'Build a friend list' },
     { icon: <FaBan className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Block/Report', desc: 'Control who you chat with' },
-    { icon: <FaUsers className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Create Groups', desc: 'Start and manage groups' },
     { icon: <FaUserEdit className="text-green-500 text-3xl mb-4 mx-auto" />, title: 'Profile', desc: 'Customize your identity' },
   ];
 
-  // FAQ Data
   const faqs = [
     { question: 'What is anonymous entry?', answer: 'Chat without an account using just a username.' },
-    { question: 'What do signed-up users get?', answer: 'Chat history, friends, group creation, and more!' },
+    { question: 'What do signed-up users get?', answer: 'Chat history, friends, profile customization, and more!' },
     { question: 'Is it secure?', answer: 'Yes, chats are encrypted, and no personal data is stored for anonymous users.' },
   ];
 
@@ -150,7 +141,6 @@ const AnonymousEntry = () => {
     >
       <Navbar />
       <div className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col gap-16">
-        {/* Hero Section */}
         <section className="flex flex-col lg:flex-row gap-8 lg:gap-12">
           <motion.div
             variants={textVariants}
@@ -163,10 +153,9 @@ const AnonymousEntry = () => {
               Chat anonymously for free or sign up for premium features—your choice, your experience!
             </p>
 
-            {/* Anonymous Features */}
             <div className="space-y-4 sm:space-y-10">
               <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-red-500">Anonymous Users Get</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
                 {anonymousFeatures.map((feature, index) => (
                   <Tilt key={index} tiltMaxAngleX={15} tiltMaxAngleY={15} perspective={1000}>
                     <motion.div
@@ -183,7 +172,6 @@ const AnonymousEntry = () => {
               </div>
             </div>
 
-            {/* Signed-Up Features */}
             <div className="space-y-4 sm:space-y-10">
               <h2 className="text-xl sm:text-2xl font-semibold text-center lg:text-left text-green-500">Signed-Up Users Unlock</h2>
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-5">
@@ -209,7 +197,6 @@ const AnonymousEntry = () => {
             </motion.div>
           </motion.div>
 
-          {/* Form Section */}
           <motion.div variants={formVariants} className="w-full lg:w-1/2 flex items-start justify-center px-4 sm:px-0 pt-16">
             <Tilt tiltMaxAngleX={20} tiltMaxAngleY={20} perspective={1000} className="w-full max-w-md">
               <div className={`p-6 sm:p-8 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} hover:shadow-[10px_0_20px_rgba(255,0,0,0.3),-10px_0_20px_rgba(255,0,0,0.3)] transition-all duration-300`}>
@@ -308,14 +295,12 @@ const AnonymousEntry = () => {
           </motion.div>
         </section>
 
-        {/* Theme Toggle */}
         <motion.div whileHover={{ scale: 1.1 }} className="fixed top-20 right-4 z-50">
           <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 rounded-full ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-300'}`}>
             {isDarkMode ? <FaSun className="text-yellow-400" /> : <FaMoon className="text-gray-700" />}
           </button>
         </motion.div>
 
-        {/* Why Go Anonymous Section */}
         <section className="w-full flex flex-col items-center space-y-12 py-12">
           <motion.h2 variants={textVariants} className={`text-3xl sm:text-4xl font-extrabold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
             Why Go Anonymous? 🤔
@@ -337,7 +322,6 @@ const AnonymousEntry = () => {
           </div>
         </section>
 
-        {/* FAQ Section */}
         <section className="w-full flex flex-col items-center space-y-12 py-12">
           <motion.h2 variants={textVariants} className={`text-3xl sm:text-4xl font-extrabold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
             Frequently Asked Questions ❓
@@ -365,7 +349,6 @@ const AnonymousEntry = () => {
           </motion.div>
         </section>
 
-        {/* Stats Section */}
         <section className="w-full flex flex-col items-center space-y-12 py-12">
           <motion.h2 variants={textVariants} className={`text-3xl sm:text-4xl font-extrabold text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
             Chatify Stats 📊
@@ -391,7 +374,6 @@ const AnonymousEntry = () => {
         </section>
       </div>
 
-      {/* Footer */}
       <motion.footer variants={footerVariants} initial="hidden" animate="visible" className={`${isDarkMode ? 'bg-black border-gray-800' : 'bg-white border-gray-300'} py-6 border-t`}>
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center text-sm">
           <div className={`mb-4 sm:mb-0 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
