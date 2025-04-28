@@ -381,7 +381,7 @@ const Login = () => {
                     whileHover="hover"
                     whileFocus="focus"
                     variants={inputVariants}
-                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
+                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}
                   >
                     <FaEnvelope className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
                     <input
@@ -392,7 +392,7 @@ const Login = () => {
                         setEmail(e.target.value);
                       }}
                       placeholder="Your Email"
-                      className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
                       disabled={isLoading}
                     />
@@ -404,7 +404,7 @@ const Login = () => {
                       whileHover="hover"
                       whileFocus="focus"
                       variants={inputVariants}
-                      className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
+                      className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}
                     >
                       <FaLock className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
                       <input
@@ -415,7 +415,7 @@ const Login = () => {
                           setPassword(e.target.value);
                         }}
                         placeholder="Your Password"
-                        className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
+                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                         required
                         disabled={isLoading}
                       />
