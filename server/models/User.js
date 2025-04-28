@@ -14,7 +14,9 @@ const userSchema = new mongoose.Schema({
   blockedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   groups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Group' }],
   bio: { type: String, default: '', maxlength: 150 },
-  age: { type: Number, min: 13, max: 120 },
+  age: { type: Number, min: 18, max: 120 },
+  country: { type: String, required: true },
+  state: { type: String, default: '' },
   status: { type: String, default: 'Available', maxlength: 30 },
   privacy: {
     allowFriendRequests: { type: Boolean, default: true },
