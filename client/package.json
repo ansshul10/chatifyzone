@@ -6,28 +6,36 @@
     "@github/webauthn-json": "^2.1.1",
     "@headlessui/react": "^2.2.2",
     "@simplewebauthn/browser": "^13.1.0",
+    "@simplewebauthn/server": "^13.1.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
     "@testing-library/user-event": "^13.5.0",
-    "axios": "^1.8.4",
+    "axios": "^1.9.0",
     "connect-mongo": "^5.1.0",
+    "countries-list": "^3.1.1",
+    "country-state-city": "^3.2.1",
     "express-session": "^1.18.1",
     "face-api.js": "^0.22.2",
     "framer-motion": "^12.5.0",
+    "i18n-iso-countries": "^7.14.0",
     "jwt-decode": "^4.0.0",
     "prop-types": "^15.8.1",
     "react": "^19.0.0",
+    "react-country-flag": "^3.1.0",
     "react-dom": "^19.0.0",
     "react-icons": "^5.5.0",
+    "react-markdown": "^10.1.0",
     "react-parallax-tilt": "^1.7.286",
     "react-router-dom": "^7.5.1",
     "react-scripts": "5.0.1",
+    "react-select": "^5.10.1",
     "react-type-animation": "^3.2.0",
     "react-virtualized-auto-sizer": "^1.0.26",
     "react-window": "^1.8.11",
     "socket.io-client": "^4.8.1",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "world-countries": "^5.1.0"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -35,7 +43,6 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
-  
   "browserslist": {
     "production": [
       ">0.2%",
