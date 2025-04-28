@@ -2,22 +2,84 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaEnvelope, FaUser, FaLock, FaArrowRight, FaCheckCircle, FaSun, FaMoon, FaGoogle, FaApple, FaFingerprint } from 'react-icons/fa';
+import {
+  FaEnvelope,
+  FaUser,
+  FaLock,
+  FaArrowRight,
+  FaCheckCircle,
+  FaSun,
+  FaMoon,
+  FaGoogle,
+  FaApple,
+  FaFingerprint,
+  FaTimes,
+} from 'react-icons/fa';
 import { startRegistration } from '@simplewebauthn/browser';
+import ReactMarkdown from 'react-markdown';
+import { Country, State } from 'country-state-city';
 import api from '../utils/api';
 import Navbar from './Navbar';
+
+// Transform country-state-city data into a usable format
+const countryList = Country.getAllCountries()
+  .map((c) => ({
+    iso2: c.isoCode,
+    name: c.name,
+  }))
+  .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically by name
+
+const getStatesForCountry = (iso2) => {
+  console.log('[getStatesForCountry] Fetching states for iso2:', iso2);
+  if (!iso2) {
+    console.log('[getStatesForCountry] No iso2 provided, returning empty array');
+    return [];
+  }
+  const states = State.getStatesOfCountry(iso2)
+    .map((s) => ({
+      name: s.name,
+      iso2: s.isoCode,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically
+  console.log('[getStatesForCountry] States found:', states);
+  return states;
+};
 
 const Signup = () => {
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [country, setCountry] = useState('');
+  const [state, setState] = useState('');
+  const [age, setAge] = useState('18');
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [signupMethod, setSignupMethod] = useState('password');
   const [isLoading, setIsLoading] = useState(false);
   const [isWebAuthnSupported, setIsWebAuthnSupported] = useState(false);
+  const [states, setStates] = useState([]);
   const navigate = useNavigate();
+
+  // Generate age options (18 to 120)
+  const ageOptions = Array.from({ length: 103 }, (_, i) => (i + 18).toString());
+
+  // Update states when country changes
+  useEffect(() => {
+    console.log('[Signup] Country changed:', country);
+    if (!country) {
+      setStates([]);
+      setState('');
+      console.log('[Signup] No country selected, states reset');
+      return;
+    }
+    const newStates = getStatesForCountry(country);
+    setStates(newStates);
+    setState(''); // Reset state when country changes
+    console.log('[Signup] States updated for country', country, ':', newStates);
+  }, [country]);
 
   // Check WebAuthn support on component mount
   useEffect(() => {
@@ -44,173 +106,126 @@ const Signup = () => {
   }, []);
 
   const handleFingerprintSignup = async () => {
-  console.log('[Fingerprint Signup] Starting fingerprint signup process');
-  setError('');
-  setSuccess(false);
-  setIsLoading(true);
+    console.log('[Fingerprint Signup] Starting fingerprint signup process');
+    setError('');
+    setSuccess(false);
+    setIsLoading(true);
 
-  try {
-    // Step 1: Check WebAuthn support
-    console.log('[Fingerprint Signup Step 1] Verifying WebAuthn support');
-    if (!isWebAuthnSupported) {
-      console.error('[Fingerprint Signup Step 1 Error] WebAuthn not supported');
-      setError('Fingerprint authentication is not supported on this device or browser.');
-      setIsLoading(false);
-      return;
-    }
-    console.log('[Fingerprint Signup Step 1] WebAuthn support verified');
-
-    // Step 2: Validate input fields
-    console.log('[Fingerprint Signup Step 2] Validating input fields:', { email, username });
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      console.error('[Fingerprint Signup Step 2 Error] Email is empty or invalid');
-      setError('Please enter a valid email address');
-      setIsLoading(false);
-      return;
-    }
-    if (!username.trim() || username.length < 3 || username.length > 30) {
-      console.error('[Fingerprint Signup Step 2 Error] Username is empty or invalid');
-      setError('Please enter a valid username (3-30 characters)');
-      setIsLoading(false);
-      return;
-    }
-    console.log('[Fingerprint Signup Step 2] Input validation passed');
-
-    // Step 3: Send request to /webauthn/register/begin
-    console.log('[Fingerprint Signup Step 3] Sending request to /webauthn/register/begin:', { email, username });
-    let beginResponse;
     try {
-      beginResponse = await api.post('/auth/webauthn/register/begin', { email, username });
-      console.log('[Fingerprint Signup Step 3] Received response from /webauthn/register/begin:', beginResponse.data);
-    } catch (apiError) {
-      console.error('[Fingerprint Signup Step 3 Error] Failed to fetch WebAuthn registration options:', apiError.message);
-      console.error('[Fingerprint Signup Step 3 Error] API error details:', {
-        status: apiError.response?.status,
-        data: apiError.response?.data,
-      });
-      setError(apiError.response?.data?.msg || 'Failed to start fingerprint registration. Please check your connection and try again.');
-      setIsLoading(false);
-      return;
-    }
-
-    // Step 4: Validate WebAuthn registration options
-    console.log('[Fingerprint Signup Step 4] Validating WebAuthn registration options');
-    const { publicKey, challenge, userID, email: responseEmail, username: responseUsername } = beginResponse.data;
-    console.log('[Fingerprint Signup Step 4] Extracted options:', { publicKey, challenge, userID, responseEmail, responseUsername });
-
-    if (!publicKey || !publicKey.rp || !publicKey.user || !publicKey.challenge) {
-      console.error('[Fingerprint Signup Step 4 Error] Invalid publicKey structure in API response');
-      setError('Invalid server response: missing or malformed WebAuthn options');
-      setIsLoading(false);
-      return;
-    }
-    if (!challenge) {
-      console.error('[Fingerprint Signup Step 4 Error] Missing challenge in API response');
-      setError('Invalid server response: missing challenge');
-      setIsLoading(false);
-      return;
-    }
-    if (!userID) {
-      console.error('[Fingerprint Signup Step 4 Error] Missing userID in API response');
-      setError('Invalid server response: missing userID');
-      setIsLoading(false);
-      return;
-    }
-    if (responseEmail !== email || responseUsername !== username) {
-      console.error('[Fingerprint Signup Step 4 Error] Mismatch in email or username:', {
-        expectedEmail: email,
-        receivedEmail: responseEmail,
-        expectedUsername: username,
-        receivedUsername: responseUsername,
-      });
-      setError('Server returned incorrect email or username');
-      setIsLoading(false);
-      return;
-    }
-    console.log('[Fingerprint Signup Step 4] WebAuthn options validation passed');
-
-    // Step 5: Start WebAuthn registration
-    console.log('[Fingerprint Signup Step 5] Starting WebAuthn registration with publicKey:', publicKey);
-    let credential;
-    try {
-      credential = await startRegistration(publicKey);
-      console.log('[Fingerprint Signup Step 5] WebAuthn credential created:', credential);
-    } catch (webauthnError) {
-      console.error('[Fingerprint Signup Step 5 Error] Failed to create WebAuthn credential:', webauthnError.message);
-      console.error('[Fingerprint Signup Step 5 Error] WebAuthn error details:', webauthnError);
-      if (webauthnError.name === 'NotSupportedError') {
-        setError('Your device does not support fingerprint authentication.');
-      } else if (webauthnError.name === 'NotAllowedError') {
-        setError('Fingerprint registration was cancelled or not allowed. Please try again.');
-      } else if (webauthnError.name === 'SecurityError') {
-        setError('Security error: Ensure you’re using a secure connection (HTTPS) and try again.');
-      } else if (webauthnError.name === 'InvalidStateError') {
-        setError('A credential already exists for this device. Try logging in or using a different device.');
-      } else {
-        setError(`Failed to register fingerprint: ${webauthnError.message}. Please try again.`);
+      // Step 1: Check WebAuthn support
+      if (!isWebAuthnSupported) {
+        setError('Fingerprint authentication is not supported on this device or browser.');
+        setIsLoading(false);
+        return;
       }
-      setIsLoading(false);
-      return;
-    }
 
-    // Step 6: Send request to /webauthn/register/complete
-    console.log('[Fingerprint Signup Step 6] Sending request to /webauthn/register/complete:', {
-      email,
-      username,
-      challenge,
-      userID,
-    });
-    let completeResponse;
-    try {
-      completeResponse = await api.post('/auth/webauthn/register/complete', {
-        email,
-        username,
-        credential,
-        challenge,
-        userID,
-      });
-      console.log('[Fingerprint Signup Step 6] Fingerprint signup successful:', completeResponse.data);
-    } catch (completeError) {
-      console.error('[Fingerprint Signup Step 6 Error] Failed to complete WebAuthn registration:', completeError.message);
-      console.error('[Fingerprint Signup Step 6 Error] API error details:', {
-        status: completeError.response?.status,
-        data: completeError.response?.data,
-      });
-      setError(completeError.response?.data?.msg || 'Failed to complete fingerprint registration. Please try again.');
-      setIsLoading(false);
-      return;
-    }
+      // Step 2: Validate input fields
+      if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        setError('Please enter a valid email address');
+        setIsLoading(false);
+        return;
+      }
+      if (!username.trim() || username.length < 3 || username.length > 30) {
+        setError('Please enter a valid username (3-30 characters)');
+        setIsLoading(false);
+        return;
+      }
+      if (!country) {
+        setError('Please select a country');
+        setIsLoading(false);
+        return;
+      }
+      if (states.length > 0 && !state) {
+        setError('Please select a state');
+        setIsLoading(false);
+        return;
+      }
+      if (!age || age < 18 || age > 120) {
+        setError('You must be 18 or older to sign up');
+        setIsLoading(false);
+        return;
+      }
+      if (!termsAccepted) {
+        setError('You must agree to the Terms and Conditions');
+        setIsLoading(false);
+        return;
+      }
 
-    // Step 7: Store token and user data
-    console.log('[Fingerprint Signup Step 7] Storing token and user data');
-    try {
+      // Step 3: Send request to /webauthn/register/begin
+      let beginResponse;
+      try {
+        beginResponse = await api.post('/auth/webauthn/register/begin', { email, username, country, state, age });
+      } catch (apiError) {
+        setError(apiError.response?.data?.msg || 'Failed to start fingerprint registration. Please check your connection and try again.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 4: Validate WebAuthn registration options
+      const { publicKey, challenge, userID, email: responseEmail, username: responseUsername } = beginResponse.data;
+      if (!publicKey || !publicKey.rp || !publicKey.user || !publicKey.challenge) {
+        setError('Invalid server response: missing or malformed WebAuthn options');
+        setIsLoading(false);
+        return;
+      }
+      if (!challenge || !userID || responseEmail !== email || responseUsername !== username) {
+        setError('Server returned incorrect email or username');
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 5: Start WebAuthn registration
+      let credential;
+      try {
+        credential = await startRegistration(publicKey);
+      } catch (webauthnError) {
+        if (webauthnError.name === 'NotSupportedError') {
+          setError('Your device does not support fingerprint authentication.');
+        } else if (webauthnError.name === 'NotAllowedError') {
+          setError('Fingerprint registration was cancelled or not allowed. Please try again.');
+        } else if (webauthnError.name === 'SecurityError') {
+          setError('Security error: Ensure you’re using a secure connection (HTTPS) and try again.');
+        } else if (webauthnError.name === 'InvalidStateError') {
+          setError('A credential already exists for this device. Try logging in or using a different device.');
+        } else {
+          setError(`Failed to register fingerprint: ${webauthnError.message}. Please try again.`);
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 6: Send request to /webauthn/register/complete
+      let completeResponse;
+      try {
+        completeResponse = await api.post('/auth/webauthn/register/complete', {
+          email,
+          username,
+          country,
+          state,
+          age,
+          credential,
+          challenge,
+          userID,
+        });
+      } catch (completeError) {
+        setError(completeError.response?.data?.msg || 'Failed to complete fingerprint registration. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 7: Store token and user data
       localStorage.setItem('token', completeResponse.data.token);
       localStorage.setItem('user', JSON.stringify(completeResponse.data.user));
       api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
-      console.log('[Fingerprint Signup Step 7] Token and user data stored successfully');
-    } catch (storageError) {
-      console.error('[Fingerprint Signup Step 7 Error] Failed to store token or user data:', storageError.message);
-      setError('Failed to save authentication data. Please try again.');
-      setIsLoading(false);
-      return;
-    }
 
-    // Step 8: Update UI and redirect
-    console.log('[Fingerprint Signup Step 8] Setting success state and preparing to redirect');
-    setSuccess(true);
-    console.log('[Fingerprint Signup Step 8] Success state set, redirecting in 2 seconds');
-    setTimeout(() => {
-      console.log('[Fingerprint Signup Step 8] Navigating to home page');
-      navigate('/');
-    }, 2000);
-  } catch (unexpectedError) {
-    // Step 9: Catch any unexpected errors
-    console.error('[Fingerprint Signup Step 9 Error] Unexpected error during fingerprint signup:', unexpectedError.message);
-    console.error('[Fingerprint Signup Step 9 Error] Full error details:', unexpectedError);
-    setError('An unexpected error occurred during fingerprint signup. Please try again.');
-    setIsLoading(false);
-  }
-};
+      // Step 8: Update UI and redirect
+      setSuccess(true);
+      setTimeout(() => navigate('/'), 2000);
+    } catch (unexpectedError) {
+      setError('An unexpected error occurred during fingerprint signup. Please try again.');
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -221,59 +236,59 @@ const Signup = () => {
 
     // Validate input fields
     if (!email.trim()) {
-      console.error('[Password Signup Error] Email is empty or invalid');
       setError('Please enter a valid email address');
       setIsLoading(false);
       return;
     }
     if (!username.trim()) {
-      console.error('[Password Signup Error] Username is empty or invalid');
       setError('Please enter a valid username');
       setIsLoading(false);
       return;
     }
     if (signupMethod === 'password' && !password.trim()) {
-      console.error('[Password Signup Error] Password is empty or invalid');
       setError('Please enter a valid password');
+      setIsLoading(false);
+      return;
+    }
+    if (!country) {
+      setError('Please select a country');
+      setIsLoading(false);
+      return;
+    }
+    if (states.length > 0 && !state) {
+      setError('Please select a state');
+      setIsLoading(false);
+      return;
+    }
+    if (!age || age < 18 || age > 120) {
+      setError('You must be 18 or older to sign up');
+      setIsLoading(false);
+      return;
+    }
+    if (!termsAccepted) {
+      setError('You must agree to the Terms and Conditions');
       setIsLoading(false);
       return;
     }
 
     try {
-      console.log('[Password Signup] Sending registration request:', { email, username });
-      const { data } = await api.post('/auth/register', { email, username, password });
-      console.log('[Password Signup] Registration successful:', data);
-
+      const { data } = await api.post('/auth/register', { email, username, password, country, state, age });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
-
-      console.log('[Password Signup] Setting success state');
       setSuccess(true);
-
-      console.log('[Password Signup] Redirecting to home page in 2 seconds');
-      setTimeout(() => {
-        console.log('[Password Signup] Navigating to home page');
-        navigate('/');
-      }, 2000);
+      setTimeout(() => navigate('/'), 2000);
     } catch (err) {
-      console.error('[Password Signup Error] Error during registration:', err.message);
-      console.error('[Password Signup Error] Error details:', {
-        status: err.response?.status,
-        data: err.response?.data,
-      });
       setError(err.response?.data?.msg || 'Password registration failed. Please try again.');
       setIsLoading(false);
     }
   };
 
   const handleGoogleSignup = () => {
-    console.log('[Google Signup] Attempting Google signup');
     setError('Google signup is not implemented. Please use email and password or fingerprint.');
   };
 
   const handleAppleSignup = () => {
-    console.log('[Apple Signup] Attempting Apple signup');
     setError('Apple signup is not implemented. Please use email and password or fingerprint.');
   };
 
@@ -292,25 +307,80 @@ const Signup = () => {
     visible: { opacity: 1, x: 0, transition: { duration: 0.5 } },
   };
 
-  const inputVariants = {
-    hover: { scale: 1.02, borderColor: '#FF0000', transition: { duration: 0.3 } },
-    focus: { scale: 1.05, boxShadow: '0 0 10px rgba(255, 0, 0, 0.5)' },
-  };
-
-  const buttonVariants = {
-    hover: { scale: 1.1, backgroundColor: isDarkMode ? '#1A1A1A' : '#d1d5db', transition: { duration: 0.3 } },
-    tap: { scale: 0.95 },
-  };
-
   const successVariants = {
     hidden: { opacity: 0, y: 20 },
     visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
   };
 
-  const footerVariants = {
-    hidden: { opacity: 0, y: 50 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.5, delay: 0.5 } },
+  const modalVariants = {
+    hidden: { opacity: 0, scale: 0.9 },
+    visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } },
   };
+
+  // Terms and Conditions content
+  const termsAndConditions = `
+# Terms and Conditions
+
+**Last Updated: April 27, 2025**
+
+Welcome to Chatify, a global chatting platform provided by Chatify Inc. ("we," "us," or "our"). By signing up for or using our services, you agree to be bound by these Terms and Conditions ("Terms"). If you do not agree with these Terms, please do not use our platform.
+
+## 1. Acceptance of Terms
+By creating an account or accessing Chatify, you confirm that you are at least 18 years old and agree to comply with these Terms, our Privacy Policy, and any applicable laws. These Terms apply to both registered users and anonymous users, unless otherwise specified.
+
+## 2. Account Registration
+- **Eligibility**: You must be at least 18 years old to create an account. By registering, you represent that all information provided is accurate and that you meet this age requirement.
+- **Account Security**: You are responsible for maintaining the confidentiality of your account credentials (e.g., email, password, or biometric data). Notify us immediately at support@chatify.com if you suspect unauthorized access.
+- **Prohibited Actions**: You may not create multiple accounts to circumvent restrictions, share your account with others, or use automated tools to register accounts.
+
+## 3. User Conduct
+You agree to use Chatify in a lawful and respectful manner. Prohibited activities include, but are not limited to:
+- Posting or sharing content that is illegal, harmful, threatening, abusive, defamatory, obscene, or violates the rights of others.
+- Engaging in harassment, bullying, or discrimination based on race, gender, religion, or other protected characteristics.
+- Sending unsolicited messages (spam) or engaging in phishing or other malicious activities.
+- Attempting to access, interfere with, or disrupt Chatify’s systems, servers, or other users’ accounts.
+
+## 4. Content Ownership and Responsibility
+- **Your Content**: You retain ownership of the content you post (e.g., messages, profile information). By posting, you grant Chatify a worldwide, non-exclusive, royalty-free license to use, store, and display your content to provide our services.
+- **Responsibility**: You are solely responsible for your content. Chatify is not liable for any content posted by users, and we reserve the right to remove content that violates these Terms.
+
+## 5. Privacy and Data Protection
+Your privacy is important to us. Please review our Privacy Policy at [chatify.com/privacy](#) for details on how we collect, use, and protect your personal information. By using Chatify, you consent to our data practices as outlined in the Privacy Policy.
+
+## 6. Safety and Moderation
+- **Reporting**: If you encounter inappropriate content or behavior, please report it to support@chatify.com. We investigate all reports and may take actions such as warnings, suspensions, or account terminations.
+- **Monitoring**: While we do not actively monitor private messages, we may review content to enforce these Terms or comply with legal obligations.
+- **Anonymous Users**: Anonymous users are subject to the same conduct rules. Anonymous sessions expire after 24 hours, and no personal data is stored unless required by law.
+
+## 7. Intellectual Property
+All content, trademarks, and software associated with Chatify are owned by or licensed to Chatify Inc. You may not copy, modify, distribute, or reverse-engineer our platform without written permission.
+
+## 8. Termination
+We may suspend or terminate your account at our discretion, with or without notice, for reasons including but not limited to:
+- Violation of these Terms.
+- Suspicious or fraudulent activity.
+- Legal requirements.
+You may delete your account at any time via the account settings. Upon termination, your data will be handled in accordance with our Privacy Policy.
+
+## 9. Limitation of Liability
+To the fullest extent permitted by law, Chatify Inc. and its affiliates are not liable for any indirect, incidental, or consequential damages arising from your use of the platform, including but not limited to loss of data, profits, or emotional distress. Our services are provided "as is" without warranties of any kind.
+
+## 10. Indemnification
+You agree to indemnify and hold Chatify Inc., its officers, employees, and affiliates harmless from any claims, damages, or losses arising from your use of the platform or violation of these Terms.
+
+## 11. Governing Law and Dispute Resolution
+These Terms are governed by the laws of the State of Delaware, USA, without regard to conflict of law principles. Any disputes will be resolved through binding arbitration in Delaware, except where prohibited by law. You waive any right to participate in class action lawsuits.
+
+## 12. Changes to These Terms
+We may update these Terms at any time. We will notify you of significant changes via email or in-app notifications. Continued use of Chatify after changes constitutes acceptance of the updated Terms.
+
+## 13. Contact Us
+For questions or support, contact us at:
+- **Email**: support@chatify.com
+- **Address**: Chatify Inc., 123 Tech Lane, Wilmington, DE 19801, USA
+
+By checking the box during signup, you acknowledge that you have read, understood, and agree to these Terms and Conditions and our Privacy Policy.
+  `;
 
   return (
     <>
@@ -333,125 +403,176 @@ const Signup = () => {
               Sign up to start your seamless communication experience. Connect with friends, enjoy private messaging, and access premium features.
             </p>
             <div className="space-y-4 sm:space-y-6">
-              <motion.div whileHover={{ x: 10 }} className="flex items-center space-x-4 justify-center lg:justify-start">
+              <div className="flex items-center space-x-4 justify-center lg:justify-start">
                 <FaCheckCircle className="text-red-500" />
                 <span>Instant Access</span>
-              </motion.div>
-              <motion.div whileHover={{ x: 10 }} className="flex items-center space-x-4 justify-center lg:justify-start">
+              </div>
+              <div className="flex items-center space-x-4 justify-center lg:justify-start">
                 <FaCheckCircle className="text-red-500" />
                 <span>Secure Registration</span>
-              </motion.div>
-              <motion.div whileHover={{ x: 10 }} className="flex items-center space-x-4 justify-center lg:justify-start">
+              </div>
+              <div className="flex items-center space-x-4 justify-center lg:justify-start">
                 <FaCheckCircle className="text-red-500" />
                 <span>Start Chatting Instantly</span>
-              </motion.div>
+              </div>
             </div>
-            <motion.div whileHover={{ scale: 1.05 }} className="mt-6 flex items-center space-x-4 justify-center lg:justify-start">
+            <div className="mt-6 flex items-center space-x-4 justify-center lg:justify-start">
               <span className={`text-lg sm:text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Ready to Connect?</span>
               <FaArrowRight className="text-red-500 text-xl sm:text-2xl" />
-            </motion.div>
+            </div>
           </motion.div>
           <motion.div variants={formVariants} className="w-full lg:w-1/2 flex items-start justify-center px-4 sm:px-0">
-            <div className={`bg-opacity-80 backdrop-blur-lg p-6 sm:p-8 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} hover:shadow-[0_15px_30px_rgba(255,0,0,0.3)] transform transition-all duration-300 w-full max-w-md`}>
+            <div className={`bg-opacity-80 backdrop-blur-lg p-6 sm:p-8 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} w-full max-w-md`}>
               <h2 className={`text-2xl sm:text-3xl font-bold mb-6 sm:mb-8 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                 Create Your Account
               </h2>
               <div className="flex justify-center space-x-4 mb-6">
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => {
-                    console.log('[Signup Method] Switching to password signup');
-                    setSignupMethod('password');
-                  }}
-                  className={`px-4 py-2 rounded-lg ${signupMethod === 'password' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+                <button
+                  onClick={() => setSignupMethod('password')}
+                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'}`}
                   disabled={isLoading}
                 >
                   Password
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => {
-                    console.log('[Signup Method] Switching to fingerprint signup');
-                    setSignupMethod('webauthn');
-                  }}
-                  className={`px-4 py-2 rounded-lg ${signupMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'} ${!isWebAuthnSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
+                </button>
+                <button
+                  onClick={() => setSignupMethod('webauthn')}
+                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} ${!isWebAuthnSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
                   disabled={isLoading || !isWebAuthnSupported}
                   title={!isWebAuthnSupported ? 'Fingerprint signup is not supported on this device' : ''}
                 >
                   Fingerprint
-                </motion.button>
+                </button>
               </div>
               <form onSubmit={handleSubmit} className="space-y-4 mb-4">
                 <div className="relative">
-                  <motion.div
-                    whileHover="hover"
-                    whileFocus="focus"
-                    variants={inputVariants}
-                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
-                  >
-                    <FaEnvelope className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
+                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                    <FaEnvelope className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
                     <input
                       type="email"
                       value={email}
-                      onChange={(e) => {
-                        console.log('[Input] Email changed:', e.target.value);
-                        setEmail(e.target.value);
-                      }}
+                      onChange={(e) => setEmail(e.target.value)}
                       placeholder="Your Email"
-                      className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
                       disabled={isLoading}
                     />
-                  </motion.div>
+                  </div>
                 </div>
                 <div className="relative">
-                  <motion.div
-                    whileHover="hover"
-                    whileFocus="focus"
-                    variants={inputVariants}
-                    className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
-                  >
-                    <FaUser className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
+                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                    <FaUser className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
                     <input
                       type="text"
                       value={username}
-                      onChange={(e) => {
-                        console.log('[Input] Username changed:', e.target.value);
-                        setUsername(e.target.value);
-                      }}
+                      onChange={(e) => setUsername(e.target.value)}
                       placeholder="Your Username"
-                      className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
                       disabled={isLoading}
                     />
-                  </motion.div>
+                  </div>
+                </div>
+                <div className="relative">
+                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                    <select
+                      value={country}
+                      onChange={(e) => {
+                        setCountry(e.target.value);
+                        setState('');
+                        console.log('[Signup] Country selected:', e.target.value);
+                      }}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      required
+                      disabled={isLoading}
+                    >
+                      <option value="">Select Country</option>
+                      {countryList.map((c) => (
+                        <option key={c.iso2} value={c.iso2}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="relative">
+                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                    <select
+                      value={state}
+                      onChange={(e) => {
+                        setState(e.target.value);
+                        console.log('[Signup] State selected:', e.target.value);
+                      }}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      disabled={isLoading}
+                    >
+                      <option value="">Select State</option>
+                      {states.length > 0 ? (
+                        states.map((s) => (
+                          <option key={s.iso2} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">No states available</option>
+                      )}
+                    </select>
+                  </div>
+                </div>
+                <div className="relative">
+                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                    <select
+                      value={age}
+                      onChange={(e) => setAge(e.target.value)}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      required
+                      disabled={isLoading}
+                    >
+                      <option value="">Select Age</option>
+                      {ageOptions.map((ageValue) => (
+                        <option key={ageValue} value={ageValue}>
+                          {ageValue}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 {signupMethod === 'password' && (
                   <div className="relative">
-                    <motion.div
-                      whileHover="hover"
-                      whileFocus="focus"
-                      variants={inputVariants}
-                      className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-400 bg-gray-100'}`}
-                    >
-                      <FaLock className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mr-3`} />
+                    <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                      <FaLock className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
                       <input
                         type="password"
                         value={password}
-                        onChange={(e) => {
-                          console.log('[Input] Password changed');
-                          setPassword(e.target.value);
-                        }}
+                        onChange={(e) => setPassword(e.target.value)}
                         placeholder="Your Password"
-                        className={`w-full bg-transparent ${isDarkMode ? 'text-white' : 'text-gray-900'} focus:outline-none`}
+                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                         required
                         disabled={isLoading}
                       />
-                    </motion.div>
+                    </div>
                   </div>
                 )}
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={termsAccepted}
+                    onChange={(e) => setTermsAccepted(e.target.checked)}
+                    className="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
+                    required
+                    disabled={isLoading}
+                    id="termsCheckbox"
+                  />
+                  <label htmlFor="termsCheckbox" className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                    I agree to the{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowTermsModal(true)}
+                      className="text-red-500 hover:underline"
+                    >
+                      Terms and Conditions
+                    </button>
+                  </label>
+                </div>
                 <AnimatePresence>
                   {error && (
                     <motion.div
@@ -479,47 +600,35 @@ const Signup = () => {
                   )}
                 </AnimatePresence>
                 {signupMethod === 'password' && (
-                  <motion.button
+                  <button
                     type="submit"
-                    whileHover="hover"
-                    whileTap="tap"
-                    variants={buttonVariants}
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'}`}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                     disabled={isLoading || success}
                   >
-                    {isLoading ? 'Signing Up...' : 'Sign Up Now'}
-                  </motion.button>
+                    <span>{isLoading ? 'Signing Up...' : 'Sign Up Now'}</span>
+                  </button>
                 )}
-                <motion.button
+                <button
                   type="button"
-                  whileHover="hover"
-                  whileTap="tap"
-                  variants={buttonVariants}
                   onClick={handleGoogleSignup}
                   className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                   disabled={isLoading}
                 >
                   <FaGoogle />
                   <span>Sign Up with Google</span>
-                </motion.button>
-                <motion.button
+                </button>
+                <button
                   type="button"
-                  whileHover="hover"
-                  whileTap="tap"
-                  variants={buttonVariants}
                   onClick={handleAppleSignup}
                   className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
                   disabled={isLoading}
                 >
                   <FaApple />
                   <span>Sign Up with Apple</span>
-                </motion.button>
+                </button>
                 {signupMethod === 'webauthn' && (
-                  <motion.button
+                  <button
                     type="button"
-                    whileHover="hover"
-                    whileTap="tap"
-                    variants={buttonVariants}
                     onClick={handleFingerprintSignup}
                     className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isWebAuthnSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
                     disabled={isLoading || !isWebAuthnSupported}
@@ -527,7 +636,7 @@ const Signup = () => {
                   >
                     <FaFingerprint />
                     <span>{isLoading ? 'Processing...' : 'Sign Up with Fingerprint'}</span>
-                  </motion.button>
+                  </button>
                 )}
               </form>
               <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -539,8 +648,46 @@ const Signup = () => {
             </div>
           </motion.div>
         </div>
+
+        {/* Terms and Conditions Modal */}
+        <AnimatePresence>
+          {showTermsModal && (
+            <motion.div
+              variants={modalVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            >
+              <div
+                className={`relative w-full max-w-3xl max-h-[80vh] overflow-y-auto p-6 rounded-xl shadow-2xl ${
+                  isDarkMode ? 'bg-gray-900 text-white' : 'bg-white text-gray-900'
+                }`}
+              >
+                <button
+                  onClick={() => setShowTermsModal(false)}
+                  className="absolute top-4 right-4 text-gray-400 hover:text-red-500"
+                >
+                  <FaTimes size={24} />
+                </button>
+                <div className="prose prose-sm max-w-none">
+                  <ReactMarkdown>{termsAndConditions}</ReactMarkdown>
+                </div>
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={() => setShowTermsModal(false)}
+                    className={`px-4 py-2 rounded-lg font-semibold ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'}`}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <motion.footer
-          variants={footerVariants}
+          variants={containerVariants}
           className={`py-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}
         >
           © {new Date().getFullYear()} Chatify. All rights reserved.
