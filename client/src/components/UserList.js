@@ -57,13 +57,13 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
 
   // Sort users: same country first, then online status, then alphabetical by username
   const sortedUsers = useMemo(() => {
-    const currentCountry = currentUser?.country || 'IN'; // Default to India if not found
+    const currentCountry = currentUser?.country;
     return [...localUsers]
       .filter((user) => user.id !== currentUserId && user.username && user.id)
       .sort((a, b) => {
         // Prioritize users from the same country
-        const aIsSameCountry = a.country === currentCountry;
-        const bIsSameCountry = b.country === currentCountry;
+        const aIsSameCountry = a.country && currentCountry && a.country === currentCountry;
+        const bIsSameCountry = b.country && currentCountry && b.country === currentCountry;
         if (aIsSameCountry && !bIsSameCountry) return -1;
         if (!aIsSameCountry && bIsSameCountry) return 1;
         // Then sort by online status
@@ -295,7 +295,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="p-3 rounded-xl cursor-pointer text-gray-200 bg-gray-800/20 backdrop-blur-md hover:bg-red-500/10 transition-colors duration-200 flex items-center justify-between border border-gray-700/30"
+                className="p-3 rounded-xl cursor-pointer text-gray-200 bg-[#1A1A1A] backdrop-blur-md flex items-center justify-between border border-gray-700/30"
                 onContextMenu={(e) => handleContextMenu(e, user)}
                 role="listitem"
                 aria-label={`User ${user.username}`}
@@ -307,6 +307,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 }}
               >
                 <div className="flex items-center space-x-3 flex-grow">
+                  {user.country && countries.getName(user.country, 'en') && (
+                    <ReactCountryFlag
+                      countryCode={user.country}
+                      svg
+                      className="w-8 h-6"
+                      title={countries.getName(user.country, 'en')}
+                    />
+                  )}
                   <div
                     className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium relative"
                     style={{ backgroundColor: generateRandomColor(user.id) }}
@@ -314,7 +322,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     {user.username[0]?.toUpperCase() || '?'}
                   </div>
                   <div className="flex flex-col flex-grow">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center">
                       <span className="text-sm sm:text-base font-medium truncate flex items-center drop-shadow-sm">
                         {user.username}{' '}
                         {user.isAnonymous ? (
@@ -327,12 +335,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                           />
                         )}
                       </span>
-                      <ReactCountryFlag
-                        countryCode={user.country}
-                        svg
-                        className="w-6 h-4"
-                        title={countries.getName(user.country, 'en') || 'Country'}
-                      />
                     </div>
                     <div className="flex items-center space-x-1">
                       <span className={`text-xs ${user.online ? 'text-green-400' : 'text-gray-500'}`}>
@@ -460,7 +462,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
               <div className="text-center mb-4">
                 <div
                   className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl font-semibold text-white border-2 border-blue-500"
-                  style={{ backgroundColor: generateRandomColor[selectedProfile.id] }}
+                  style={{ backgroundColor: generateRandomColor(selectedProfile.id) }}
                 >
                   {selectedProfile.username[0]?.toUpperCase() || '?'}
                 </div>
@@ -475,8 +477,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 <div>
                   <label className="text-sm font-medium text-gray-400">Country</label>
                   <p className="text-sm text-gray-300">
-                    <ReactCountryFlag countryCode={selectedProfile.country} className="mr-1" />{' '}
-                    {countries.getName(selectedProfile.country, 'en') || 'Not specified'}
+                    {selectedProfile.country && countries.getName(selectedProfile.country, 'en') ? (
+                      <>
+                        <ReactCountryFlag countryCode={selectedProfile.country} className="mr-1 w-8 h-6" />
+                        {countries.getName(selectedProfile.country, 'en')}
+                      </>
+                    ) : (
+                      'Not specified'
+                    )}
                   </p>
                 </div>
                 <div>
