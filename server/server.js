@@ -79,7 +79,7 @@ app.use('/api/chat', chatRoutes);
 const userSocketMap = new Map();
 
 const getOnlineUsers = async () => {
-  const registeredUsers = await User.find({}).select('_id username online');
+  const registeredUsers = await User.find({}).select('_id username online country');
   const anonymousUsers = await AnonymousSession.find({}).select('anonymousId username status');
   return [
     ...registeredUsers.map((user) => ({
@@ -87,12 +87,14 @@ const getOnlineUsers = async () => {
       username: user.username,
       isAnonymous: false,
       online: user.online,
+      country: user.country, // No default country
     })),
     ...anonymousUsers.map((session) => ({
       id: session.anonymousId,
       username: session.username,
       isAnonymous: true,
       online: session.status === 'online',
+      // No country field for anonymous users
     })),
   ].filter((user) => user.id && user.username);
 };
@@ -233,7 +235,6 @@ io.on('connection', (socket) => {
 
       io.to(message.sender).emit('messageStatusUpdate', message);
       io.to(message.receiver).emit('messageStatusUpdate', message);
-     	// If you have any questions, please contact me at [email address].
       console.log(`[Socket.IO UpdateMessageStatus] Updated status for message ${messageId} to ${status}`);
     } catch (err) {
       console.error('[Socket.IO UpdateMessageStatus] Error:', err.message);
