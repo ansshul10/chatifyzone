@@ -28,16 +28,52 @@ const registerSchema = Joi.object({
   email: Joi.string().email().required(),
   username: Joi.string().min(3).max(30).required(),
   password: Joi.string().min(6).required(),
+  country: Joi.string().required(),
+  state: Joi.string().allow('').optional(),
+  age: Joi.string()
+    .pattern(/^\d+$/)
+    .custom((value, helpers) => {
+      const num = parseInt(value, 10);
+      if (isNaN(num) || num < 18 || num > 120) {
+        return helpers.error('any.invalid');
+      }
+      return num;
+    }, 'age validation')
+    .required(),
 });
 
 const webauthnRegisterBeginSchema = Joi.object({
   email: Joi.string().email().required(),
   username: Joi.string().min(3).max(30).required(),
+  country: Joi.string().required(),
+  state: Joi.string().allow('').optional(),
+  age: Joi.string()
+    .pattern(/^\d+$/)
+    .custom((value, helpers) => {
+      const num = parseInt(value, 10);
+      if (isNaN(num) || num < 18 || num > 120) {
+        return helpers.error('any.invalid');
+      }
+      return num;
+    }, 'age validation')
+    .required(),
 });
 
 const webauthnRegisterCompleteSchema = Joi.object({
   email: Joi.string().email().required(),
   username: Joi.string().min(3).max(30).required(),
+  country: Joi.string().required(),
+  state: Joi.string().allow('').optional(),
+  age: Joi.string()
+    .pattern(/^\d+$/)
+    .custom((value, helpers) => {
+      const num = parseInt(value, 10);
+      if (isNaN(num) || num < 18 || num > 120) {
+        return helpers.error('any.invalid');
+      }
+      return num;
+    }, 'age validation')
+    .required(),
   credential: Joi.object().required(),
   challenge: Joi.string().required(),
   userID: Joi.string().required(),
@@ -70,7 +106,16 @@ const removeFriendSchema = Joi.object({
 
 const updateProfileSchema = Joi.object({
   bio: Joi.string().max(150).allow('').optional(),
-  age: Joi.number().integer().min(13).max(120).optional(),
+  age: Joi.string()
+    .pattern(/^\d+$/)
+    .custom((value, helpers) => {
+      const num = parseInt(value, 10);
+      if (isNaN(num) || num < 18 || num > 120) {
+        return helpers.error('any.invalid');
+      }
+      return num;
+    }, 'age validation')
+    .optional(),
   status: Joi.string().max(30).allow('').optional(),
   allowFriendRequests: Joi.boolean().optional(),
   profileVisibility: Joi.string().valid('Public', 'Friends', 'Private').optional(),
@@ -89,12 +134,11 @@ const unblockUserSchema = Joi.object({
   userId: Joi.string().required(),
 });
 
-// New schema for fetching user profile
 const userIdSchema = Joi.object({
   userId: Joi.string().required(),
 });
 
-// New route to fetch user profile by ID
+// Get user profile by ID
 router.get('/profile/:userId', auth, async (req, res) => {
   try {
     console.log('[Get User Profile] Fetching profile for user ID:', req.params.userId);
@@ -114,7 +158,6 @@ router.get('/profile/:userId', auth, async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    // Check profile visibility
     const currentUser = await User.findById(req.user);
     if (user.privacy.profileVisibility === 'Private' && req.user !== req.params.userId) {
       console.error('[Get User Profile] Profile is private:', req.params.userId);
@@ -142,6 +185,8 @@ router.get('/profile/:userId', auth, async (req, res) => {
       friendRequests: user.friendRequests,
       blockedUsers: user.blockedUsers,
       createdAt: user.createdAt,
+      country: user.country,
+      state: user.state,
     });
   } catch (err) {
     console.error('[Get User Profile] Server error:', err.message);
@@ -153,34 +198,19 @@ router.get('/profile/:userId', auth, async (req, res) => {
 router.post('/webauthn/register/begin', async (req, res) => {
   try {
     console.log('[WebAuthn Register Begin] Deployed Version: Buffer Fix 2025-04-26 v2');
-    console.log('[WebAuthn Register Begin] Step 1: Received request:', {
-      headers: req.headers,
-      body: req.body,
-    });
+    console.log('[WebAuthn Register Begin] Step 1: Received request:', req.body);
 
     console.log('[WebAuthn Register Begin] Step 2: Validating request body');
     const { error } = webauthnRegisterBeginSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Register Begin] Step 2 Error: Validation failed:', {
-        message: error.details[0].message,
-        details: error.details,
-      });
+      console.error('[WebAuthn Register Begin] Step 2 Error: Validation failed:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
     console.log('[WebAuthn Register Begin] Step 2: Validation passed');
 
-    const { username, email } = req.body;
+    const { username, email, country, state, age } = req.body;
     console.log('[WebAuthn Register Begin] Step 3: Checking for existing user:', { email, username });
-    let user;
-    try {
-      user = await User.findOne({ $or: [{ email }, { username }] });
-    } catch (dbError) {
-      console.error('[WebAuthn Register Begin] Step 3 Error: Database query failed:', {
-        message: dbError.message,
-        stack: dbError.stack,
-      });
-      return res.status(500).json({ msg: 'Database error during user check' });
-    }
+    let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
       console.error('[WebAuthn Register Begin] Step 3 Error: User already exists:', {
         email: user.email,
@@ -210,18 +240,9 @@ router.post('/webauthn/register/begin', async (req, res) => {
         excludeCredentials: [],
         supportedAlgorithmIDs: [-8, -7, -257],
       });
-      console.log('[WebAuthn Register Begin] Step 4: Options generated successfully:', {
-        userID: userID.toString('base64'),
-        challenge: options.challenge,
-        rp: options.rp,
-        user: options.user,
-        pubKeyCredParams: options.pubKeyCredParams,
-      });
+      console.log('[WebAuthn Register Begin] Step 4: Options generated successfully');
     } catch (webauthnError) {
-      console.error('[WebAuthn Register Begin] Step 4 Error: Failed to generate WebAuthn options:', {
-        message: webauthnError.message,
-        stack: webauthnError.stack,
-      });
+      console.error('[WebAuthn Register Begin] Step 4 Error: Failed to generate WebAuthn options:', webauthnError.message);
       return res.status(500).json({ msg: 'Failed to generate WebAuthn registration options' });
     }
 
@@ -232,22 +253,22 @@ router.post('/webauthn/register/begin', async (req, res) => {
       userID: userID.toString('base64'),
       email,
       username,
+      country,
+      state,
+      age,
     };
 
     console.log('[WebAuthn Register Begin] Step 6: Verifying response structure');
     if (!response.publicKey || !response.challenge || !response.userID) {
-      console.error('[WebAuthn Register Begin] Step 6 Error: Invalid response structure:', response);
+      console.error('[WebAuthn Register Begin] Step 6 Error: Invalid response structure');
       return res.status(500).json({ msg: 'Server failed to prepare WebAuthn response' });
     }
     console.log('[WebAuthn Register Begin] Step 6: Response structure valid');
 
-    console.log('[WebAuthn Register Begin] Step 7: Sending response:', response);
+    console.log('[WebAuthn Register Begin] Step 7: Sending response');
     res.json(response);
   } catch (err) {
-    console.error('[WebAuthn Register Begin] Step 8 Error: Unexpected server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
+    console.error('[WebAuthn Register Begin] Step 8 Error: Unexpected server error:', err.message);
     res.status(500).json({ msg: 'Unexpected server error' });
   }
 });
@@ -262,28 +283,11 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: error.details[0].message });
     }
 
-    const { email, username, credential, challenge, userID } = req.body;
+    const { email, username, country, state, age, credential, challenge, userID } = req.body;
     if (!challenge || !userID) {
-      console.error('[WebAuthn Register Complete] Missing challenge or userID:', { challenge, userID });
+      console.error('[WebAuthn Register Complete] Missing challenge or userID');
       return res.status(400).json({ msg: 'Missing challenge or userID' });
     }
-
-    console.log('[WebAuthn Register Complete] Verifying credential with userID:', userID);
-    console.log('[WebAuthn Register Complete] Credential structure:', {
-      id: credential.id,
-      rawId: credential.rawId,
-      type: credential.type,
-      response: {
-        attestationObject: credential.response.attestationObject?.substring(0, 50) + '...',
-        clientDataJSON: credential.response.clientDataJSON?.substring(0, 50) + '...',
-        transports: credential.response.transports,
-        publicKeyAlgorithm: credential.response.publicKeyAlgorithm,
-        publicKey: credential.response.publicKey?.substring(0, 50) + '...',
-        authenticatorData: credential.response.authenticatorData?.substring(0, 50) + '...',
-      },
-      clientExtensionResults: credential.clientExtensionResults,
-      authenticatorAttachment: credential.authenticatorAttachment,
-    });
 
     let verification;
     try {
@@ -294,18 +298,13 @@ router.post('/webauthn/register/complete', async (req, res) => {
         expectedRPID: rpID,
       });
     } catch (verifyError) {
-      console.error('[WebAuthn Register Complete] Verification error:', {
-        message: verifyError.message,
-        stack: verifyError.stack,
-      });
-      return res.status(400).json({ msg: 'Fingerprint registration verification failed', details: verifyError.message });
+      console.error('[WebAuthn Register Complete] Verification error:', verifyError.message);
+      return res.status(400).json({ msg: 'Fingerprint registration verification failed' });
     }
 
-    console.log('[WebAuthn Register Complete] Verification result:', verification);
-
     if (!verification.verified) {
-      console.error('[WebAuthn Register Complete] Verification failed for:', email, verification);
-      return res.status(400).json({ msg: 'Fingerprint registration failed', details: verification });
+      console.error('[WebAuthn Register Complete] Verification failed for:', email);
+      return res.status(400).json({ msg: 'Fingerprint registration failed' });
     }
 
     const registrationInfo = verification.registrationInfo || {};
@@ -315,25 +314,16 @@ router.post('/webauthn/register/complete', async (req, res) => {
     const counter = credentialData.counter;
 
     if (!credentialID || !publicKey || counter === undefined) {
-      console.error('[WebAuthn Register Complete] Missing credential fields:', {
-        credentialID,
-        publicKey,
-        counter,
-        registrationInfo,
-        credentialData,
-      });
+      console.error('[WebAuthn Register Complete] Missing credential fields');
       return res.status(500).json({ msg: 'Invalid credential data from server' });
     }
-
-    console.log('[WebAuthn Register Complete] Extracted credential data:', {
-      credentialID,
-      publicKey: Buffer.from(publicKey).toString('base64').substring(0, 50) + '...',
-      counter,
-    });
 
     const user = new User({
       email,
       username,
+      country,
+      state,
+      age,
       webauthnUserID: userID,
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
@@ -354,9 +344,9 @@ router.post('/webauthn/register/complete', async (req, res) => {
     await req.session.save();
 
     console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
   } catch (err) {
-    console.error('[WebAuthn Register Complete] Server error:', err.message, err.stack);
+    console.error('[WebAuthn Register Complete] Server error:', err.message);
     res.status(500).json({ msg: `Server error: ${err.message}` });
   }
 });
@@ -387,11 +377,10 @@ router.post('/webauthn/login/begin', async (req, res) => {
         throw new Error(`Invalid credentialID type for credential at index ${index}`);
       }
       try {
-        // Validate base64 string by decoding and re-encoding
         const decoded = Buffer.from(cred.credentialID, 'base64');
         console.log('[WebAuthn Login Begin] Step 3: Valid credentialID at index', index, ':', cred.credentialID.substring(0, 20) + '...');
         return {
-          id: cred.credentialID, // Use the base64 string directly
+          id: cred.credentialID,
           type: 'public-key',
         };
       } catch (base64Error) {
@@ -540,7 +529,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
     await req.session.save();
 
     console.log(`[WebAuthn Login Complete] Step 9: User logged in: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
   } catch (err) {
     console.error('[WebAuthn Login Complete] Step 10 Error: Server error:', {
       message: err.message,
@@ -586,7 +575,7 @@ router.post('/login', async (req, res) => {
     await req.session.save();
 
     console.log(`[Password Login] User logged in: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
   } catch (err) {
     console.error('[Password Login] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
@@ -596,21 +585,21 @@ router.post('/login', async (req, res) => {
 // Password-based registration
 router.post('/register', async (req, res) => {
   try {
-    console.log('[Password Register] Received registration request:', req.body.email, req.body.username);
+    console.log('[Password Register] Received registration request:', req.body);
     const { error } = registerSchema.validate(req.body);
     if (error) {
       console.error('[Password Register] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
-    const { email, username, password } = req.body;
+    const { email, username, password, country, state, age } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
       console.error('[Password Register] User already exists:', { email, username });
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    user = new User({ email, username, password });
+    user = new User({ email, username, password, country, state, age });
     await user.save();
 
     const payload = { userId: user.id };
@@ -621,7 +610,7 @@ router.post('/register', async (req, res) => {
     await req.session.save();
 
     console.log(`[Password Register] User registered: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
   } catch (err) {
     console.error('[Password Register] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
@@ -874,6 +863,8 @@ router.put('/profile', auth, async (req, res) => {
       age: user.age,
       status: user.status,
       privacy: user.privacy,
+      country: user.country,
+      state: user.state,
     });
   } catch (err) {
     console.error('[Update Profile] Server error:', err.message);
@@ -881,7 +872,7 @@ router.put('/profile', auth, async (req, res) => {
   }
 });
 
-// Get profile
+// Get own profile
 router.get('/profile', auth, async (req, res) => {
   try {
     console.log('[Get Profile] Fetching profile for user ID:', req.user);
@@ -902,11 +893,14 @@ router.get('/profile', auth, async (req, res) => {
       username: user.username,
       bio: user.bio || '',
       age: user.age || null,
-      status: user.status,
+      status: user.status || 'Available',
       privacy: user.privacy,
       friends: user.friends,
       friendRequests: user.friendRequests,
       blockedUsers: user.blockedUsers,
+      createdAt: user.createdAt,
+      country: user.country,
+      state: user.state,
     });
   } catch (err) {
     console.error('[Get Profile] Server error:', err.message);
@@ -915,7 +909,7 @@ router.get('/profile', auth, async (req, res) => {
 });
 
 // Change password
-router.put('/change-password', auth, async (req, res) => {
+router.post('/change-password', auth, async (req, res) => {
   try {
     console.log('[Change Password] Received request for user ID:', req.user);
     const { error } = changePasswordSchema.validate(req.body);
@@ -931,10 +925,15 @@ router.put('/change-password', auth, async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
+    if (!user.password) {
+      console.error('[Change Password] Account uses biometric login:', user.email);
+      return res.status(400).json({ msg: 'This account uses biometric login.' });
+    }
+
     const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) {
-      console.error('[Change Password] Current password incorrect:', req.user);
-      return res.status(400).json({ msg: 'Current password is incorrect' });
+      console.error('[Change Password] Invalid current password for:', user.email);
+      return res.status(400).json({ msg: 'Invalid current password' });
     }
 
     user.password = newPassword;
@@ -944,28 +943,6 @@ router.put('/change-password', auth, async (req, res) => {
     res.json({ msg: 'Password changed successfully' });
   } catch (err) {
     console.error('[Change Password] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Delete account
-router.delete('/delete-account', auth, async (req, res) => {
-  try {
-    console.log('[Delete Account] Received request for user ID:', req.user);
-    const user = await User.findById(req.user);
-    if (!user) {
-      console.error('[Delete Account] User not found:', req.user);
-      return res.status(404).json({ msg: 'User not found' });
-    }
-
-    await User.deleteOne({ _id: req.user });
-    req.session.destroy((err) => {
-      if (err) console.error('[Delete Account] Failed to destroy session:', err.message);
-      console.log(`[Delete Account] Account deleted for: ${user.username}`);
-      res.json({ msg: 'Account deleted successfully' });
-    });
-  } catch (err) {
-    console.error('[Delete Account] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -998,11 +975,12 @@ router.post('/block-user', auth, async (req, res) => {
     }
 
     user.blockedUsers.push(userToBlock._id);
+    user.friends = user.friends.filter(id => id.toString() !== userToBlock._id.toString());
     await user.save();
 
-    const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    const updatedBlockedUsers = await User.findById(req.user).populate('blockedUsers', 'username');
     console.log(`[Block User] User blocked: ${username} by: ${user.username}`);
-    res.json({ blockedUsers: updatedUser.blockedUsers });
+    res.json(updatedBlockedUsers.blockedUsers);
   } catch (err) {
     console.error('[Block User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
@@ -1029,59 +1007,13 @@ router.post('/unblock-user', auth, async (req, res) => {
     user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
     await user.save();
 
-    const updatedUser = await User.findById(req.user).populate('blockedUsers', 'username');
+    const updatedBlockedUsers = await User.findById(req.user).populate('blockedUsers', 'username');
     console.log(`[Unblock User] User unblocked: ${userId} by: ${user.username}`);
-    res.json({ blockedUsers: updatedUser.blockedUsers });
+    res.json(updatedBlockedUsers.blockedUsers);
   } catch (err) {
     console.error('[Unblock User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
-});
-
-// Get authenticated user data
-router.get('/me', auth, async (req, res) => {
-  try {
-    console.log('[Get User] Fetching user data for ID:', req.user);
-    if (req.user) {
-      const user = await User.findById(req.user)
-        .select('-password -webauthnCredentials -webauthnUserID')
-        .populate('friends', 'username online')
-        .populate('friendRequests', 'username')
-        .populate('blockedUsers', 'username');
-      if (!user) {
-        console.error('[Get User] User not found:', req.user);
-        return res.status(404).json({ msg: 'User not found' });
-      }
-
-      console.log(`[Get User] User data fetched: ${user.username} (ID: ${user.id})`);
-      res.json({
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        online: user.online,
-        friends: user.friends,
-        friendRequests: user.friendRequests,
-        blockedUsers: user.blockedUsers,
-      });
-    } else if (req.anonymousUser) {
-      console.log(`[Get User] Anonymous user data fetched: ${req.anonymousUser.username}`);
-      res.json({
-        id: req.anonymousUser.anonymousId,
-        username: req.anonymousUser.username,
-        isAnonymous: true,
-        online: req.anonymousUser.status === 'online',
-      });
-    }
-  } catch (err) {
-    console.error('[Get User] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Debug endpoint to check library version
-router.get('/debug', (req, res) => {
-  const webauthnVersion = require('@simplewebauthn/server/package.json').version;
-  res.json({ webauthnVersion });
 });
 
 module.exports = router;
