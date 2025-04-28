@@ -176,7 +176,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   const itemVariants = {
     hidden: { opacity: 0, y: 10 },
     visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
-    hover: { scale: 1.02, transition: { duration: 0.2 } },
     tap: { scale: 0.98 },
   };
 
@@ -292,7 +291,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
               <motion.div
                 key={user.id}
                 variants={itemVariants}
-                whileHover="hover"
                 whileTap="tap"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -308,34 +306,40 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                   }
                 }}
               >
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 flex-grow">
                   <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium relative group"
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium relative"
                     style={{ backgroundColor: generateRandomColor(user.id) }}
                   >
                     {user.username[0]?.toUpperCase() || '?'}
-                    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 to-indigo-500/20 opacity-0 group-hover:opacity-100 transition-opacity rounded-full" />
                   </div>
-                  <div className="flex flex-col">
-                    <span className="text-sm sm:text-base font-medium truncate flex items-center drop-shadow-sm">
-                      {user.username}{' '}
-                      {user.isAnonymous ? (
-                        <span className="text-xs text-gray-400 ml-1">(Anon)</span>
-                      ) : (
-                        <img
-                          src={verifiedIcon}
-                          alt="Verified"
-                          className="w-4 h-4 ml-1"
-                        />
-                      )}
-                    </span>
+                  <div className="flex flex-col flex-grow">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm sm:text-base font-medium truncate flex items-center drop-shadow-sm">
+                        {user.username}{' '}
+                        {user.isAnonymous ? (
+                          <span className="text-xs text-gray-400 ml-1">(Anon)</span>
+                        ) : (
+                          <img
+                            src={verifiedIcon}
+                            alt="Verified"
+                            className="w-4 h-4 ml-1"
+                          />
+                        )}
+                      </span>
+                      <ReactCountryFlag
+                        countryCode={user.country}
+                        svg
+                        className="w-6 h-4"
+                        title={countries.getName(user.country, 'en') || 'Country'}
+                      />
+                    </div>
                     <div className="flex items-center space-x-1">
                       <span className={`text-xs ${user.online ? 'text-green-400' : 'text-gray-500'}`}>
                         ● {user.online ? 'Online' : 'Offline'}
                       </span>
                       <span className="text-xs text-gray-400">
-                        <ReactCountryFlag countryCode={user.country} className="mr-1" />{' '}
-                        {countries.getName(user.country, 'en') || 'Unknown'}{' '}
+                        {countries.getName(user.country, 'en') || 'Not specified'}
                         {user.age ? `, ${user.age}y` : ''}
                       </span>
                       {typingUsers.includes(user.id) && (
@@ -456,7 +460,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
               <div className="text-center mb-4">
                 <div
                   className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl font-semibold text-white border-2 border-blue-500"
-                  style={{ backgroundColor: generateRandomColor(selectedProfile.id) }}
+                  style={{ backgroundColor: generateRandomColor[selectedProfile.id] }}
                 >
                   {selectedProfile.username[0]?.toUpperCase() || '?'}
                 </div>
