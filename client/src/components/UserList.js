@@ -2,8 +2,14 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaSearch, FaComment, FaInfoCircle, FaTimes, FaShareAlt } from 'react-icons/fa';
 import PropTypes from 'prop-types';
+import ReactCountryFlag from 'react-country-flag';
+import countries from 'i18n-iso-countries';
+import en from 'i18n-iso-countries/langs/en.json';
 import verifiedIcon from '../assets/verified.png'; // Adjust path as needed
 import api from '../utils/api';
+
+// Initialize i18n-iso-countries
+countries.registerLocale(en);
 
 const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typingUsers = [] }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -19,6 +25,12 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   useEffect(() => {
     setLocalUsers(users);
   }, [users]);
+
+  // Get current user's country
+  const currentUser = useMemo(() => {
+    const user = localUsers.find((u) => u.id === currentUserId);
+    return user || JSON.parse(localStorage.getItem('user') || '{}');
+  }, [localUsers, currentUserId]);
 
   // Debounce search input
   const debounce = (func, delay) => {
@@ -43,16 +55,24 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     return color;
   };
 
-  // Sort users: online first, then offline, alphabetically by username
+  // Sort users: same country first, then online status, then alphabetical by username
   const sortedUsers = useMemo(() => {
+    const currentCountry = currentUser?.country || 'IN'; // Default to India if not found
     return [...localUsers]
       .filter((user) => user.id !== currentUserId && user.username && user.id)
       .sort((a, b) => {
+        // Prioritize users from the same country
+        const aIsSameCountry = a.country === currentCountry;
+        const bIsSameCountry = b.country === currentCountry;
+        if (aIsSameCountry && !bIsSameCountry) return -1;
+        if (!aIsSameCountry && bIsSameCountry) return 1;
+        // Then sort by online status
         if (a.online && !b.online) return -1;
         if (!a.online && b.online) return 1;
+        // Finally, sort alphabetically by username
         return a.username.localeCompare(b.username);
       });
-  }, [localUsers, currentUserId]);
+  }, [localUsers, currentUserId, currentUser]);
 
   // Handle search input change
   const handleSearch = useCallback(
@@ -103,7 +123,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   // Fetch user profile
   const fetchUserProfile = async (userId) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
       api.defaults.headers.common['x-auth-token'] = token;
       const { data } = await api.get(`/auth/profile/${userId}`);
       setSelectedProfile(data);
@@ -138,7 +158,11 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
 
   // Copy profile link
   const copyProfileLink = () => {
-    const profileLink = `${window.location.origin}/profile/${selectedProfile.username}`;
+    if (!selectedProfile?.id) {
+      setError('Unable to copy profile link');
+      return;
+    }
+    const profileLink = `${window.location.origin}/profile/${selectedProfile.id}`;
     navigator.clipboard.writeText(profileLink);
     setError(<span className="text-green-400">Link copied</span>);
   };
@@ -177,14 +201,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   };
 
   useEffect(() => {
-    console.log('UserList received users:', users);
-    console.log('Local users:', localUsers);
-    console.log('Unread messages:', unreadMessages);
-    console.log('Typing users:', typingUsers);
-    users.forEach((user) => {
-      if (!user.username) console.error('User with no username:', user);
-    });
-
     const handleClickOutside = (e) => {
       if (searchInputRef.current && !searchInputRef.current.contains(e.target)) {
         setSearchSuggestions([]);
@@ -193,7 +209,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, [users, localUsers, unreadMessages, typingUsers]);
+  }, []);
 
   return (
     <motion.div
@@ -297,7 +313,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium relative group"
                     style={{ backgroundColor: generateRandomColor(user.id) }}
                   >
-                    {user.username[0].toUpperCase()}
+                    {user.username[0]?.toUpperCase() || '?'}
                     <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 to-indigo-500/20 opacity-0 group-hover:opacity-100 transition-opacity rounded-full" />
                   </div>
                   <div className="flex flex-col">
@@ -316,6 +332,11 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     <div className="flex items-center space-x-1">
                       <span className={`text-xs ${user.online ? 'text-green-400' : 'text-gray-500'}`}>
                         ● {user.online ? 'Online' : 'Offline'}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        <ReactCountryFlag countryCode={user.country} className="mr-1" />{' '}
+                        {countries.getName(user.country, 'en') || 'Unknown'}{' '}
+                        {user.age ? `, ${user.age}y` : ''}
                       </span>
                       {typingUsers.includes(user.id) && (
                         <motion.span
@@ -437,7 +458,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                   className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl font-semibold text-white border-2 border-blue-500"
                   style={{ backgroundColor: generateRandomColor(selectedProfile.id) }}
                 >
-                  {selectedProfile.username[0].toUpperCase()}
+                  {selectedProfile.username[0]?.toUpperCase() || '?'}
                 </div>
                 <h4 className="mt-2 text-base font-medium text-white">{selectedProfile.username}</h4>
                 <p className="text-xs text-gray-400">Joined {new Date(selectedProfile.createdAt).toLocaleDateString()}</p>
@@ -448,8 +469,15 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                   <p className="text-sm text-gray-300">{selectedProfile.bio || 'No bio available'}</p>
                 </div>
                 <div>
+                  <label className="text-sm font-medium text-gray-400">Country</label>
+                  <p className="text-sm text-gray-300">
+                    <ReactCountryFlag countryCode={selectedProfile.country} className="mr-1" />{' '}
+                    {countries.getName(selectedProfile.country, 'en') || 'Not specified'}
+                  </p>
+                </div>
+                <div>
                   <label className="text-sm font-medium text-gray-400">Age</label>
-                  <p className="text-sm text-gray-300">{selectedProfile.age || 'Not specified'}</p>
+                  <p className="text-sm text-gray-300">{selectedProfile.age ? `${selectedProfile.age} years` : 'Not specified'}</p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-400">Status</label>
@@ -496,6 +524,8 @@ UserList.propTypes = {
       username: PropTypes.string.isRequired,
       online: PropTypes.bool.isRequired,
       isAnonymous: PropTypes.bool.isRequired,
+      country: PropTypes.string,
+      age: PropTypes.number,
     })
   ).isRequired,
   setSelectedUserId: PropTypes.func.isRequired,
