@@ -11,6 +11,20 @@ const anonymousSessionSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
+  country: {
+    type: String,
+    required: true,
+  },
+  state: {
+    type: String,
+    required: false,
+  },
+  age: {
+    type: Number,
+    required: true,
+    min: 13,
+    max: 120,
+  },
   status: {
     type: String,
     enum: ['online', 'offline'],
