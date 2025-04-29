@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaSearch, FaComment, FaInfoCircle, FaTimes, FaShareAlt } from 'react-icons/fa';
+import { FaSearch, FaComment, FaInfoCircle, FaTimes } from 'react-icons/fa';
 import PropTypes from 'prop-types';
 import ReactCountryFlag from 'react-country-flag';
 import countries from 'i18n-iso-countries';
@@ -19,18 +19,57 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   const [error, setError] = useState('');
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [localUsers, setLocalUsers] = useState(users);
+  const [showMessageHint, setShowMessageHint] = useState(false);
   const searchInputRef = useRef(null);
-
-  // Sync localUsers with users prop
-  useEffect(() => {
-    setLocalUsers(users);
-  }, [users]);
 
   // Get current user's country
   const currentUser = useMemo(() => {
     const user = localUsers.find((u) => u.id === currentUserId);
     return user || JSON.parse(localStorage.getItem('user') || '{}');
   }, [localUsers, currentUserId]);
+
+  // Sort users: same country first, then online status, then alphabetical by username
+  const sortedUsers = useMemo(() => {
+    const currentCountry = currentUser?.country;
+    return [...localUsers]
+      .filter((user) => user.id !== currentUserId && user.username && user.id)
+      .sort((a, b) => {
+        // Prioritize users from the same country
+        const aIsSameCountry = a.country && currentCountry && a.country === currentCountry;
+        const bIsSameCountry = b.country && currentCountry && b.country === currentCountry;
+        if (aIsSameCountry && !bIsSameCountry) return -1;
+        if (!aIsSameCountry && bIsSameCountry) return 1;
+        // Then sort by online status
+        if (a.online && !b.online) return -1;
+        if (!a.online && b.online) return 1;
+        // Finally, sort alphabetically by username
+        return a.username.localeCompare(b.username);
+      });
+  }, [localUsers, currentUserId, currentUser]);
+
+  // Filter users based on search query
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery) return sortedUsers;
+    return sortedUsers.filter((user) =>
+      user.username.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [sortedUsers, searchQuery]);
+
+  // Sync localUsers with users prop
+  useEffect(() => {
+    setLocalUsers(users);
+  }, [users]);
+
+  // Show message hint for first-time users
+  useEffect(() => {
+    if (!localStorage.getItem('seenMessageHint') && filteredUsers.length > 0) {
+      setShowMessageHint(true);
+      setTimeout(() => {
+        setShowMessageHint(false);
+        localStorage.setItem('seenMessageHint', 'true');
+      }, 3000);
+    }
+  }, [filteredUsers]);
 
   // Debounce search input
   const debounce = (func, delay) => {
@@ -55,25 +94,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     return color;
   };
 
-  // Sort users: same country first, then online status, then alphabetical by username
-  const sortedUsers = useMemo(() => {
-    const currentCountry = currentUser?.country;
-    return [...localUsers]
-      .filter((user) => user.id !== currentUserId && user.username && user.id)
-      .sort((a, b) => {
-        // Prioritize users from the same country
-        const aIsSameCountry = a.country && currentCountry && a.country === currentCountry;
-        const bIsSameCountry = b.country && currentCountry && b.country === currentCountry;
-        if (aIsSameCountry && !bIsSameCountry) return -1;
-        if (!aIsSameCountry && bIsSameCountry) return 1;
-        // Then sort by online status
-        if (a.online && !b.online) return -1;
-        if (!a.online && b.online) return 1;
-        // Finally, sort alphabetically by username
-        return a.username.localeCompare(b.username);
-      });
-  }, [localUsers, currentUserId, currentUser]);
-
   // Handle search input change
   const handleSearch = useCallback(
     debounce((value) => {
@@ -96,14 +116,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     setSearchQuery(suggestion);
     setSearchSuggestions([]);
   };
-
-  // Filter users based on search query
-  const filteredUsers = useMemo(() => {
-    if (!searchQuery) return sortedUsers;
-    return sortedUsers.filter((user) =>
-      user.username.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [sortedUsers, searchQuery]);
 
   // Handle context menu
   const handleContextMenu = (e, user) => {
@@ -154,17 +166,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     setIsProfileModalOpen(false);
     setSelectedProfile(null);
     setError('');
-  };
-
-  // Copy profile link
-  const copyProfileLink = () => {
-    if (!selectedProfile?.id) {
-      setError('Unable to copy profile link');
-      return;
-    }
-    const profileLink = `${window.location.origin}/profile/${selectedProfile.id}`;
-    navigator.clipboard.writeText(profileLink);
-    setError(<span className="text-green-400">Link copied</span>);
   };
 
   // Animation variants
@@ -227,7 +228,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
           whileHover={{ scale: 1.05 }}
           className="relative flex items-center w-1/2"
         >
-          <FaSearch className="absolute left-3 text-gray-400" />
+          <FaSearch className="absolute left-3 text-gray-300 text-lg" style={{ filter: 'none', backdropFilter: 'none' }} />
           <input
             ref={searchInputRef}
             type="text"
@@ -248,7 +249,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 initial="hidden"
                 animate="visible"
                 exit="hidden"
-                className="absolute top-full left-0 right-0 mt-2 bg-gray-800/90 border border-gray-700/50 rounded-lg shadow-lg z-50"
+                className="absolute top-full left-0 right-0 mt-2 bg-[#1A1A1A] border border-gray-700/50 rounded-lg shadow-lg z-1000"
               >
                 {searchSuggestions.map((suggestion, index) => (
                   <motion.li
@@ -277,7 +278,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       )}
 
       <div
-        className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent space-y-3"
+        className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent space-y-3 scroll-smooth overscroll-y-contain will-change-scroll z-0"
         role="list"
         aria-label="Available users"
       >
@@ -287,7 +288,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
           </div>
         ) : (
           <AnimatePresence>
-            {filteredUsers.map((user) => (
+            {filteredUsers.map((user, index) => (
               <motion.div
                 key={user.id}
                 variants={itemVariants}
@@ -299,20 +300,16 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 onContextMenu={(e) => handleContextMenu(e, user)}
                 role="listitem"
                 aria-label={`User ${user.username}`}
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    setSelectedUserId(user.id);
-                  }
-                }}
               >
-                <div className="flex items-center space-x-3 flex-grow">
+                <div className="flex items-center space-x-4 flex-grow">
                   {user.country && countries.getName(user.country, 'en') && (
                     <ReactCountryFlag
                       countryCode={user.country}
                       svg
                       className="w-8 h-6"
+                      style={{ width: '32px', height: '24px' }}
                       title={countries.getName(user.country, 'en')}
+                      aria-label={`Flag of ${countries.getName(user.country, 'en')}`}
                     />
                   )}
                   <div
@@ -368,13 +365,15 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     </motion.span>
                   )}
                   <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.95 }}
+                    animate={showMessageHint && index === 0 ? { scale: [1, 1.1, 1] } : {}}
+                    transition={showMessageHint && index === 0 ? { repeat: 3, duration: 0.5 } : {}}
+                    whileTap={{ scale: 0.9, y: 1 }}
                     onClick={() => handleContextAction('message', user)}
-                    className="p-1.5 rounded-full bg-blue-500/20 text-blue-400 hover:bg-blue-500/40 transition-colors"
+                    className="p-2.5 rounded-full bg-blue-500/10"
                     aria-label={`Message ${user.username}`}
+                    title={`Message ${user.username}`}
                   >
-                    <FaComment />
+                    <FaComment className="text-lg" style={{ stroke: 'black', strokeWidth: 1, fill: 'white' }} />
                   </motion.button>
                   <motion.button
                     whileHover={{ scale: 1.1 }}
@@ -399,14 +398,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
             initial="hidden"
             animate="visible"
             exit="hidden"
-            className="fixed bg-gray-800/95 border border-gray-700/50 rounded-xl shadow-2xl p-2 z-50 backdrop-blur-md"
+            className="fixed bg-black border border-gray-700/50 rounded-xl shadow-2xl p-2 z-50 backdrop-blur-md"
             style={{ top: contextMenu.y, left: contextMenu.x }}
             role="menu"
             aria-label="User actions"
           >
             <motion.div
               whileHover={{ backgroundColor: '#1E40AF', scale: 1.02 }}
-              className="flex items-center space-x-2 p-2 text-sm text-gray-200 rounded-lg cursor-pointer"
+              className="flex items-center space-x-2 p-2 text-sm text-white rounded-lg cursor-pointer"
               onClick={() => handleContextAction('message', contextMenu.user)}
               role="menuitem"
             >
@@ -415,7 +414,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
             </motion.div>
             <motion.div
               whileHover={{ backgroundColor: '#1E40AF', scale: 1.02 }}
-              className="flex items-center space-x-2 p-2 text-sm text-gray-200 rounded-lg cursor-pointer"
+              className="flex items-center space-x-2 p-2 text-sm text-white rounded-lg cursor-pointer"
               onClick={() => handleContextAction('profile', contextMenu.user)}
               role="menuitem"
             >
@@ -447,14 +446,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                   className="text-gray-400 hover:text-red-400 transition-colors duration-200"
                   aria-label="Close profile"
                 >
-                  <FaTimes className="text-xl" />
+                  <FaTimes className="text-lg" />
                 </motion.button>
               </div>
               {error && (
                 <motion.p
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="text-green-400 text-center mb-4 bg-green-900/10 p-2 rounded-lg text-sm"
+                  className="text-red-400 text-center mb-4 bg-red-900/10 p-2 rounded-lg text-sm"
                 >
                   {error}
                 </motion.p>
@@ -479,7 +478,13 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                   <p className="text-sm text-gray-300">
                     {selectedProfile.country && countries.getName(selectedProfile.country, 'en') ? (
                       <>
-                        <ReactCountryFlag countryCode={selectedProfile.country} className="mr-1 w-8 h-6" />
+                        <ReactCountryFlag
+                          countryCode={selectedProfile.country}
+                          svg
+                          className="mr-1 w-8 h-6"
+                          style={{ width: '32px', height: '24px' }}
+                          aria-label={`Flag of ${countries.getName(selectedProfile.country, 'en')}`}
+                        />
                         {countries.getName(selectedProfile.country, 'en')}
                       </>
                     ) : (
@@ -496,17 +501,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                   <p className="text-sm text-gray-300">{selectedProfile.status || 'Available'}</p>
                 </div>
               </div>
-              <div className="mt-6 flex justify-between">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={copyProfileLink}
-                  className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-700 text-white text-sm font-medium transition-colors duration-200 flex items-center space-x-2"
-                  aria-label="Share profile"
-                >
-                  <FaShareAlt />
-                  <span>Share</span>
-                </motion.button>
+              <div className="mt-6 flex justify-center">
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
