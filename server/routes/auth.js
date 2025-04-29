@@ -40,6 +40,7 @@ const registerSchema = Joi.object({
       return num;
     }, 'age validation')
     .required(),
+  gender: Joi.string().valid('male', 'female').required(), // Added gender validation
 });
 
 const webauthnRegisterBeginSchema = Joi.object({
@@ -57,6 +58,7 @@ const webauthnRegisterBeginSchema = Joi.object({
       return num;
     }, 'age validation')
     .required(),
+  gender: Joi.string().valid('male', 'female').required(), // Added gender validation
 });
 
 const webauthnRegisterCompleteSchema = Joi.object({
@@ -74,6 +76,7 @@ const webauthnRegisterCompleteSchema = Joi.object({
       return num;
     }, 'age validation')
     .required(),
+  gender: Joi.string().valid('male', 'female').required(), // Added gender validation
   credential: Joi.object().required(),
   challenge: Joi.string().required(),
   userID: Joi.string().required(),
@@ -187,6 +190,7 @@ router.get('/profile/:userId', auth, async (req, res) => {
       createdAt: user.createdAt,
       country: user.country,
       state: user.state,
+      gender: user.gender, // Include gender in response
     });
   } catch (err) {
     console.error('[Get User Profile] Server error:', err.message);
@@ -208,7 +212,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
     }
     console.log('[WebAuthn Register Begin] Step 2: Validation passed');
 
-    const { username, email, country, state, age } = req.body;
+    const { username, email, country, state, age, gender } = req.body;
     console.log('[WebAuthn Register Begin] Step 3: Checking for existing user:', { email, username });
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
@@ -256,6 +260,7 @@ router.post('/webauthn/register/begin', async (req, res) => {
       country,
       state,
       age,
+      gender,
     };
 
     console.log('[WebAuthn Register Begin] Step 6: Verifying response structure');
@@ -283,7 +288,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
       return res.status(400).json({ msg: error.details[0].message });
     }
 
-    const { email, username, country, state, age, credential, challenge, userID } = req.body;
+    const { email, username, country, state, age, gender, credential, challenge, userID } = req.body;
     if (!challenge || !userID) {
       console.error('[WebAuthn Register Complete] Missing challenge or userID');
       return res.status(400).json({ msg: 'Missing challenge or userID' });
@@ -324,6 +329,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
       country,
       state,
       age,
+      gender,
       webauthnUserID: userID,
       webauthnCredentials: [{
         credentialID: Buffer.from(credentialID).toString('base64'),
@@ -344,7 +350,7 @@ router.post('/webauthn/register/complete', async (req, res) => {
     await req.session.save();
 
     console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
   } catch (err) {
     console.error('[WebAuthn Register Complete] Server error:', err.message);
     res.status(500).json({ msg: `Server error: ${err.message}` });
@@ -529,7 +535,7 @@ router.post('/webauthn/login/complete', async (req, res) => {
     await req.session.save();
 
     console.log(`[WebAuthn Login Complete] Step 9: User logged in: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
   } catch (err) {
     console.error('[WebAuthn Login Complete] Step 10 Error: Server error:', {
       message: err.message,
@@ -575,7 +581,7 @@ router.post('/login', async (req, res) => {
     await req.session.save();
 
     console.log(`[Password Login] User logged in: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
   } catch (err) {
     console.error('[Password Login] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
@@ -592,14 +598,14 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ msg: error.details[0].message });
     }
 
-    const { email, username, password, country, state, age } = req.body;
+    const { email, username, password, country, state, age, gender } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
       console.error('[Password Register] User already exists:', { email, username });
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    user = new User({ email, username, password, country, state, age });
+    user = new User({ email, username, password, country, state, age, gender });
     await user.save();
 
     const payload = { userId: user.id };
@@ -610,7 +616,7 @@ router.post('/register', async (req, res) => {
     await req.session.save();
 
     console.log(`[Password Register] User registered: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age } });
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
   } catch (err) {
     console.error('[Password Register] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
