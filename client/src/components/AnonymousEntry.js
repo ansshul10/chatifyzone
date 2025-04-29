@@ -108,8 +108,8 @@ const AnonymousEntry = () => {
       setIsLoading(false);
       return;
     }
-    if (!age || age < 13 || age > 120) {
-      setError('Please enter a valid age (13-120)');
+    if (!age || age < 18 || age > 120) {
+      setError('Please enter a valid age (18-120)');
       setIsLoading(false);
       return;
     }
@@ -320,9 +320,9 @@ const AnonymousEntry = () => {
                       type="number"
                       value={age}
                       onChange={(e) => setAge(e.target.value)}
-                      placeholder="Your Age (13-120)"
+                      placeholder="Your Age (18-120)"
                       className={`w-full bg-transparent focus:outline-none ${isDarkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'}`}
-                      min="13"
+                      min="18"
                       max="120"
                       required
                       disabled={isLoading}
