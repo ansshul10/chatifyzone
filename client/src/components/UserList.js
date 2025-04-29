@@ -281,21 +281,21 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     <img
                       src={maleIcon}
                       alt="Male icon"
-                      className="w-8 h-8"
+                      className="w-10 h-10"
                       aria-label="Male user"
                     />
                   ) : user.gender && (user.gender.toLowerCase() === 'female' || user.gender.toUpperCase() === 'F') ? (
                     <img
                       src={femaleIcon}
                       alt="Female icon"
-                      className="w-8 h-8"
+                      className="w-10 h-10"
                       aria-label="Female user"
                     />
                   ) : (
                     <img
                       src={maleIcon}
                       alt="Default male icon"
-                      className="w-8 h-8 opacity-50"
+                      className="w-10 h-10 opacity-50"
                       aria-label="Default user gender icon"
                     />
                   )}
