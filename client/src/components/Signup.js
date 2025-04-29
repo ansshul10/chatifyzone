@@ -52,6 +52,7 @@ const Signup = () => {
   const [country, setCountry] = useState('');
   const [state, setState] = useState('');
   const [age, setAge] = useState('18');
+  const [gender, setGender] = useState(''); // New state for gender
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [error, setError] = useState('');
@@ -145,6 +146,11 @@ const Signup = () => {
         setIsLoading(false);
         return;
       }
+      if (!gender) {
+        setError('Please select a gender');
+        setIsLoading(false);
+        return;
+      }
       if (!termsAccepted) {
         setError('You must agree to the Terms and Conditions');
         setIsLoading(false);
@@ -154,7 +160,7 @@ const Signup = () => {
       // Step 3: Send request to /webauthn/register/begin
       let beginResponse;
       try {
-        beginResponse = await api.post('/auth/webauthn/register/begin', { email, username, country, state, age });
+        beginResponse = await api.post('/auth/webauthn/register/begin', { email, username, country, state, age, gender });
       } catch (apiError) {
         setError(apiError.response?.data?.msg || 'Failed to start fingerprint registration. Please check your connection and try again.');
         setIsLoading(false);
@@ -203,6 +209,7 @@ const Signup = () => {
           country,
           state,
           age,
+          gender,
           credential,
           challenge,
           userID,
@@ -265,6 +272,11 @@ const Signup = () => {
       setIsLoading(false);
       return;
     }
+    if (!gender) {
+      setError('Please select a gender');
+      setIsLoading(false);
+      return;
+    }
     if (!termsAccepted) {
       setError('You must agree to the Terms and Conditions');
       setIsLoading(false);
@@ -272,7 +284,7 @@ const Signup = () => {
     }
 
     try {
-      const { data } = await api.post('/auth/register', { email, username, password, country, state, age });
+      const { data } = await api.post('/auth/register', { email, username, password, country, state, age, gender });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
@@ -533,6 +545,21 @@ By checking the box during signup, you acknowledge that you have read, understoo
                           {ageValue}
                         </option>
                       ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="relative">
+                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                    <select
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      required
+                      disabled={isLoading}
+                    >
+                      <option value="">Select Gender</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
                     </select>
                   </div>
                 </div>
