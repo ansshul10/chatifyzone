@@ -22,7 +22,7 @@ const anonymousSessionSchema = new mongoose.Schema({
   age: {
     type: Number,
     required: true,
-    min: 13,
+    min: 18,
     max: 120,
   },
   status: {
