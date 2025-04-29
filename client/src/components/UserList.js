@@ -267,8 +267,8 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     <ReactCountryFlag
                       countryCode={user.country}
                       svg
-                      className="w-6 h-4 rounded-sm shadow-sm"
-                      style={{ width: '24px', height: '16px' }}
+                      className="w-8 h-6 rounded-sm shadow-sm"
+                      style={{ width: '32px', height: '24px' }}
                       title={countries.getName(user.country, 'en')}
                       aria-label={`Flag of ${countries.getName(user.country, 'en')}`}
                     />
@@ -281,21 +281,21 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     <img
                       src={maleIcon}
                       alt="Male icon"
-                      className="w-6 h-6"
+                      className="w-8 h-8"
                       aria-label="Male user"
                     />
                   ) : user.gender && (user.gender.toLowerCase() === 'female' || user.gender.toUpperCase() === 'F') ? (
                     <img
                       src={femaleIcon}
                       alt="Female icon"
-                      className="w-6 h-6"
+                      className="w-8 h-8"
                       aria-label="Female user"
                     />
                   ) : (
                     <img
                       src={maleIcon}
                       alt="Default male icon"
-                      className="w-6 h-6 opacity-50"
+                      className="w-8 h-8 opacity-50"
                       aria-label="Default user gender icon"
                     />
                   )}
