@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FaSearch, FaComment, FaInfoCircle, FaTimes } from 'react-icons/fa';
 import PropTypes from 'prop-types';
 import ReactCountryFlag from 'react-country-flag';
@@ -28,12 +28,11 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [error, setError] = useState('');
-  const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [localUsers, setLocalUsers] = useState(users);
   const [showMessageHint, setShowMessageHint] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const searchInputRef = useRef(null);
-  const suggestionListRef = useRef(null);
+  const contextMenuTimeoutRef = useRef(null); // Ref to store the timeout ID
 
   // Get current user's country
   const currentUser = useMemo(() => {
@@ -85,15 +84,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     }
   }, [filteredUsers]);
 
-  // Debounce search
-  const debounce = (func, delay) => {
-    let timeoutId;
-    return (...args) => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => func(...args), delay);
-    };
-  };
-
   // Generate avatar color
   const generateRandomColor = (id) => {
     const cachedColor = localStorage.getItem(`avatarColor-${id}`);
@@ -104,30 +94,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
     localStorage.setItem(`avatarColor-${id}`, color);
     return color;
-  };
-
-  // Handle search
-  const handleSearch = useCallback(
-    debounce((value) => {
-      setSearchQuery(value);
-      if (value) {
-        const suggestions = sortedUsers
-          .filter((user) => user.username.toLowerCase().includes(value.toLowerCase()))
-          .slice(0, 5)
-          .map((user) => user.username);
-        setSearchSuggestions(suggestions);
-      } else {
-        setSearchSuggestions([]);
-      }
-    }, 200),
-    [sortedUsers]
-  );
-
-  // Select suggestion
-  const handleSuggestionClick = (suggestion) => {
-    setSearchQuery(suggestion);
-    setSearchSuggestions([]);
-    searchInputRef.current.focus();
   };
 
   // Handle context menu
@@ -142,6 +108,11 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   // Close context menu
   const closeContextMenu = () => {
     setContextMenu(null);
+    // Clear any existing timeout when manually closing
+    if (contextMenuTimeoutRef.current) {
+      clearTimeout(contextMenuTimeoutRef.current);
+      contextMenuTimeoutRef.current = null;
+    }
   };
 
   // Fetch user profile
@@ -160,6 +131,12 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
 
   // Handle context actions
   const handleContextAction = async (action, user) => {
+    // Clear any existing timeout to prevent multiple timers
+    if (contextMenuTimeoutRef.current) {
+      clearTimeout(contextMenuTimeoutRef.current);
+      contextMenuTimeoutRef.current = null;
+    }
+
     switch (action) {
       case 'message':
         setSelectedUserId(user.id);
@@ -170,7 +147,12 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       default:
         break;
     }
-    closeContextMenu();
+
+    // Set a new timeout to close the context menu after 3 seconds
+    contextMenuTimeoutRef.current = setTimeout(() => {
+      setContextMenu(null);
+      contextMenuTimeoutRef.current = null;
+    }, 3000);
   };
 
   // Close profile modal
@@ -185,44 +167,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     setError('');
   };
 
-  // Keyboard navigation for suggestions
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (!suggestionListRef.current || !searchSuggestions.length) return;
-      const items = suggestionListRef.current.querySelectorAll('li');
-      const focusedIndex = Array.from(items).findIndex((item) =>
-        item === document.activeElement
-      );
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        const nextIndex = focusedIndex < items.length - 1 ? focusedIndex + 1 : 0;
-        items[nextIndex].focus();
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        const prevIndex = focusedIndex > 0 ? focusedIndex - 1 : items.length - 1;
-        items[prevIndex].focus();
-      } else if (e.key === 'Enter' && focusedIndex >= 0) {
-        e.preventDefault();
-        handleSuggestionClick(searchSuggestions[focusedIndex]);
-      } else if (e.key === 'Escape') {
-        setSearchSuggestions([]);
-        searchInputRef.current.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [searchSuggestions]);
-
   return (
     <div
-      className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-6 sm:py-8 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden"
+      className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-4 sm:py-8 pt-16 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden"
       role="region"
       aria-label="User List"
     >
       {/* Header with Sticky Search */}
-      <div className="sticky top-0 z-50 bg-[#1A1A1A]/80 rounded-md p-3 mb-4 sm:mb-6 shadow-md">
+      <div className="sticky top-0  bg-[#1A1A1A]/80 rounded-md p-3 mb-4 sm:mb-6 shadow-md">
         <div className="flex items-center justify-between flex-col sm:flex-row gap-3">
           <h2
             className="text-xl sm:text-2xl font-bold text-white bg-gradient-to-r from-blue-500 to-indigo-500 bg-clip-text text-transparent"
@@ -230,44 +182,18 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
             Users
           </h2>
           <div
-            className="relative flex items-center w-full sm:w-3/5 z-9999 overflow-visible"
+            className="relative flex items-center w-full sm:w-3/5 overflow-visible"
           >
             <FaSearch className="absolute left-3 text-gray-300 text-lg" style={{ filter: 'none', backdropFilter: 'none' }} />
             <input
               ref={searchInputRef}
               type="text"
               value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                handleSearch(e.target.value);
-              }}
+              onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search users..."
               className="w-full pl-10 pr-4 py-2 text-sm text-gray-200 bg-gray-800/40 border border-gray-700/50 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-gray-500 transition-all duration-300"
               aria-label="Search users"
-              aria-autocomplete="list"
             />
-            {searchSuggestions.length > 0 && (
-              <ul
-                ref={suggestionListRef}
-                className="absolute top-full left-0 right-0 mt-2 bg-[#1A1A1A]/95 border border-gray-700/50 rounded-md shadow-md z-9999 pointer-events-auto max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent"
-                role="listbox"
-                aria-label="Search suggestions"
-              >
-                {searchSuggestions.map((suggestion, index) => (
-                  <li
-                    key={index}
-                    className="px-4 py-2 text-sm text-gray-200 cursor-pointer flex items-center space-x-2 hover:bg-blue-600 focus:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-red-500 rounded-md m-1"
-                    onClick={() => handleSuggestionClick(suggestion)}
-                    tabIndex={0}
-                    role="option"
-                    aria-selected={searchQuery === suggestion}
-                  >
-                    <FaSearch className="text-gray-400 text-sm" />
-                    <span>{suggestion}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
           </div>
         </div>
       </div>
@@ -292,7 +218,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
 
       {/* User List */}
       <div
-        className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent space-y-3 scroll-smooth overscroll-y-contain z-0"
+        className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent space-y-3 scroll-smooth overscroll-y-contain"
         role="list"
         aria-label="Available users"
         aria-live="polite"
@@ -382,7 +308,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 )}
                 <button
                   onClick={() => handleContextAction('message', user)}
-                  className={`p-2.5 rounded-full text-white shadow-md min-w-[38px] min-h-[38px] ${showMessageHint && index === 0 ? 'bg-blue-500/30' : 'bg-blue-500/20'} hover:bg-blue-600`}
+                  className={`p-2.5 rounded-full text-white shadow-md min-w-[38px] min-h-[38px] ${showMessageHint && index === 0 ? 'bg-[#1A1A1A]/80' : 'bg-[#1A1A1A]/80'} hover:bg-red-600`}
                   aria-label={`Message ${user.username}`}
                   title={`Message ${user.username}`}
                 >
@@ -390,7 +316,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 </button>
                 <button
                   onClick={() => handleContextAction('profile', user)}
-                  className="p-2.5 rounded-full bg-gray-700/30 text-gray-400 shadow-md min-w-[38px] min-h-[38px] hover:bg-gray-600"
+                  className="p-2.5 rounded-full bg-[#1A1A1A]/80 text-white-400 shadow-md min-w-[38px] min-h-[38px] hover:bg-red-600"
                   aria-label={`View ${user.username}'s profile`}
                 >
                   <FaInfoCircle className="text-lg" />
@@ -404,7 +330,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed bg-black/90 border border-gray-700/50 rounded-md shadow-md p-2 z-50"
+          className="fixed bg-black/90 border border-gray-700/50 rounded-md shadow-md p-2 z-20"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           role="menu"
           aria-label="User actions"
@@ -444,7 +370,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
             className="bg-[#1A1A1A]/95 border border-gray-700/50 p-6 rounded-md shadow-md w-11/12 max-w-sm"
           >
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-white">User Profile</h3>
+              <h2 className="text-lg font-bold text-white">User Profile</h2>
               <button
                 onClick={closeProfileModal}
                 className="text-gray-400 hover:text-red-400 transition-colors duration-200"
@@ -461,9 +387,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                 {error}
               </p>
             )}
-            <div
-              className="text-center mb-4"
-            >
+            <div className="text-center mb-4">
               <div
                 className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl font-bold text-white border-4 border-blue-500 shadow-md"
                 style={{ backgroundColor: generateRandomColor(selectedProfile.id) }}
@@ -520,9 +444,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       )}
 
       {/* Footer */}
-      <div
-        className="mt-4 text-center text-xs text-gray-300"
-      >
+      <div className="mt-4 text-center text-xs text-gray-300">
         © 2025 Chatify | All Rights Reserved
       </div>
     </div>
