@@ -265,7 +265,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
 
   return (
     <div
-      className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-4 sm:py-8 pt-16 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden"
+      className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-4 sm:py-8 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden"
       role="region"
       aria-label="User List"
     >
