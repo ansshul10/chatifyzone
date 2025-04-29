@@ -17,6 +17,7 @@ const userSchema = new mongoose.Schema({
   age: { type: Number, min: 18, max: 120 },
   country: { type: String, required: true },
   state: { type: String, default: '' },
+  gender: { type: String, enum: ['male', 'female'], required: true }, // New gender field
   status: { type: String, default: 'Available', maxlength: 30 },
   privacy: {
     allowFriendRequests: { type: Boolean, default: true },
