@@ -10,6 +10,10 @@ import api from '../utils/api';
 // Initialize i18n-iso-countries
 countries.registerLocale(en);
 
+// Icons8 gender icons (50x50, red color)
+const maleIcon = 'https://img.icons8.com/3d-fluency/94/guest-male--v1.png';
+const femaleIcon = 'https://img.icons8.com/3d-fluency/94/businesswoman--v3.png';
+
 // Skeleton Loader Component
 const SkeletonUserCard = () => (
   <div className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center space-x-3 animate-pulse">
@@ -64,11 +68,36 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     );
   }, [sortedUsers, searchQuery]);
 
-  // Sync localUsers and simulate loading
+  // Sync localUsers and fetch gender from backend if missing
   useEffect(() => {
     setIsLoading(true);
-    setTimeout(() => {
-      setLocalUsers(users);
+    setTimeout(async () => {
+      let updatedUsers = [...users];
+      const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
+      api.defaults.headers.common['x-auth-token'] = token;
+
+      // Fetch gender for users where it's missing
+      const genderPromises = updatedUsers
+        .filter((user) => !user.gender)
+        .map(async (user) => {
+          try {
+            const { data } = await api.get(`/auth/profile/${user.id}`);
+            return { id: user.id, gender: data.gender };
+          } catch (err) {
+            console.error(`Failed to fetch gender for user ${user.id}:`, err);
+            return { id: user.id, gender: null };
+          }
+        });
+
+      const genderResults = await Promise.all(genderPromises);
+      genderResults.forEach(({ id, gender }) => {
+        const userIndex = updatedUsers.findIndex((u) => u.id === id);
+        if (userIndex !== -1) {
+          updatedUsers[userIndex] = { ...updatedUsers[userIndex], gender };
+        }
+      });
+
+      setLocalUsers(updatedUsers);
       setIsLoading(false);
     }, 500);
   }, [users]);
@@ -83,18 +112,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       }, 3000);
     }
   }, [filteredUsers]);
-
-  // Generate avatar color
-  const generateRandomColor = (id) => {
-    const cachedColor = localStorage.getItem(`avatarColor-${id}`);
-    if (cachedColor) return cachedColor;
-    const hue = Math.floor(Math.random() * 360);
-    const saturation = 60 + Math.floor(Math.random() * 20);
-    const lightness = 50 + Math.floor(Math.random() * 20);
-    const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-    localStorage.setItem(`avatarColor-${id}`, color);
-    return color;
-  };
 
   // Handle context menu
   const handleContextMenu = (e, user) => {
@@ -258,10 +275,30 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                   </div>
                 )}
                 <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold relative shadow-inner"
-                  style={{ backgroundColor: generateRandomColor(user.id) }}
+                  className="w-10 h-10 flex items-center justify-center text-white relative"
                 >
-                  {user.username[0]?.toUpperCase() || '?'}
+                  {user.gender && (user.gender.toLowerCase() === 'male' || user.gender.toUpperCase() === 'M') ? (
+                    <img
+                      src={maleIcon}
+                      alt="Male icon"
+                      className="w-6 h-6"
+                      aria-label="Male user"
+                    />
+                  ) : user.gender && (user.gender.toLowerCase() === 'female' || user.gender.toUpperCase() === 'F') ? (
+                    <img
+                      src={femaleIcon}
+                      alt="Female icon"
+                      className="w-6 h-6"
+                      aria-label="Female user"
+                    />
+                  ) : (
+                    <img
+                      src={maleIcon}
+                      alt="Default male icon"
+                      className="w-6 h-6 opacity-50"
+                      aria-label="Default user gender icon"
+                    />
+                  )}
                   {user.online && (
                     <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full border-2 border-[#1A1A1A]"></span>
                   )}
@@ -390,7 +427,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
             <div className="text-center mb-4">
               <div
                 className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl font-bold text-white border-4 border-blue-500 shadow-md"
-                style={{ backgroundColor: generateRandomColor(selectedProfile.id) }}
+                style={{ backgroundColor: '#4B5563' }} // Static gray color for profile modal
               >
                 {selectedProfile.username[0]?.toUpperCase() || '?'}
               </div>
@@ -444,7 +481,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       )}
 
       {/* Footer */}
-      <div className="mt-4 text-center text-xs text-gray-300">
+      <div className="mt-4 text-center text-xs text-gray-400">
         © 2025 Chatify | All Rights Reserved
       </div>
     </div>
@@ -460,6 +497,7 @@ UserList.propTypes = {
       isAnonymous: PropTypes.bool.isRequired,
       country: PropTypes.string,
       age: PropTypes.number,
+      gender: PropTypes.oneOf(['male', 'female', 'M', 'F']),
     })
   ).isRequired,
   setSelectedUserId: PropTypes.func.isRequired,
