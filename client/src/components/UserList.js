@@ -6,6 +6,7 @@ import countries from 'i18n-iso-countries';
 import en from 'i18n-iso-countries/langs/en.json';
 import verifiedIcon from '../assets/verified.png'; // Adjust path as needed
 import api from '../utils/api';
+import io from 'socket.io-client';
 
 // Initialize i18n-iso-countries
 countries.registerLocale(en);
@@ -13,6 +14,13 @@ countries.registerLocale(en);
 // Icons8 gender icons (50x50, red color)
 const maleIcon = 'https://img.icons8.com/3d-fluency/94/guest-male--v1.png';
 const femaleIcon = 'https://img.icons8.com/3d-fluency/94/businesswoman--v3.png';
+
+// WebSocket connection setup
+const socket = io('http://localhost:5000', {
+  auth: {
+    token: localStorage.getItem('token') || localStorage.getItem('anonymousId'),
+  },
+});
 
 // Skeleton Loader Component
 const SkeletonUserCard = () => (
@@ -26,7 +34,7 @@ const SkeletonUserCard = () => (
   </div>
 );
 
-const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typingUsers = [] }) => {
+const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: initialUnreadMessages, typingUsers = [] }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
   const [selectedProfile, setSelectedProfile] = useState(null);
@@ -35,6 +43,8 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
   const [localUsers, setLocalUsers] = useState(users);
   const [showMessageHint, setShowMessageHint] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [genderFilter, setGenderFilter] = useState('all'); // State for gender filter
+  const [unreadMessages, setUnreadMessages] = useState(initialUnreadMessages); // Manage unreadMessages state locally
   const searchInputRef = useRef(null);
   const contextMenuTimeoutRef = useRef(null); // Ref to store the timeout ID
 
@@ -60,23 +70,42 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
       });
   }, [localUsers, currentUserId, currentUser]);
 
-  // Filter users
+  // Filter users by search query and gender
   const filteredUsers = useMemo(() => {
-    if (!searchQuery) return sortedUsers;
-    return sortedUsers.filter((user) =>
-      user.username.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [sortedUsers, searchQuery]);
+    let filtered = sortedUsers;
 
-  // Sync localUsers and fetch gender from backend if missing
+    // Filter by search query
+    if (searchQuery) {
+      filtered = filtered.filter((user) =>
+        user.username.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    // Filter by gender
+    if (genderFilter !== 'all') {
+      filtered = filtered.filter((user) => {
+        if (!user.gender) return false;
+        const userGender = user.gender.toLowerCase();
+        return (
+          (genderFilter === 'male' && (userGender === 'male' || userGender === 'm')) ||
+          (genderFilter === 'female' && (userGender === 'female' || userGender === 'f'))
+        );
+      });
+    }
+
+    return filtered;
+  }, [sortedUsers, searchQuery, genderFilter]);
+
+  // Sync localUsers and fetch gender from backend if missing, plus WebSocket setup
   useEffect(() => {
     setIsLoading(true);
-    setTimeout(async () => {
+
+    // Fetch gender for users where it's missing
+    const fetchMissingGenders = async () => {
       let updatedUsers = [...users];
       const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
       api.defaults.headers.common['x-auth-token'] = token;
 
-      // Fetch gender for users where it's missing
       const genderPromises = updatedUsers
         .filter((user) => !user.gender)
         .map(async (user) => {
@@ -99,7 +128,52 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
 
       setLocalUsers(updatedUsers);
       setIsLoading(false);
-    }, 500);
+    };
+
+    fetchMissingGenders();
+
+    // WebSocket event listeners
+    socket.on('connect', () => {
+      console.log('Connected to WebSocket server');
+    });
+
+    socket.on('userStatus', ({ userId, status }) => {
+      setLocalUsers((prevUsers) =>
+        prevUsers.map((user) =>
+          user.id === userId ? { ...user, online: status === 'online' } : user
+        )
+      );
+    });
+
+    socket.on('notification', ({ senderId }) => {
+      setUnreadMessages((prev) => ({
+        ...prev,
+        [senderId]: (prev[senderId] || 0) + 1,
+      }));
+    });
+
+    socket.on('userListUpdate', (onlineUsers) => {
+      setLocalUsers((prevUsers) => {
+        const mergedUsers = [...prevUsers];
+        onlineUsers.forEach((updatedUser) => {
+          const index = mergedUsers.findIndex((u) => u.id === updatedUser.id);
+          if (index !== -1) {
+            mergedUsers[index] = { ...mergedUsers[index], ...updatedUser };
+          } else {
+            mergedUsers.push(updatedUser);
+          }
+        });
+        return mergedUsers;
+      });
+    });
+
+    // Cleanup WebSocket listeners on unmount
+    return () => {
+      socket.off('connect');
+      socket.off('userStatus');
+      socket.off('notification');
+      socket.off('userListUpdate');
+    };
   }, [users]);
 
   // One-time hint
@@ -157,6 +231,11 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
     switch (action) {
       case 'message':
         setSelectedUserId(user.id);
+        // Reset unread messages for this user when messaging starts
+        setUnreadMessages((prev) => ({
+          ...prev,
+          [user.id]: 0,
+        }));
         break;
       case 'profile':
         await fetchUserProfile(user.id);
@@ -186,12 +265,12 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
 
   return (
     <div
-      className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-4 sm:py-8 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden"
+      className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-4 sm:py-8 pt-16 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden"
       role="region"
       aria-label="User List"
     >
-      {/* Header with Sticky Search */}
-      <div className="sticky top-0  bg-[#1A1A1A]/80 rounded-md p-3 mb-4 sm:mb-6 shadow-md">
+      {/* Header with Sticky Search and Gender Filter */}
+      <div className="sticky top-0 bg-[#1A1A1A]/80 rounded-md p-3 mb-4 sm:mb-6 shadow-md">
         <div className="flex items-center justify-between flex-col sm:flex-row gap-3">
           <h2
             className="text-xl sm:text-2xl font-bold text-white bg-gradient-to-r from-blue-500 to-indigo-500 bg-clip-text text-transparent"
@@ -208,10 +287,22 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search users..."
-              className="w-full pl-10 pr-4 py-2 text-sm text-gray-200 bg-gray-800/40 border border-gray-700/50 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-gray-500 transition-all duration-300"
+              className="w-full pl-10 pr-4 py-2 text-sm text-white-200 bg-black border border-gray-700/50 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-gray-500 transition-all duration-300"
               aria-label="Search users"
             />
           </div>
+        </div>
+        <div className="mt-3">
+          <select
+            value={genderFilter}
+            onChange={(e) => setGenderFilter(e.target.value)}
+            className="w-full sm:w-1/3 py-2 px-3 text-sm text-white-200 bg-black border border-gray-700/50 rounded-md focus:outline-none transition-all duration-300"
+            aria-label="Filter users by gender"
+          >
+            <option value="all">All Genders</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
         </div>
       </div>
 
@@ -250,7 +341,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
           <div
             className="text-gray-300 text-center text-sm font-medium py-6"
           >
-            {searchQuery ? 'No users found' : 'No users available yet 🌐'}
+            {searchQuery || genderFilter !== 'all' ? 'No users found' : 'No users available yet 🌐'}
           </div>
         ) : (
           filteredUsers.map((user, index) => (
@@ -281,21 +372,21 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages, typ
                     <img
                       src={maleIcon}
                       alt="Male icon"
-                      className="w-10 h-10"
+                      className="w-8 h-8"
                       aria-label="Male user"
                     />
                   ) : user.gender && (user.gender.toLowerCase() === 'female' || user.gender.toUpperCase() === 'F') ? (
                     <img
                       src={femaleIcon}
                       alt="Female icon"
-                      className="w-10 h-10"
+                      className="w-8 h-8"
                       aria-label="Female user"
                     />
                   ) : (
                     <img
                       src={maleIcon}
                       alt="Default male icon"
-                      className="w-10 h-10 opacity-50"
+                      className="w-8 h-8 opacity-50"
                       aria-label="Default user gender icon"
                     />
                   )}
