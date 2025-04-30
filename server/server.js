@@ -40,6 +40,14 @@ const sessionMiddleware = session({
   },
 });
 
+// Update session with lastActive timestamp on every request
+app.use((req, res, next) => {
+  if (req.session) {
+    req.session.lastActive = Date.now();
+  }
+  next();
+});
+
 // Apply session middleware to Express
 app.use(sessionMiddleware);
 
@@ -81,6 +89,8 @@ const userSocketMap = new Map();
 let cachedOnlineUsers = null;
 let cacheTimestamp = 0;
 const CACHE_DURATION = 5000; // Cache for 5 seconds
+const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 const getOnlineUsers = async () => {
   const now = Date.now();
@@ -114,6 +124,38 @@ const getPreviousMessages = async (userId) => {
   return await Message.find({ $or: [{ sender: userId }, { receiver: userId }] }).sort({ createdAt: 1 });
 };
 
+// Periodic cleanup of inactive sessions
+setInterval(async () => {
+  try {
+    const now = Date.now();
+    const sessions = await sessionMiddleware.store.all();
+    for (const session of sessions) {
+      const sessionData = JSON.parse(session.session);
+      if (sessionData.lastActive && now - sessionData.lastActive > INACTIVITY_TIMEOUT) {
+        const userId = sessionData.passport?.user || sessionData.anonymousId;
+        if (userId) {
+          if (userId.startsWith('anon-')) {
+            await AnonymousSession.findOneAndDelete({ anonymousId: userId });
+            await Message.deleteMany({ sender: userId, isAnonymous: true });
+          } else {
+            await User.findByIdAndUpdate(userId, { online: false }, { new: true });
+          }
+          const socketId = userSocketMap.get(userId);
+          if (socketId) {
+            io.to(socketId).emit('logout', { reason: 'Inactivity timeout' });
+            userSocketMap.delete(userId);
+          }
+          await sessionMiddleware.store.destroy(session.sid);
+          io.emit('userStatus', { userId, status: 'offline' });
+          console.log(`[Server] Logged out inactive user: ${userId}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Server] Inactive session cleanup error:', err.message);
+  }
+}, CLEANUP_INTERVAL);
+
 io.on('connection', (socket) => {
   console.log(`[Socket.IO] User connected: ${socket.id}`);
 
@@ -137,6 +179,10 @@ io.on('connection', (socket) => {
           username = user?.username || `User_${userId.slice(-4)}`;
         }
       }
+
+      // Update lastActive for the session
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
 
       if (userId.startsWith('anon-')) {
         let session = await AnonymousSession.findOne({ anonymousId: userId });
@@ -215,6 +261,10 @@ io.on('connection', (socket) => {
       const message = new Message({ sender, receiver, content, isAnonymous: sender.startsWith('anon-'), deliveredAt: new Date() });
       await message.save();
 
+      // Update lastActive for the sender's session
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       // Emit message and notification only to sender and receiver
       io.to(receiver).emit('receiveMessage', message);
       io.to(sender).emit('receiveMessage', message);
@@ -229,11 +279,15 @@ io.on('connection', (socket) => {
 
   socket.on('typing', ({ sender, receiver, username }) => {
     io.to(receiver).emit('userTyping', { sender, username });
+    socket.request.session.lastActive = Date.now();
+    socket.request.session.save();
     console.log(`[Socket.IO Typing] ${username} is typing to ${receiver}`);
   });
 
   socket.on('stopTyping', ({ sender, receiver }) => {
     io.to(receiver).emit('userStoppedTyping', { sender });
+    socket.request.session.lastActive = Date.now();
+    socket.request.session.save();
     console.log(`[Socket.IO StopTyping] ${sender} stopped typing to ${receiver}`);
   });
 
@@ -253,6 +307,9 @@ io.on('connection', (socket) => {
         message.readAt = new Date();
       }
       await message.save();
+
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
 
       io.to(message.sender).emit('messageStatusUpdate', message);
       io.to(message.receiver).emit('messageStatusUpdate', message);
@@ -281,6 +338,9 @@ io.on('connection', (socket) => {
       message.edited = true;
       await message.save();
 
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       io.to(message.sender).emit('messageEdited', message);
       io.to(message.receiver).emit('messageEdited', message);
       console.log(`[Socket.IO EditMessage] Message ${messageId} edited by ${userId}`);
@@ -305,6 +365,10 @@ io.on('connection', (socket) => {
       }
 
       await Message.deleteOne({ _id: messageId });
+
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       io.to(message.sender).emit('messageDeleted', messageId);
       io.to(message.receiver).emit('messageDeleted', messageId);
       console.log(`[Socket.IO DeleteMessage] Message ${messageId} deleted by ${userId}`);
@@ -332,6 +396,9 @@ io.on('connection', (socket) => {
       const currentCount = message.reactions.get(emoji) || 0;
       message.reactions.set(emoji, currentCount + 1);
       await message.save();
+
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
 
       io.to(message.sender).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
       io.to(message.receiver).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
@@ -361,12 +428,15 @@ io.on('connection', (socket) => {
       await user.save();
 
       await User.findByIdAndUpdate(targetId, { $pull: { friends: userId } });
+
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       socket.emit('blockedUsersUpdate', user.blockedUsers.map(id => id.toString()));
       socket.emit('friendsUpdate', user.friends);
       io.to(targetId).emit('friendRemoved', { friendId: userId });
       socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully', targetId });
 
-      // Notify the blocked user of status change
       io.to(targetId).emit('userStatus', { userId, status: 'blocked' });
 
       console.log(`[Socket.IO BlockUser] User ${targetId} blocked by ${userId}`);
@@ -393,10 +463,12 @@ io.on('connection', (socket) => {
       user.blockedUsers = user.blockedUsers.filter((id) => id.toString() !== targetId);
       await user.save();
 
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       socket.emit('blockedUsersUpdate', user.blockedUsers.map(id => id.toString()));
       socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully', targetId });
 
-      // Notify the unblocked user of status change
       io.to(targetId).emit('userStatus', { userId, status: 'online' });
 
       console.log(`[Socket.IO UnblockUser] User ${targetId} unblocked by ${userId}`);
@@ -435,6 +507,9 @@ io.on('connection', (socket) => {
       receiver.friendRequests.push(userId);
       await receiver.save();
 
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       io.to(friendId).emit('friendRequestReceived', { _id: userId, username: sender.username });
       socket.emit('actionResponse', { type: 'sendFriendRequest', success: true, msg: 'Friend request sent', friendId });
       console.log(`[Socket.IO SendFriendRequest] Friend request sent from ${userId} to ${friendId}`);
@@ -471,6 +546,9 @@ io.on('connection', (socket) => {
       const user = await User.findById(userId).populate('friendRequests', 'username').populate('friends', 'username');
       const friend = await User.findById(friendId).populate('friends', 'username');
 
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       const updatedFriendRequests = user.friendRequests.map((req) => ({ _id: req._id.toString(), username: req.username }));
       const updatedUserFriends = user.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
       const updatedFriendFriends = friend.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
@@ -501,6 +579,10 @@ io.on('connection', (socket) => {
       }
 
       const user = await User.findById(userId).populate('friendRequests', 'username');
+
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
+
       const updatedFriendRequests = user.friendRequests.map((req) => ({ _id: req._id.toString(), username: req.username }));
 
       socket.emit('friendRequestsUpdate', updatedFriendRequests);
@@ -532,6 +614,9 @@ io.on('connection', (socket) => {
 
       const user = await User.findById(userId).populate('friends', 'username');
       const friend = await User.findById(friendId).populate('friends', 'username');
+
+      socket.request.session.lastActive = Date.now();
+      socket.request.session.save();
 
       const updatedUserFriends = user.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
       const updatedFriendFriends = friend.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
