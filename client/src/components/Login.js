@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaGoogle, FaApple, FaFingerprint } from 'react-icons/fa';
 import { startAuthentication } from '@simplewebauthn/browser';
+import io from 'socket.io-client';
 import api from '../utils/api';
 import Navbar from './Navbar';
 
@@ -17,6 +18,16 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isWebAuthnSupported, setIsWebAuthnSupported] = useState(false);
   const navigate = useNavigate();
+
+  // Initialize Socket.IO
+  const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+    auth: {
+      token: localStorage.getItem('token') || localStorage.getItem('anonymousId'),
+    },
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+  });
 
   // Check WebAuthn support on component mount
   useEffect(() => {
@@ -40,7 +51,25 @@ const Login = () => {
       }
     };
     checkWebAuthnSupport();
-  }, []);
+
+    // Handle logout event from server
+    socket.on('logout', ({ reason }) => {
+      console.log('[Socket.IO Logout] Received logout event:', reason);
+      setError(`You have been logged out due to ${reason.toLowerCase()}.`);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      delete api.defaults.headers.common['x-auth-token'];
+      setTimeout(() => {
+        navigate('/login');
+      }, 3000);
+    });
+
+    // Cleanup socket listeners
+    return () => {
+      socket.off('logout');
+      socket.disconnect();
+    };
+  }, [navigate, socket]);
 
   const handleBiometricLogin = async () => {
     console.log('[Fingerprint Login] Starting fingerprint login process');
