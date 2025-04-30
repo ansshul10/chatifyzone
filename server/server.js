@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -11,24 +12,22 @@ const chatRoutes = require('./routes/chat');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
-require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 
-// Validate environment variables
+// Log warning if environment variables are missing
 if (!process.env.MONGO_URI || !process.env.SESSION_SECRET || !process.env.JWT_SECRET) {
-  console.error('[Server] Missing required environment variables: MONGO_URI, SESSION_SECRET, JWT_SECRET');
-  process.exit(1);
+  console.warn('[Server] Warning: Some environment variables (MONGO_URI, SESSION_SECRET, JWT_SECRET) are missing. Server may not function correctly.');
 }
 
 // Session middleware configuration
 const sessionMiddleware = session({
-  secret: process.env.SESSION_SECRET,
+  secret: process.env.SESSION_SECRET || 'fallback-secret',
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
+    mongoUrl: process.env.MONGO_URI || 'mongodb://localhost:27017/chatify',
     collectionName: 'sessions',
     ttl: 24 * 60 * 60, // 24 hours
   }),
@@ -48,7 +47,7 @@ app.use(sessionMiddleware);
 const wrap = middleware => (socket, next) => middleware(socket.request, {}, next);
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true,
   },
@@ -60,11 +59,13 @@ io.use(wrap(sessionMiddleware));
 // Connect to MongoDB
 connectDB().then(() => {
   console.log('[Server] MongoDB connected successfully');
+}).catch((err) => {
+  console.error('[Server] MongoDB connection failed:', err.message);
 });
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,
 }));
@@ -77,26 +78,36 @@ app.use('/api/chat', chatRoutes);
 
 // Socket.IO Logic
 const userSocketMap = new Map();
+let cachedOnlineUsers = null;
+let cacheTimestamp = 0;
+const CACHE_DURATION = 5000; // Cache for 5 seconds
 
 const getOnlineUsers = async () => {
+  const now = Date.now();
+  if (cachedOnlineUsers && now - cacheTimestamp < CACHE_DURATION) {
+    return cachedOnlineUsers;
+  }
+
   const registeredUsers = await User.find({}).select('_id username online country');
   const anonymousUsers = await AnonymousSession.find({}).select('anonymousId username status');
-  return [
+  cachedOnlineUsers = [
     ...registeredUsers.map((user) => ({
       id: user._id.toString(),
       username: user.username,
       isAnonymous: false,
       online: user.online,
-      country: user.country, // No default country
+      country: user.country,
     })),
     ...anonymousUsers.map((session) => ({
       id: session.anonymousId,
       username: session.username,
       isAnonymous: true,
       online: session.status === 'online',
-      // No country field for anonymous users
     })),
   ].filter((user) => user.id && user.username);
+
+  cacheTimestamp = now;
+  return cachedOnlineUsers;
 };
 
 const getPreviousMessages = async (userId) => {
@@ -116,11 +127,15 @@ io.on('connection', (socket) => {
       socket.join(userId);
       userSocketMap.set(userId, socket.id);
 
-      const username = socket.request.session.username || socket.handshake.query.username;
+      let username = socket.request.session.username || socket.handshake.query.username;
       if (!username) {
-        console.error('[Socket.IO Join] Username is required');
-        socket.emit('error', { msg: 'Username is required' });
-        return;
+        if (userId.startsWith('anon-')) {
+          const session = await AnonymousSession.findOne({ anonymousId: userId });
+          username = session?.username || `Anon_${userId.slice(-4)}`;
+        } else {
+          const user = await User.findById(userId);
+          username = user?.username || `User_${userId.slice(-4)}`;
+        }
       }
 
       if (userId.startsWith('anon-')) {
@@ -149,11 +164,15 @@ io.on('connection', (socket) => {
         }
       }
 
+      // Send full user list to the joining user only
+      const onlineUsers = await getOnlineUsers();
+      socket.emit('userListUpdate', onlineUsers);
+
+      // Notify others of the user's online status
       io.emit('userStatus', { userId, status: 'online' });
+
       const previousMessages = await getPreviousMessages(userId);
       socket.emit('loadPreviousMessages', previousMessages);
-      const onlineUsers = await getOnlineUsers();
-      io.emit('userListUpdate', onlineUsers);
 
       console.log(`[Socket.IO Join] User joined: ${userId} (${username})`);
     } catch (err) {
@@ -195,6 +214,8 @@ io.on('connection', (socket) => {
 
       const message = new Message({ sender, receiver, content, isAnonymous: sender.startsWith('anon-'), deliveredAt: new Date() });
       await message.save();
+
+      // Emit message and notification only to sender and receiver
       io.to(receiver).emit('receiveMessage', message);
       io.to(sender).emit('receiveMessage', message);
       io.to(receiver).emit('notification', { text: `New message from ${senderExists.username}`, senderId: sender });
@@ -344,6 +365,10 @@ io.on('connection', (socket) => {
       socket.emit('friendsUpdate', user.friends);
       io.to(targetId).emit('friendRemoved', { friendId: userId });
       socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully', targetId });
+
+      // Notify the blocked user of status change
+      io.to(targetId).emit('userStatus', { userId, status: 'blocked' });
+
       console.log(`[Socket.IO BlockUser] User ${targetId} blocked by ${userId}`);
     } catch (err) {
       console.error('[Socket.IO BlockUser] Error:', err.message);
@@ -370,6 +395,10 @@ io.on('connection', (socket) => {
 
       socket.emit('blockedUsersUpdate', user.blockedUsers.map(id => id.toString()));
       socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully', targetId });
+
+      // Notify the unblocked user of status change
+      io.to(targetId).emit('userStatus', { userId, status: 'online' });
+
       console.log(`[Socket.IO UnblockUser] User ${targetId} unblocked by ${userId}`);
     } catch (err) {
       console.error('[Socket.IO UnblockUser] Error:', err.message);
@@ -530,8 +559,6 @@ io.on('connection', (socket) => {
       }
       userSocketMap.delete(userId);
       io.emit('userStatus', { userId, status: 'offline' });
-      const onlineUsers = await getOnlineUsers();
-      io.emit('userListUpdate', onlineUsers);
       console.log(`[Socket.IO Disconnect] User disconnected: ${userId}`);
     } catch (err) {
       console.error('[Socket.IO Disconnect] Error:', err.message);
