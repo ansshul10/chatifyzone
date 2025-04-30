@@ -4,14 +4,14 @@ import PropTypes from 'prop-types';
 import ReactCountryFlag from 'react-country-flag';
 import countries from 'i18n-iso-countries';
 import en from 'i18n-iso-countries/langs/en.json';
-import verifiedIcon from '../assets/verified.png'; // Adjust path as needed
+import verifiedIcon from '../assets/verified.png';
 import api from '../utils/api';
 import io from 'socket.io-client';
 
 // Initialize i18n-iso-countries
 countries.registerLocale(en);
 
-// Icons8 gender icons (50x50, red color)
+// Icons8 gender icons
 const maleIcon = 'https://img.icons8.com/3d-fluency/94/guest-male--v1.png';
 const femaleIcon = 'https://img.icons8.com/3d-fluency/94/businesswoman--v3.png';
 
@@ -20,6 +20,9 @@ const socket = io('http://localhost:5000', {
   auth: {
     token: localStorage.getItem('token') || localStorage.getItem('anonymousId'),
   },
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
 });
 
 // Skeleton Loader Component
@@ -34,7 +37,7 @@ const SkeletonUserCard = () => (
   </div>
 );
 
-const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: initialUnreadMessages, typingUsers = [] }) => {
+const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: initialUnreadMessages, typingUsers: initialTypingUsers = [] }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
   const [selectedProfile, setSelectedProfile] = useState(null);
@@ -43,10 +46,11 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
   const [localUsers, setLocalUsers] = useState(users);
   const [showMessageHint, setShowMessageHint] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [genderFilter, setGenderFilter] = useState('all'); // State for gender filter
-  const [unreadMessages, setUnreadMessages] = useState(initialUnreadMessages); // Manage unreadMessages state locally
+  const [genderFilter, setGenderFilter] = useState('all');
+  const [unreadMessages, setUnreadMessages] = useState(initialUnreadMessages);
+  const [typingUsers, setTypingUsers] = useState(initialTypingUsers);
   const searchInputRef = useRef(null);
-  const contextMenuTimeoutRef = useRef(null); // Ref to store the timeout ID
+  const contextMenuTimeoutRef = useRef(null);
 
   // Get current user's country
   const currentUser = useMemo(() => {
@@ -54,7 +58,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     return user || JSON.parse(localStorage.getItem('user') || '{}');
   }, [localUsers, currentUserId]);
 
-  // Sort users
+  // Sort and filter users
   const sortedUsers = useMemo(() => {
     const currentCountry = currentUser?.country;
     return [...localUsers]
@@ -70,18 +74,13 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
       });
   }, [localUsers, currentUserId, currentUser]);
 
-  // Filter users by search query and gender
   const filteredUsers = useMemo(() => {
     let filtered = sortedUsers;
-
-    // Filter by search query
     if (searchQuery) {
       filtered = filtered.filter((user) =>
         user.username.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
-
-    // Filter by gender
     if (genderFilter !== 'all') {
       filtered = filtered.filter((user) => {
         if (!user.gender) return false;
@@ -92,15 +91,13 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
         );
       });
     }
-
     return filtered;
   }, [sortedUsers, searchQuery, genderFilter]);
 
-  // Sync localUsers and fetch gender from backend if missing, plus WebSocket setup
+  // WebSocket and data fetching
   useEffect(() => {
     setIsLoading(true);
 
-    // Fetch gender for users where it's missing
     const fetchMissingGenders = async () => {
       let updatedUsers = [...users];
       const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
@@ -132,9 +129,13 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
 
     fetchMissingGenders();
 
+    // Join the current user's room
+    socket.emit('join', currentUserId);
+
     // WebSocket event listeners
     socket.on('connect', () => {
       console.log('Connected to WebSocket server');
+      socket.emit('join', currentUserId); // Rejoin on reconnect
     });
 
     socket.on('userStatus', ({ userId, status }) => {
@@ -163,18 +164,45 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
             mergedUsers.push(updatedUser);
           }
         });
-        return mergedUsers;
+        return mergedUsers.filter((user) => user.id !== currentUserId);
       });
     });
 
-    // Cleanup WebSocket listeners on unmount
+    socket.on('receiveMessage', (message) => {
+      // Only increment unread count if the message is from another user and not already counted
+      if (message.sender !== currentUserId && message.receiver === currentUserId) {
+        setUnreadMessages((prev) => {
+          const currentCount = prev[message.sender] || 0;
+          // Avoid double-counting by checking if notification already incremented
+          return { ...prev, [message.sender]: currentCount };
+        });
+      }
+    });
+
+    socket.on('userTyping', ({ sender }) => {
+      setTypingUsers((prev) => [...new Set([...prev, sender])]);
+    });
+
+    socket.on('userStoppedTyping', ({ sender }) => {
+      setTypingUsers((prev) => prev.filter((id) => id !== sender));
+    });
+
+    socket.on('error', ({ msg }) => {
+      setError(msg);
+    });
+
+    // Cleanup
     return () => {
       socket.off('connect');
       socket.off('userStatus');
       socket.off('notification');
       socket.off('userListUpdate');
+      socket.off('receiveMessage');
+      socket.off('userTyping');
+      socket.off('userStoppedTyping');
+      socket.off('error');
     };
-  }, [users]);
+  }, [users, currentUserId]);
 
   // One-time hint
   useEffect(() => {
@@ -196,17 +224,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     setContextMenu({ x, y, user });
   };
 
-  // Close context menu
   const closeContextMenu = () => {
     setContextMenu(null);
-    // Clear any existing timeout when manually closing
     if (contextMenuTimeoutRef.current) {
       clearTimeout(contextMenuTimeoutRef.current);
       contextMenuTimeoutRef.current = null;
     }
   };
 
-  // Fetch user profile
   const fetchUserProfile = async (userId) => {
     try {
       const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
@@ -220,9 +245,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     }
   };
 
-  // Handle context actions
   const handleContextAction = async (action, user) => {
-    // Clear any existing timeout to prevent multiple timers
     if (contextMenuTimeoutRef.current) {
       clearTimeout(contextMenuTimeoutRef.current);
       contextMenuTimeoutRef.current = null;
@@ -231,7 +254,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     switch (action) {
       case 'message':
         setSelectedUserId(user.id);
-        // Reset unread messages for this user when messaging starts
         setUnreadMessages((prev) => ({
           ...prev,
           [user.id]: 0,
@@ -244,21 +266,18 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
         break;
     }
 
-    // Set a new timeout to close the context menu after 3 seconds
     contextMenuTimeoutRef.current = setTimeout(() => {
       setContextMenu(null);
       contextMenuTimeoutRef.current = null;
     }, 3000);
   };
 
-  // Close profile modal
   const closeProfileModal = () => {
     setIsProfileModalOpen(false);
     setSelectedProfile(null);
     setError('');
   };
 
-  // Dismiss error
   const dismissError = () => {
     setError('');
   };
@@ -518,7 +537,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
             <div className="text-center mb-4">
               <div
                 className="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-2xl font-bold text-white border-4 border-blue-500 shadow-md"
-                style={{ backgroundColor: '#4B5563' }} // Static gray color for profile modal
+                style={{ backgroundColor: '#4B5563' }}
               >
                 {selectedProfile.username[0]?.toUpperCase() || '?'}
               </div>
