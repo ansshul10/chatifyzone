@@ -7,6 +7,7 @@ import en from 'i18n-iso-countries/langs/en.json';
 import verifiedIcon from '../assets/verified.png';
 import api from '../utils/api';
 import io from 'socket.io-client';
+import { useNavigate } from 'react-router-dom';
 
 // Initialize i18n-iso-countries
 countries.registerLocale(en);
@@ -16,7 +17,7 @@ const maleIcon = 'https://img.icons8.com/3d-fluency/94/guest-male--v1.png';
 const femaleIcon = 'https://img.icons8.com/3d-fluency/94/businesswoman--v3.png';
 
 // WebSocket connection setup
-const socket = io('http://localhost:5000', {
+const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
   auth: {
     token: localStorage.getItem('token') || localStorage.getItem('anonymousId'),
   },
@@ -51,6 +52,9 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
   const [typingUsers, setTypingUsers] = useState(initialTypingUsers);
   const searchInputRef = useRef(null);
   const contextMenuTimeoutRef = useRef(null);
+  const inactivityTimerRef = useRef(null);
+  const lastActivityUpdateRef = useRef(Date.now());
+  const navigate = useNavigate();
 
   // Get current user's country
   const currentUser = useMemo(() => {
@@ -94,7 +98,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     return filtered;
   }, [sortedUsers, searchQuery, genderFilter]);
 
-  // WebSocket and data fetching
+  // WebSocket, data fetching, and inactivity tracking
   useEffect(() => {
     setIsLoading(true);
 
@@ -134,11 +138,12 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
 
     // WebSocket event listeners
     socket.on('connect', () => {
-      console.log('Connected to WebSocket server');
+      console.log('[Socket.IO] Connected to WebSocket server');
       socket.emit('join', currentUserId); // Rejoin on reconnect
     });
 
     socket.on('userStatus', ({ userId, status }) => {
+      console.log('[Socket.IO UserStatus] Status update:', { userId, status });
       setLocalUsers((prevUsers) =>
         prevUsers.map((user) =>
           user.id === userId ? { ...user, online: status === 'online' } : user
@@ -147,6 +152,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     });
 
     socket.on('notification', ({ senderId }) => {
+      console.log('[Socket.IO Notification] New message from:', senderId);
       setUnreadMessages((prev) => ({
         ...prev,
         [senderId]: (prev[senderId] || 0) + 1,
@@ -154,6 +160,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     });
 
     socket.on('userListUpdate', (onlineUsers) => {
+      console.log('[Socket.IO UserListUpdate] Updating user list:', onlineUsers.length);
       setLocalUsers((prevUsers) => {
         const mergedUsers = [...prevUsers];
         onlineUsers.forEach((updatedUser) => {
@@ -169,30 +176,80 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     });
 
     socket.on('receiveMessage', (message) => {
-      // Only increment unread count if the message is from another user and not already counted
+      console.log('[Socket.IO ReceiveMessage] Message received:', message);
       if (message.sender !== currentUserId && message.receiver === currentUserId) {
         setUnreadMessages((prev) => {
           const currentCount = prev[message.sender] || 0;
-          // Avoid double-counting by checking if notification already incremented
           return { ...prev, [message.sender]: currentCount };
         });
       }
     });
 
     socket.on('userTyping', ({ sender }) => {
+      console.log('[Socket.IO UserTyping] User typing:', sender);
       setTypingUsers((prev) => [...new Set([...prev, sender])]);
     });
 
     socket.on('userStoppedTyping', ({ sender }) => {
+      console.log('[Socket.IO UserStoppedTyping] User stopped typing:', sender);
       setTypingUsers((prev) => prev.filter((id) => id !== sender));
     });
 
     socket.on('error', ({ msg }) => {
+      console.error('[Socket.IO Error]', msg);
       setError(msg);
     });
 
+    socket.on('logout', ({ reason }) => {
+      console.log('[Socket.IO Logout] Received logout event:', reason);
+      setError(`You have been logged out due to ${reason.toLowerCase()}.`);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      delete api.defaults.headers.common['x-auth-token'];
+      setTimeout(() => {
+        navigate('/login');
+      }, 3000);
+    });
+
+    // Inactivity tracking
+    const updateLastActive = async () => {
+      const now = Date.now();
+      if (now - lastActivityUpdateRef.current < 60 * 1000) {
+        return;
+      }
+      try {
+        console.log('[UserList] Updating lastActive timestamp');
+        await api.post('/users/update-last-active');
+        lastActivityUpdateRef.current = now;
+      } catch (err) {
+        console.error('[UserList] Error updating lastActive:', err.message);
+      }
+    };
+
+    const resetInactivityTimer = () => {
+      console.log('[UserList] User activity detected, resetting inactivity timer');
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+      }
+      updateLastActive();
+      inactivityTimerRef.current = setTimeout(() => {
+        console.log('[UserList] Inactivity timeout reached');
+      }, 2 * 60 * 60 * 1000); // 2 hours
+    };
+
+    const handleActivity = () => {
+      resetInactivityTimer();
+    };
+
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('click', handleActivity);
+
+    resetInactivityTimer(); // Initialize timer on mount
+
     // Cleanup
     return () => {
+      console.log('[UserList] Cleaning up');
       socket.off('connect');
       socket.off('userStatus');
       socket.off('notification');
@@ -201,8 +258,15 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
       socket.off('userTyping');
       socket.off('userStoppedTyping');
       socket.off('error');
+      socket.off('logout');
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('click', handleActivity);
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+      }
     };
-  }, [users, currentUserId]);
+  }, [users, currentUserId, navigate]);
 
   // One-time hint
   useEffect(() => {
