@@ -40,7 +40,7 @@ const registerSchema = Joi.object({
       return num;
     }, 'age validation')
     .required(),
-  gender: Joi.string().valid('male', 'female').required(), // Added gender validation
+  gender: Joi.string().valid('male', 'female').required(),
 });
 
 const webauthnRegisterBeginSchema = Joi.object({
@@ -58,7 +58,7 @@ const webauthnRegisterBeginSchema = Joi.object({
       return num;
     }, 'age validation')
     .required(),
-  gender: Joi.string().valid('male', 'female').required(), // Added gender validation
+  gender: Joi.string().valid('male', 'female').required(),
 });
 
 const webauthnRegisterCompleteSchema = Joi.object({
@@ -76,7 +76,7 @@ const webauthnRegisterCompleteSchema = Joi.object({
       return num;
     }, 'age validation')
     .required(),
-  gender: Joi.string().valid('male', 'female').required(), // Added gender validation
+  gender: Joi.string().valid('male', 'female').required(),
   credential: Joi.object().required(),
   challenge: Joi.string().required(),
   userID: Joi.string().required(),
@@ -190,7 +190,7 @@ router.get('/profile/:userId', auth, async (req, res) => {
       createdAt: user.createdAt,
       country: user.country,
       state: user.state,
-      gender: user.gender, // Include gender in response
+      gender: user.gender,
     });
   } catch (err) {
     console.error('[Get User Profile] Server error:', err.message);
@@ -1018,6 +1018,31 @@ router.post('/unblock-user', auth, async (req, res) => {
     res.json(updatedBlockedUsers.blockedUsers);
   } catch (err) {
     console.error('[Unblock User] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Logout
+router.post('/logout', auth, async (req, res) => {
+  try {
+    console.log('[Logout] Received request for user ID:', req.user);
+    const user = await User.findById(req.user);
+    if (!user) {
+      console.error('[Logout] User not found:', req.user);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    // Clear session
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('[Logout] Failed to destroy session:', err.message);
+        return res.status(500).json({ msg: 'Failed to log out' });
+      }
+      console.log(`[Logout] Session destroyed for user: ${user.username}`);
+      res.json({ msg: 'Logged out successfully' });
+    });
+  } catch (err) {
+    console.error('[Logout] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
