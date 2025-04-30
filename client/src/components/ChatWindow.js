@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus } from 'react-icons/fa';
+import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus, FaTrash } from 'react-icons/fa';
 import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
@@ -30,6 +30,7 @@ const ChatWindow = () => {
   const messageInputRef = useRef(null);
   const longPressTimer = useRef(null);
   const hoverTimeout = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (!userId || !username) {
@@ -88,11 +89,20 @@ const ChatWindow = () => {
     });
 
     socket.on('userTyping', ({ sender, username }) => {
-      if (sender === selectedUserId) setTypingUser(username);
+      if (sender === selectedUserId) {
+        setTypingUser(username);
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {
+          setTypingUser(null);
+        }, 2000);
+      }
     });
 
     socket.on('userStoppedTyping', ({ sender }) => {
-      if (sender === selectedUserId) setTypingUser(null);
+      if (sender === selectedUserId) {
+        setTypingUser(null);
+        clearTimeout(typingTimeoutRef.current);
+      }
     });
 
     socket.on('messageStatusUpdate', (updatedMessage) => {
@@ -140,7 +150,7 @@ const ChatWindow = () => {
     });
 
     socket.on('actionResponse', ({ type, success, msg }) => {
-      setError(success ? '' : msg); // Show error only on failure
+      setError(success ? '' : msg);
       setTimeout(() => setError(''), 3000);
       if (success && selectedUserId) {
         if (type === 'block') {
@@ -152,7 +162,7 @@ const ChatWindow = () => {
         } else if (type === 'unfriend') {
           setFriends((prev) => prev.filter((id) => id !== selectedUserId.toString()));
         } else if (type === 'sendFriendRequest') {
-          setError(''); // Clear any previous error on success
+          setError('');
         }
       }
       setIsDropdownOpen(false);
@@ -180,6 +190,7 @@ const ChatWindow = () => {
     return () => {
       socket.disconnect();
       window.removeEventListener('popstate', handlePopState);
+      clearTimeout(typingTimeoutRef.current);
     };
   }, [userId, username, isAnonymous]);
 
@@ -294,6 +305,13 @@ const ChatWindow = () => {
     setShowLogoutModal(false);
     setBackCount(0);
     window.history.pushState({ page: 'userlist' }, null, window.location.pathname);
+  };
+
+  const handleClearHistory = () => {
+    if (!selectedUserId) return;
+    socketRef.current.emit('clearChatHistory', { userId, targetId: selectedUserId });
+    setMessages([]);
+    setIsDropdownOpen(false);
   };
 
   const getUsername = (id) => {
@@ -485,6 +503,14 @@ const ChatWindow = () => {
                           <FaFlag />
                           <span>Report</span>
                         </motion.div>
+                        <motion.div
+                          whileHover={{ backgroundColor: isDarkMode ? '#1F2937' : '#e5e7eb', scale: 1.05 }}
+                          onClick={handleClearHistory}
+                          className={`flex items-center space-x-2 p-2 text-sm ${isDarkMode ? 'text-red-400' : 'text-red-500'} cursor-pointer rounded-md`}
+                        >
+                          <FaTrash />
+                          <span>Clear Chat History</span>
+                        </motion.div>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -524,8 +550,8 @@ const ChatWindow = () => {
                                 ? 'bg-gray-800 text-white'
                                 : 'bg-gray-300 text-gray-900'
                               : isDarkMode
-                              ? 'bg-gray-700 text-gray-200'
-                              : 'bg-gray-400 text-gray-800'
+                                ? 'bg-gray-700 text-gray-200'
+                                : 'bg-gray-400 text-gray-800'
                           }`}
                         >
                           <p
@@ -568,9 +594,14 @@ const ChatWindow = () => {
 
               <div className="p-4 flex flex-col space-y-2">
                 {typingUser && (
-                  <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm text-left`}>
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm text-left`}
+                  >
                     {typingUser} is typing...
-                  </p>
+                  </motion.p>
                 )}
                 {error && (
                   <p className={`text-red-400 text-center text-sm sm:text-base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
