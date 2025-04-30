@@ -26,6 +26,9 @@ const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
   reconnectionDelay: 1000,
 });
 
+// Inactivity timeout (2 hours, matching server)
+const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+
 // Skeleton Loader Component
 const SkeletonUserCard = () => (
   <div className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center space-x-3 animate-pulse">
@@ -68,12 +71,15 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     return [...localUsers]
       .filter((user) => user.id !== currentUserId && user.username && user.id)
       .sort((a, b) => {
+        // Prioritize online status
+        if (a.online && !b.online) return -1;
+        if (!a.online && b.online) return 1;
+        // Then same country
         const aIsSameCountry = a.country && currentCountry && a.country === currentCountry;
         const bIsSameCountry = b.country && currentCountry && b.country === currentCountry;
         if (aIsSameCountry && !bIsSameCountry) return -1;
         if (!aIsSameCountry && bIsSameCountry) return 1;
-        if (a.online && !b.online) return -1;
-        if (!a.online && b.online) return 1;
+        // Finally, username
         return a.username.localeCompare(b.username);
       });
   }, [localUsers, currentUserId, currentUser]);
@@ -112,18 +118,18 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
         .map(async (user) => {
           try {
             const { data } = await api.get(`/auth/profile/${user.id}`);
-            return { id: user.id, gender: data.gender };
+            return { id: user.id, gender: data.gender, country: data.country, age: data.age };
           } catch (err) {
-            console.error(`Failed to fetch gender for user ${user.id}:`, err);
-            return { id: user.id, gender: null };
+            console.error(`[UserList] Failed to fetch profile for user ${user.id}:`, err);
+            return { id: user.id, gender: null, country: null, age: null };
           }
         });
 
-      const genderResults = await Promise.all(genderPromises);
-      genderResults.forEach(({ id, gender }) => {
+      const profileResults = await Promise.all(genderPromises);
+      profileResults.forEach(({ id, gender, country, age }) => {
         const userIndex = updatedUsers.findIndex((u) => u.id === id);
         if (userIndex !== -1) {
-          updatedUsers[userIndex] = { ...updatedUsers[userIndex], gender };
+          updatedUsers[userIndex] = { ...updatedUsers[userIndex], gender, country, age };
         }
       });
 
@@ -133,66 +139,76 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
 
     fetchMissingGenders();
 
-    // Join the current user's room
+    // Join the current user's room and request initial user list
     socket.emit('join', currentUserId);
+    socket.emit('refresh', currentUserId);
 
     // WebSocket event listeners
     socket.on('connect', () => {
       console.log('[Socket.IO] Connected to WebSocket server');
-      socket.emit('join', currentUserId); // Rejoin on reconnect
+      socket.emit('join', currentUserId);
+      socket.emit('refresh', currentUserId);
     });
 
-    socket.on('userStatus', ({ userId, status }) => {
-      console.log('[Socket.IO UserStatus] Status update:', { userId, status });
-      setLocalUsers((prevUsers) =>
-        prevUsers.map((user) =>
-          user.id === userId ? { ...user, online: status === 'online' } : user
-        )
-      );
-    });
-
-    socket.on('notification', ({ senderId }) => {
-      console.log('[Socket.IO Notification] New message from:', senderId);
-      setUnreadMessages((prev) => ({
-        ...prev,
-        [senderId]: (prev[senderId] || 0) + 1,
-      }));
-    });
-
-    socket.on('userListUpdate', (onlineUsers) => {
-      console.log('[Socket.IO UserListUpdate] Updating user list:', onlineUsers.length);
+    socket.on('userStatus', (userData) => {
+      console.log('[Socket.IO UserStatus] Status update:', userData);
       setLocalUsers((prevUsers) => {
-        const mergedUsers = [...prevUsers];
-        onlineUsers.forEach((updatedUser) => {
-          const index = mergedUsers.findIndex((u) => u.id === updatedUser.id);
-          if (index !== -1) {
-            mergedUsers[index] = { ...mergedUsers[index], ...updatedUser };
-          } else {
-            mergedUsers.push(updatedUser);
-          }
-        });
-        return mergedUsers.filter((user) => user.id !== currentUserId);
+        const index = prevUsers.findIndex((u) => u.id === userData.userId || u.id === userData.id);
+        if (index !== -1) {
+          return [
+            ...prevUsers.slice(0, index),
+            { ...prevUsers[index], ...userData, online: userData.status === 'online' },
+            ...prevUsers.slice(index + 1),
+          ];
+        }
+        return [...prevUsers, { ...userData, online: userData.status === 'online' }];
+      });
+    });
+
+    socket.on('notification', ({ senderId, text }) => {
+      console.log('[Socket.IO Notification] Received:', { senderId, text });
+      setUnreadMessages((prev) => {
+        const newCount = (prev[senderId] || 0) + 1;
+        console.log(`[Socket.IO Notification] Updated unreadMessages for ${senderId}: ${newCount}`);
+        return {
+          ...prev,
+          [senderId]: newCount,
+        };
       });
     });
 
     socket.on('receiveMessage', (message) => {
-      console.log('[Socket.IO ReceiveMessage] Message received:', message);
+      console.log('[Socket.IO ReceiveMessage] Received:', message);
       if (message.sender !== currentUserId && message.receiver === currentUserId) {
         setUnreadMessages((prev) => {
-          const currentCount = prev[message.sender] || 0;
-          return { ...prev, [message.sender]: currentCount };
+          const newCount = (prev[message.sender] || 0) + 1;
+          console.log(`[Socket.IO ReceiveMessage] Updated unreadMessages for ${message.sender}: ${newCount}`);
+          return {
+            ...prev,
+            [message.sender]: newCount,
+          };
         });
       }
     });
 
     socket.on('userTyping', ({ sender }) => {
-      console.log('[Socket.IO UserTyping] User typing:', sender);
-      setTypingUsers((prev) => [...new Set([...prev, sender])]);
+      console.log('[Socket.IO UserTyping] Received: User typing:', sender);
+      setTypingUsers((prev) => {
+        if (!prev.includes(sender)) {
+          console.log(`[Socket.IO UserTyping] Added ${sender} to typingUsers`);
+          return [...prev, sender];
+        }
+        return prev;
+      });
     });
 
     socket.on('userStoppedTyping', ({ sender }) => {
-      console.log('[Socket.IO UserStoppedTyping] User stopped typing:', sender);
-      setTypingUsers((prev) => prev.filter((id) => id !== sender));
+      console.log('[Socket.IO UserStoppedTyping] Received: User stopped typing:', sender);
+      setTypingUsers((prev) => {
+        const updated = prev.filter((id) => id !== sender);
+        console.log(`[Socket.IO UserStoppedTyping] Removed ${sender} from typingUsers`);
+        return updated;
+      });
     });
 
     socket.on('error', ({ msg }) => {
@@ -214,9 +230,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     // Inactivity tracking
     const updateLastActive = async () => {
       const now = Date.now();
-      if (now - lastActivityUpdateRef.current < 60 * 1000) {
-        return;
-      }
+      if (now - lastActivityUpdateRef.current < 60 * 1000) return;
       try {
         console.log('[UserList] Updating lastActive timestamp');
         await api.post('/users/update-last-active');
@@ -228,24 +242,21 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
 
     const resetInactivityTimer = () => {
       console.log('[UserList] User activity detected, resetting inactivity timer');
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current);
-      }
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
       updateLastActive();
       inactivityTimerRef.current = setTimeout(() => {
         console.log('[UserList] Inactivity timeout reached');
-      }, 2 * 60 * 60 * 1000); // 2 hours
+        socket.emit('logout', { reason: 'Inactivity' });
+      }, INACTIVITY_TIMEOUT);
     };
 
-    const handleActivity = () => {
-      resetInactivityTimer();
-    };
+    const handleActivity = () => resetInactivityTimer();
 
     window.addEventListener('mousemove', handleActivity);
     window.addEventListener('keydown', handleActivity);
     window.addEventListener('click', handleActivity);
 
-    resetInactivityTimer(); // Initialize timer on mount
+    resetInactivityTimer();
 
     // Cleanup
     return () => {
@@ -253,7 +264,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
       socket.off('connect');
       socket.off('userStatus');
       socket.off('notification');
-      socket.off('userListUpdate');
       socket.off('receiveMessage');
       socket.off('userTyping');
       socket.off('userStoppedTyping');
@@ -262,9 +272,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
       window.removeEventListener('mousemove', handleActivity);
       window.removeEventListener('keydown', handleActivity);
       window.removeEventListener('click', handleActivity);
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current);
-      }
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     };
   }, [users, currentUserId, navigate]);
 
@@ -318,10 +326,13 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     switch (action) {
       case 'message':
         setSelectedUserId(user.id);
-        setUnreadMessages((prev) => ({
-          ...prev,
-          [user.id]: 0,
-        }));
+        setUnreadMessages((prev) => {
+          console.log(`[UserList] Cleared unreadMessages for ${user.id}`);
+          return {
+            ...prev,
+            [user.id]: 0,
+          };
+        });
         break;
       case 'profile':
         await fetchUserProfile(user.id);
@@ -342,9 +353,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     setError('');
   };
 
-  const dismissError = () => {
-    setError('');
-  };
+  const dismissError = () => setError('');
 
   return (
     <div
