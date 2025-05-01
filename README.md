@@ -87,14 +87,14 @@ Configure Environment Variables:
 
 In server/ .env
 
--PORT=5000
--MONGO_URI=your_mongo_connection_string
--JWT_SECRET=your_jwt_secret
--EMAIL_USER=your_email_user
--EMAIL_PASS=your_email_pass
--CLIENT_URL=YOUR_URL
--WEBAUTHN_RP_ID=your_webauthn_rp_id
--SESSION_SECRET=your_session_secret
+- PORT=5000
+- MONGO_URI=your_mongo_connection_string
+- JWT_SECRET=your_jwt_secret
+- EMAIL_USER=your_email_user
+- EMAIL_PASS=your_email_pass
+- CLIENT_URL=YOUR_URL
+- WEBAUTHN_RP_ID=your_webauthn_rp_id
+- SESSION_SECRET=your_session_secret
 
 
 In client/ .env
