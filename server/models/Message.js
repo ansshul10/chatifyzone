@@ -1,4 +1,3 @@
-// server/models/Message.js
 const mongoose = require('mongoose');
 
 const messageSchema = new mongoose.Schema({
@@ -10,7 +9,7 @@ const messageSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   deliveredAt: { type: Date },
   readAt: { type: Date },
-  reactions: { type: Map, of: Number, default: {} }, // Added for reactions
+  reactions: { type: Map, of: Number, default: {} },
 });
 
 module.exports = mongoose.model('Message', messageSchema);
