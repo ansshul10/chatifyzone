@@ -128,7 +128,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 Copyright (c) 2025 [Anshul Gurjar]
 
-All rights reserved. ChatifyZone is the intellectual property of [Your Name]. Unauthorized commercial use or distribution without permission is prohibited.
+All rights reserved. ChatifyZone is the intellectual property of Anshul Gurjar. Unauthorized commercial use or distribution without permission is prohibited.
 
 📬 Contact
 
