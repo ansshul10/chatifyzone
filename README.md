@@ -41,14 +41,12 @@ ChatifyZone is packed with features to elevate your chatting experience:
 
 Experience ChatifyZone in action!  
 👉 **[Try ChatifyZone Live](https://chatifyzone.vercel.app/)**  
-*Note: Update the demo URL with your actual deployment link.*
 
 ---
 
 ## 📸 Screenshots
 
 See ChatifyZone in action!  
-*Replace placeholders with actual screenshots for a stunning showcase.*
 
 | **Login Page** | **Chat Interface** | **User Profile** |
 |----------------|-------------------|------------------|
@@ -117,9 +115,9 @@ npm start
 
 Access ChatifyZone:Open YOUR_URL (e.g., http://localhost:3000) in your browser and start chatting! 🎉
 
-- 🎮 Usage
+🎮 Usage
 
-- ChatifyZone is intuitive and fun to use:
+ChatifyZone is intuitive and fun to use:
 
 - Sign Up/Login 🔑: Create an account or log in with existing credentials.
 - Anonymous Mode 🕵️: Use the AnonymousEntry feature to chat without registering.
@@ -130,8 +128,9 @@ Access ChatifyZone:Open YOUR_URL (e.g., http://localhost:3000) in your browser a
 
 
 🛠️ Technologies Used
-- ChatifyZone leverages a modern tech stack for performance and scalability:
-- Frontend
+ChatifyZone leverages a modern tech stack for performance and scalability:
+
+Frontend
 
 - 🌟 React: Dynamic UI components (React)
 - 🎨 Tailwind CSS: Utility-first styling (Tailwind CSS)
@@ -149,7 +148,7 @@ Backend
 - 🛡️ Bcrypt: Password hashing (Bcrypt)
 
 🔧 Troubleshooting
-- Run into issues? Here are quick fixes:
+Run into issues? Here are quick fixes:
 
 - MongoDB Connection 🗄️: Verify MONGO_URI is correct and MongoDB is running. Test with MongoDB Compass.
 - CORS Issues 🌐: Ensure CLIENT_URL in server/.env matches the frontend URL (e.g., YOUR_URL).
@@ -177,6 +176,5 @@ Reach out for questions, collaborations, or just to say hi! 👋
 
 Email: ansshul10@gmail.com
 GitHub: ansshul10
-
 
 🌟 Join the ChatifyZone community and let’s build the future of real-time communication together! 🌟```
