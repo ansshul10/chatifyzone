@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { FaSearch, FaComment, FaInfoCircle, FaTimes } from 'react-icons/fa';
+import { FaSearch, FaComment, FaInfoCircle, FaTimes, FaUsers, FaEnvelope } from 'react-icons/fa';
 import PropTypes from 'prop-types';
 import ReactCountryFlag from 'react-country-flag';
 import countries from 'i18n-iso-countries';
@@ -9,27 +9,21 @@ import api from '../utils/api';
 import io from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 
-// Initialize i18n-iso-countries
 countries.registerLocale(en);
 
-// Icons8 gender icons
 const maleIcon = 'https://img.icons8.com/3d-fluency/94/guest-male--v1.png';
 const femaleIcon = 'https://img.icons8.com/3d-fluency/94/businesswoman--v3.png';
 
-// WebSocket connection setup
 const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
-  auth: {
-    token: localStorage.getItem('token') || localStorage.getItem('anonymousId'),
-  },
+  auth: { token: localStorage.getItem('token') || localStorage.getItem('anonymousId') },
   reconnection: true,
-  reconnectionAttempts: 5,
+  reconnectionAttempts: 10,
   reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
 });
 
-// Inactivity timeout (2 hours, matching server)
-const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
+const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000;
 
-// Skeleton Loader Component
 const SkeletonUserCard = () => (
   <div className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center space-x-3 animate-pulse">
     <div className="w-8 h-8 rounded-full bg-gray-700/50"></div>
@@ -41,7 +35,17 @@ const SkeletonUserCard = () => (
   </div>
 );
 
-const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: initialUnreadMessages, typingUsers: initialTypingUsers = [] }) => {
+const SkeletonMessageCard = () => (
+  <div className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center space-x-3 animate-pulse">
+    <div className="w-8 h-8 rounded-full bg-gray-700/50"></div>
+    <div className="flex-1 space-y-2">
+      <div className="h-3 w-1/2 rounded bg-gray-700/50"></div>
+      <div className="h-2 w-3/4 rounded bg-gray-700/50"></div>
+    </div>
+  </div>
+);
+
+const UserList = ({ users, setSelectedUserId, currentUserId }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
   const [selectedProfile, setSelectedProfile] = useState(null);
@@ -51,35 +55,33 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
   const [showMessageHint, setShowMessageHint] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [genderFilter, setGenderFilter] = useState('all');
-  const [unreadMessages, setUnreadMessages] = useState(initialUnreadMessages);
-  const [typingUsers, setTypingUsers] = useState(initialTypingUsers);
+  const [activeTab, setActiveTab] = useState('users');
+  const [conversations, setConversations] = useState([]);
+  const [isMessagesLoading, setIsMessagesLoading] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
   const searchInputRef = useRef(null);
   const contextMenuTimeoutRef = useRef(null);
   const inactivityTimerRef = useRef(null);
   const lastActivityUpdateRef = useRef(Date.now());
+  const userListDebounceRef = useRef(null);
   const navigate = useNavigate();
 
-  // Get current user's country
   const currentUser = useMemo(() => {
     const user = localUsers.find((u) => u.id === currentUserId);
     return user || JSON.parse(localStorage.getItem('user') || '{}');
   }, [localUsers, currentUserId]);
 
-  // Sort and filter users
   const sortedUsers = useMemo(() => {
     const currentCountry = currentUser?.country;
     return [...localUsers]
       .filter((user) => user.id !== currentUserId && user.username && user.id)
       .sort((a, b) => {
-        // Prioritize online status
         if (a.online && !b.online) return -1;
         if (!a.online && b.online) return 1;
-        // Then same country
         const aIsSameCountry = a.country && currentCountry && a.country === currentCountry;
         const bIsSameCountry = b.country && currentCountry && b.country === currentCountry;
         if (aIsSameCountry && !bIsSameCountry) return -1;
         if (!aIsSameCountry && bIsSameCountry) return 1;
-        // Finally, username
         return a.username.localeCompare(b.username);
       });
   }, [localUsers, currentUserId, currentUser]);
@@ -104,53 +106,113 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     return filtered;
   }, [sortedUsers, searchQuery, genderFilter]);
 
-  // WebSocket, data fetching, and inactivity tracking
-  useEffect(() => {
-    setIsLoading(true);
-
-    const fetchMissingGenders = async () => {
-      let updatedUsers = [...users];
+  const fetchConversations = async () => {
+    try {
+      setIsMessagesLoading(true);
       const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
       api.defaults.headers.common['x-auth-token'] = token;
+      const { data } = await api.get('/chat/conversations');
+      setConversations(data);
+      setError('');
+    } catch (err) {
+      console.error('[UserList] fetchConversations error:', err);
+      setError(err.response?.data.msg || 'Failed to load conversations');
+    } finally {
+      setIsMessagesLoading(false);
+    }
+  };
 
-      const genderPromises = updatedUsers
-        .filter((user) => !user.gender)
-        .map(async (user) => {
-          try {
-            const { data } = await api.get(`/auth/profile/${user.id}`);
-            return { id: user.id, gender: data.gender, country: data.country, age: data.age };
-          } catch (err) {
-            console.error(`[UserList] Failed to fetch profile for user ${user.id}:`, err);
-            return { id: user.id, gender: null, country: null, age: null };
+  const fetchUnreadCount = async () => {
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
+      api.defaults.headers.common['x-auth-token'] = token;
+      const { data } = await api.get('/chat/unread-count');
+      setUnreadCount(data.unreadCount);
+      setError('');
+    } catch (err) {
+      console.error('[UserList] fetchUnreadCount error:', err);
+      setError(err.response?.data.msg || 'Failed to load unread count');
+    }
+  };
+
+  const markMessagesAsRead = async (senderId) => {
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
+      api.defaults.headers.common['x-auth-token'] = token;
+      const { data } = await api.post('/chat/mark-read', { senderId });
+      if (data.modifiedCount > 0) {
+        setConversations((prev) => prev.filter((conv) => conv.senderId !== senderId));
+        setUnreadCount((prev) => Math.max(0, prev - data.modifiedCount));
+        socket.emit('updateMessageStatus', { senderId, userId: currentUserId, status: 'read' });
+      }
+    } catch (err) {
+      console.error('[UserList] markMessagesAsRead error:', err);
+      setError(err.response?.data.msg || 'Failed to mark messages as read');
+    }
+  };
+
+  const debounceUserListUpdate = (newUsers) => {
+    if (userListDebounceRef.current) clearTimeout(userListDebounceRef.current);
+    userListDebounceRef.current = setTimeout(() => {
+      setLocalUsers(newUsers);
+    }, 500);
+  };
+
+  useEffect(() => {
+    setIsLoading(true);
+    const fetchInitialData = async () => {
+      try {
+        let updatedUsers = [...users];
+        const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
+        api.defaults.headers.common['x-auth-token'] = token;
+
+        const genderPromises = updatedUsers
+          .filter((user) => !user.gender)
+          .map(async (user) => {
+            try {
+              const { data } = await api.get(`/auth/profile/${user.id}`);
+              return { id: user.id, gender: data.gender, country: data.country, age: data.age };
+            } catch (err) {
+              console.error(`[UserList] Failed to fetch profile for user ${user.id}:`, err);
+              return { id: user.id, gender: null, country: null, age: null };
+            }
+          });
+
+        const profileResults = await Promise.all(genderPromises);
+        profileResults.forEach(({ id, gender, country, age }) => {
+          const userIndex = updatedUsers.findIndex((u) => u.id === id);
+          if (userIndex !== -1) {
+            updatedUsers[userIndex] = { ...updatedUsers[userIndex], gender, country, age };
           }
         });
 
-      const profileResults = await Promise.all(genderPromises);
-      profileResults.forEach(({ id, gender, country, age }) => {
-        const userIndex = updatedUsers.findIndex((u) => u.id === id);
-        if (userIndex !== -1) {
-          updatedUsers[userIndex] = { ...updatedUsers[userIndex], gender, country, age };
-        }
-      });
-
-      setLocalUsers(updatedUsers);
-      setIsLoading(false);
+        setLocalUsers(updatedUsers);
+        await fetchConversations();
+        await fetchUnreadCount();
+      } catch (err) {
+        setError('Failed to load initial data');
+      } finally {
+        setIsLoading(false);
+      }
     };
 
-    fetchMissingGenders();
+    fetchInitialData();
+  }, [currentUserId, users]);
 
-    // Join the current user's room and request initial user list
+  useEffect(() => {
     socket.emit('join', currentUserId);
-    socket.emit('refresh', currentUserId);
 
-    // WebSocket event listeners
-    socket.on('connect', () => {
+    const handleConnect = () => {
       console.log('[Socket.IO] Connected to WebSocket server');
       socket.emit('join', currentUserId);
-      socket.emit('refresh', currentUserId);
-    });
+    };
 
-    socket.on('userStatus', (userData) => {
+    const handleUserListUpdate = (updatedUsers) => {
+      console.log('[Socket.IO UserListUpdate] Received:', updatedUsers);
+      debounceUserListUpdate(updatedUsers);
+    };
+
+    const handleUserStatus = (userData) => {
       console.log('[Socket.IO UserStatus] Status update:', userData);
       setLocalUsers((prevUsers) => {
         const index = prevUsers.findIndex((u) => u.id === userData.userId || u.id === userData.id);
@@ -163,90 +225,92 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
         }
         return [...prevUsers, { ...userData, online: userData.status === 'online' }];
       });
-    });
+    };
 
-    socket.on('notification', ({ senderId, text }) => {
-      console.log('[Socket.IO Notification] Received:', { senderId, text });
-      setUnreadMessages((prev) => {
-        const newCount = (prev[senderId] || 0) + 1;
-        console.log(`[Socket.IO Notification] Updated unreadMessages for ${senderId}: ${newCount}`);
-        return {
-          ...prev,
-          [senderId]: newCount,
-        };
-      });
-    });
-
-    socket.on('receiveMessage', (message) => {
+    const handleReceiveMessage = async (message) => {
       console.log('[Socket.IO ReceiveMessage] Received:', message);
-      if (message.sender !== currentUserId && message.receiver === currentUserId) {
-        setUnreadMessages((prev) => {
-          const newCount = (prev[message.sender] || 0) + 1;
-          console.log(`[Socket.IO ReceiveMessage] Updated unreadMessages for ${message.sender}: ${newCount}`);
-          return {
-            ...prev,
-            [message.sender]: newCount,
-          };
+      const sender = message.sender?.toString();
+      const receiver = message.receiver?.toString();
+
+      if (sender && sender !== currentUserId && receiver === currentUserId && !message.readAt) {
+        setUnreadCount((prev) => prev + 1);
+        const senderDetails = await api.get(`/auth/profile/${sender}`).then((res) => res.data);
+        setConversations((prev) => {
+          const existingConv = prev.find((conv) => conv.senderId === sender);
+          const updated = existingConv
+            ? prev.map((conv) =>
+                conv.senderId === sender
+                  ? { ...conv, latestMessage: message.content, latestMessageTime: message.createdAt }
+                  : conv
+              )
+            : [
+                {
+                  senderId: sender,
+                  username: senderDetails.username,
+                  isAnonymous: senderDetails.isAnonymous,
+                  gender: senderDetails.gender,
+                  latestMessage: message.content,
+                  latestMessageTime: message.createdAt,
+                },
+                ...prev,
+              ];
+          return updated.sort((a, b) => new Date(b.latestMessageTime) - new Date(a.latestMessageTime));
         });
-      }
-    });
-
-    socket.on('userTyping', ({ sender }) => {
-      console.log('[Socket.IO UserTyping] Received: User typing:', sender);
-      setTypingUsers((prev) => {
-        if (!prev.includes(sender)) {
-          console.log(`[Socket.IO UserTyping] Added ${sender} to typingUsers`);
-          return [...prev, sender];
-        }
-        return prev;
-      });
-    });
-
-    socket.on('userStoppedTyping', ({ sender }) => {
-      console.log('[Socket.IO UserStoppedTyping] Received: User stopped typing:', sender);
-      setTypingUsers((prev) => {
-        const updated = prev.filter((id) => id !== sender);
-        console.log(`[Socket.IO UserStoppedTyping] Removed ${sender} from typingUsers`);
-        return updated;
-      });
-    });
-
-    socket.on('error', ({ msg }) => {
-      console.error('[Socket.IO Error]', msg);
-      setError(msg);
-    });
-
-    socket.on('logout', ({ reason }) => {
-      console.log('[Socket.IO Logout] Received logout event:', reason);
-      setError(`You have been logged out due to ${reason.toLowerCase()}.`);
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      delete api.defaults.headers.common['x-auth-token'];
-      setTimeout(() => {
-        navigate('/login');
-      }, 3000);
-    });
-
-    // Inactivity tracking
-    const updateLastActive = async () => {
-      const now = Date.now();
-      if (now - lastActivityUpdateRef.current < 60 * 1000) return;
-      try {
-        console.log('[UserList] Updating lastActive timestamp');
-        await api.post('/users/update-last-active');
-        lastActivityUpdateRef.current = now;
-      } catch (err) {
-        console.error('[UserList] Error updating lastActive:', err.message);
       }
     };
 
+    const handleMessageStatusUpdate = async (message) => {
+      if (message.receiver === currentUserId && message.readAt) {
+        setUnreadCount((prev) => Math.max(0, prev - 1));
+        setConversations((prev) => prev.filter((conv) => conv.senderId !== message.sender.toString()));
+      }
+    };
+
+    const handleError = ({ msg }) => {
+      setError(msg);
+    };
+
+    const handleLogout = ({ reason }) => {
+      setError(`You have been logged out due to ${reason.toLowerCase()}.`);
+      localStorage.clear();
+      delete api.defaults.headers.common['x-auth-token'];
+      navigate('/login');
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('userListUpdate', handleUserListUpdate);
+    socket.on('userStatus', handleUserStatus);
+    socket.on('receiveMessage', handleReceiveMessage);
+    socket.on('messageStatusUpdate', handleMessageStatusUpdate);
+    socket.on('error', handleError);
+    socket.on('logout', handleLogout);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('userListUpdate', handleUserListUpdate);
+      socket.off('userStatus', handleUserStatus);
+      socket.off('receiveMessage', handleReceiveMessage);
+      socket.off('messageStatusUpdate', handleMessageStatusUpdate);
+      socket.off('error', handleError);
+      socket.off('logout', handleLogout);
+    };
+  }, [currentUserId, navigate]);
+
+  useEffect(() => {
     const resetInactivityTimer = () => {
-      console.log('[UserList] User activity detected, resetting inactivity timer');
+      const now = Date.now();
+      if (now - lastActivityUpdateRef.current >= 60 * 1000) {
+        api
+          .post('/api/users/update-last-active')
+          .catch((err) =>
+            console.error('[UserList] Error updating lastActive:', err.message)
+          );
+        lastActivityUpdateRef.current = now;
+      }
+
       if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-      updateLastActive();
       inactivityTimerRef.current = setTimeout(() => {
-        console.log('[UserList] Inactivity timeout reached');
-        socket.emit('logout', { reason: 'Inactivity' });
+        socket.emit('inactivity', { userId: currentUserId });
       }, INACTIVITY_TIMEOUT);
     };
 
@@ -258,25 +322,14 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
 
     resetInactivityTimer();
 
-    // Cleanup
     return () => {
-      console.log('[UserList] Cleaning up');
-      socket.off('connect');
-      socket.off('userStatus');
-      socket.off('notification');
-      socket.off('receiveMessage');
-      socket.off('userTyping');
-      socket.off('userStoppedTyping');
-      socket.off('error');
-      socket.off('logout');
       window.removeEventListener('mousemove', handleActivity);
       window.removeEventListener('keydown', handleActivity);
       window.removeEventListener('click', handleActivity);
       if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     };
-  }, [users, currentUserId, navigate]);
+  }, [currentUserId]);
 
-  // One-time hint
   useEffect(() => {
     if (!localStorage.getItem('seenMessageHint') && filteredUsers.length > 0) {
       setShowMessageHint(true);
@@ -287,7 +340,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     }
   }, [filteredUsers]);
 
-  // Handle context menu
   const handleContextMenu = (e, user) => {
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
@@ -298,10 +350,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
 
   const closeContextMenu = () => {
     setContextMenu(null);
-    if (contextMenuTimeoutRef.current) {
-      clearTimeout(contextMenuTimeoutRef.current);
-      contextMenuTimeoutRef.current = null;
-    }
+    if (contextMenuTimeoutRef.current) clearTimeout(contextMenuTimeoutRef.current);
   };
 
   const fetchUserProfile = async (userId) => {
@@ -317,34 +366,19 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     }
   };
 
-  const handleContextAction = async (action, user) => {
-    if (contextMenuTimeoutRef.current) {
-      clearTimeout(contextMenuTimeoutRef.current);
-      contextMenuTimeoutRef.current = null;
-    }
-
+  const handleContextAction = (action, user) => {
+    if (contextMenuTimeoutRef.current) clearTimeout(contextMenuTimeoutRef.current);
     switch (action) {
       case 'message':
         setSelectedUserId(user.id);
-        setUnreadMessages((prev) => {
-          console.log(`[UserList] Cleared unreadMessages for ${user.id}`);
-          return {
-            ...prev,
-            [user.id]: 0,
-          };
-        });
         break;
       case 'profile':
-        await fetchUserProfile(user.id);
+        fetchUserProfile(user.id);
         break;
       default:
         break;
     }
-
-    contextMenuTimeoutRef.current = setTimeout(() => {
-      setContextMenu(null);
-      contextMenuTimeoutRef.current = null;
-    }, 3000);
+    contextMenuTimeoutRef.current = setTimeout(closeContextMenu, 3000);
   };
 
   const closeProfileModal = () => {
@@ -353,214 +387,219 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
     setError('');
   };
 
-  const dismissError = () => setError('');
+  const formatTimestamp = (date) => {
+    const now = new Date();
+    const messageDate = new Date(date);
+    const isToday = now.toDateString() === messageDate.toDateString();
+    return isToday
+      ? messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : messageDate.toLocaleDateString();
+  };
 
   return (
-    <div
-      className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-4 sm:py-8 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden"
-      role="region"
-      aria-label="User List"
-    >
-      {/* Header with Sticky Search and Gender Filter */}
+    <div className="w-full max-w-md mx-auto bg-transparent px-4 py-6 sm:px-4 sm:py-8 h-full flex flex-col font-[Inter, sans-serif] overflow-x-hidden">
       <div className="sticky top-0 bg-[#1A1A1A]/80 rounded-md p-3 mb-4 sm:mb-6 shadow-md">
-        <div className="flex items-center justify-between flex-col sm:flex-row gap-3">
-          <h2
-            className="text-xl sm:text-2xl font-bold text-white bg-gradient-to-r from-blue-500 to-indigo-500 bg-clip-text text-transparent"
+        <div className="flex justify-around mb-4">
+          <button
+            className={`flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors duration-200 ${
+              activeTab === 'users' ? 'bg-blue-600 text-white' : 'bg-gray-700/50 text-gray-300 hover:bg-gray-600'
+            }`}
+            onClick={() => setActiveTab('users')}
           >
-            Users
-          </h2>
-          <div
-            className="relative flex items-center w-full sm:w-3/5 overflow-visible"
+            <FaUsers />
+            <span>Users</span>
+          </button>
+          <button
+            className={`flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors duration-200 relative ${
+              activeTab === 'messages' ? 'bg-blue-600 text-white' : 'bg-gray-700/50 text-gray-300 hover:bg-gray-600'
+            }`}
+            onClick={() => setActiveTab('messages')}
           >
-            <FaSearch className="absolute left-3 text-gray-300 text-lg" style={{ filter: 'none', backdropFilter: 'none' }} />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search users..."
-              className="w-full pl-10 pr-4 py-2 text-sm text-white-200 bg-black border border-gray-700/50 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-gray-500 transition-all duration-300"
-              aria-label="Search users"
-            />
-          </div>
+            <FaEnvelope />
+            <span>Messages</span>
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                {unreadCount}
+              </span>
+            )}
+          </button>
         </div>
-        <div className="mt-3">
-          <select
-            value={genderFilter}
-            onChange={(e) => setGenderFilter(e.target.value)}
-            className="w-full sm:w-1/3 py-2 px-3 text-sm text-white-200 bg-black border border-gray-700/50 rounded-md focus:outline-none transition-all duration-300"
-            aria-label="Filter users by gender"
-          >
-            <option value="all">All Genders</option>
-            <option value="male">Male</option>
-            <option value="female">Female</option>
-          </select>
-        </div>
+        {activeTab === 'users' && (
+          <>
+            <div className="flex items-center justify-between flex-col sm:flex-row gap-3">
+              <h2 className="text-xl sm:text-2xl font-bold text-white bg-gradient-to-r from-blue-500 to-indigo-500 bg-clip-text text-transparent">
+                Users
+              </h2>
+              <div className="relative flex items-center w-full sm:w-3/5 overflow-visible">
+                <FaSearch className="absolute left-3 text-gray-300 text-lg" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search users..."
+                  className="w-full pl-10 pr-4 py-2 text-sm text-white bg-black border border-gray-700/50 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 placeholder-gray-500 transition-all duration-300"
+                />
+              </div>
+            </div>
+            <div className="mt-3">
+              <select
+                value={genderFilter}
+                onChange={(e) => setGenderFilter(e.target.value)}
+                className="w-full sm:w-1/3 py-2 px-3 text-sm text-white bg-black border border-gray-700/50 rounded-md focus:outline-none transition-all duration-300"
+              >
+                <option value="all">All Genders</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Error Message */}
       {error && !isProfileModalOpen && (
-        <div
-          className="mb-4 p-3 bg-red-900/20 border border-red-700/50 rounded-md shadow-md flex items-center justify-between"
-          role="alert"
-          aria-live="assertive"
-        >
+        <div className="mb-4 p-3 bg-red-900/20 border border-red-700/50 rounded-md shadow-md flex items-center justify-between">
           <span className="text-red-400 text-xs">{error}</span>
-          <button
-            onClick={dismissError}
-            className="text-red-400 hover:text-red-300"
-            aria-label="Dismiss error"
-          >
+          <button onClick={() => setError('')} className="text-red-400 hover:text-red-300">
             <FaTimes className="text-sm" />
           </button>
         </div>
       )}
 
-      {/* User List */}
-      <div
-        className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent space-y-3 scroll-smooth overscroll-y-contain"
-        role="list"
-        aria-label="Available users"
-        aria-live="polite"
-      >
-        {isLoading ? (
-          <>
-            <SkeletonUserCard />
-            <SkeletonUserCard />
-            <SkeletonUserCard />
-          </>
-        ) : filteredUsers.length === 0 ? (
-          <div
-            className="text-gray-300 text-center text-sm font-medium py-6"
-          >
-            {searchQuery || genderFilter !== 'all' ? 'No users found' : 'No users available yet 🌐'}
-          </div>
-        ) : (
-          filteredUsers.map((user, index) => (
-            <div
-              key={user.id}
-              className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center justify-between border border-gray-700/50 shadow-md hover:shadow-md transition-shadow duration-300"
-              onContextMenu={(e) => handleContextMenu(e, user)}
-              role="listitem"
-              aria-label={`User ${user.username}`}
-            >
-              <div className="flex items-center space-x-3 flex-grow">
-                {user.country && countries.getName(user.country, 'en') && (
-                  <div>
+      <div className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-blue-500 scrollbar-track-transparent space-y-3 scroll-smooth overscroll-y-contain">
+        {activeTab === 'users' ? (
+          isLoading ? (
+            <>
+              <SkeletonUserCard />
+              <SkeletonUserCard />
+              <SkeletonUserCard />
+            </>
+          ) : filteredUsers.length === 0 ? (
+            <div className="text-gray-300 text-center text-sm font-medium py-6">
+              {searchQuery || genderFilter !== 'all' ? 'No users found' : 'No users available yet 🌐'}
+            </div>
+          ) : (
+            filteredUsers.map((user, index) => (
+              <div
+                key={user.id}
+                className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center justify-between border border-gray-700/50 shadow-md hover:shadow-md transition-shadow duration-300"
+                onContextMenu={(e) => handleContextMenu(e, user)}
+              >
+                <div className="flex items-center space-x-3 flex-grow">
+                  {user.country && countries.getName(user.country, 'en') && (
                     <ReactCountryFlag
                       countryCode={user.country}
                       svg
                       className="w-8 h-6 rounded-sm shadow-sm"
-                      style={{ width: '32px', height: '24px' }}
                       title={countries.getName(user.country, 'en')}
-                      aria-label={`Flag of ${countries.getName(user.country, 'en')}`}
-                    />
-                  </div>
-                )}
-                <div
-                  className="w-10 h-10 flex items-center justify-center text-white relative"
-                >
-                  {user.gender && (user.gender.toLowerCase() === 'male' || user.gender.toUpperCase() === 'M') ? (
-                    <img
-                      src={maleIcon}
-                      alt="Male icon"
-                      className="w-8 h-8"
-                      aria-label="Male user"
-                    />
-                  ) : user.gender && (user.gender.toLowerCase() === 'female' || user.gender.toUpperCase() === 'F') ? (
-                    <img
-                      src={femaleIcon}
-                      alt="Female icon"
-                      className="w-8 h-8"
-                      aria-label="Female user"
-                    />
-                  ) : (
-                    <img
-                      src={maleIcon}
-                      alt="Default male icon"
-                      className="w-8 h-8 opacity-50"
-                      aria-label="Default user gender icon"
                     />
                   )}
-                  {user.online && (
-                    <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full border-2 border-[#1A1A1A]"></span>
-                  )}
-                </div>
-                <div className="flex flex-col flex-grow">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm font-semibold text-gray-200 truncate">
-                      {user.username}
-                    </span>
-                    {user.isAnonymous ? (
-                      <span className="text-xs text-gray-400 bg-gray-700/30 px-1.5 py-0.5 rounded-full">
-                        Anon
-                      </span>
+                  <div className="w-10 h-10 flex items-center justify-center text-white relative">
+                    {user.gender && (user.gender.toLowerCase() === 'male' || user.gender.toUpperCase() === 'M') ? (
+                      <img src={maleIcon} alt="Male icon" className="w-8 h-8" />
+                    ) : user.gender && (user.gender.toLowerCase() === 'female' || user.gender.toUpperCase() === 'F') ? (
+                      <img src={femaleIcon} alt="Female icon" className="w-8 h-8" />
                     ) : (
-                      <img
-                        src={verifiedIcon}
-                        alt="Verified"
-                        className="w-4 h-4"
-                      />
+                      <img src={maleIcon} alt="Default male icon" className="w-8 h-8 opacity-50" />
+                    )}
+                    {user.online && (
+                      <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full border-2 border-[#1A1A1A]"></span>
                     )}
                   </div>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <span className="text-xs text-gray-400">
-                      {countries.getName(user.country, 'en') || 'Not specified'}
-                      {user.age ? `, ${user.age}y` : ''}
-                    </span>
-                    {typingUsers.includes(user.id) && (
-                      <span
-                        className="text-xs text-blue-400"
-                      >
-                        Typing...
+                  <div className="flex flex-col flex-grow">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm font-semibold text-gray-200 truncate">{user.username}</span>
+                      {user.isAnonymous ? (
+                        <span className="text-xs text-gray-400 bg-gray-700/30 px-1.5 py-0.5 rounded-full">Anon</span>
+                      ) : (
+                        <img src={verifiedIcon} alt="Verified" className="w-4 h-4" />
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <span className="text-xs text-gray-400">
+                        {countries.getName(user.country, 'en') || 'Not specified'}
+                        {user.age ? `, ${user.age}y` : ''}
                       </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => handleContextAction('message', user)}
+                    className={`p-2.5 rounded-full text-white shadow-md min-w-[38px] min-h-[38px] ${
+                      showMessageHint && index === 0 ? 'bg-[#1A1A1A]/80' : 'bg-[#1A1A1A]/80'
+                    } hover:bg-red-600`}
+                  >
+                    <FaComment className="text-lg" style={{ stroke: 'black', strokeWidth: 1, fill: 'white' }} />
+                  </button>
+                  <button
+                    onClick={() => handleContextAction('profile', user)}
+                    className="p-2.5 rounded-full bg-[#1A1A1A]/80 text-white shadow-md min-w-[38px] min-h-[38px] hover:bg-red-600"
+                  >
+                    <FaInfoCircle className="text-lg" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )
+        ) : (
+          isMessagesLoading ? (
+            <>
+              <SkeletonMessageCard />
+              <SkeletonMessageCard />
+              <SkeletonMessageCard />
+            </>
+          ) : conversations.length === 0 ? (
+            <div className="text-gray-300 text-center text-sm font-medium py-6">No unread messages 📭</div>
+          ) : (
+            conversations.map((conv) => (
+              <div
+                key={conv.senderId}
+                className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center justify-between border border-gray-700/50 shadow-md hover:shadow-md transition-shadow duration-300 cursor-pointer"
+                onClick={() => {
+                  markMessagesAsRead(conv.senderId);
+                  setSelectedUserId(conv.senderId);
+                }}
+              >
+                <div className="flex items-center space-x-3 flex-grow">
+                  <div className="w-10 h-10 flex items-center justify-center text-white">
+                    {conv.gender && (conv.gender.toLowerCase() === 'male' || conv.gender.toUpperCase() === 'M') ? (
+                      <img src={maleIcon} alt="Male icon" className="w-8 h-8" />
+                    ) : conv.gender && (conv.gender.toLowerCase() === 'female' || conv.gender.toUpperCase() === 'F') ? (
+                      <img src={femaleIcon} alt="Female icon" className="w-8 h-8" />
+                    ) : (
+                      <img src={maleIcon} alt="Default male icon" className="w-8 h-8 opacity-50" />
                     )}
+                  </div>
+                  <div className="flex flex-col flex-grow">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm font-semibold text-gray-200 truncate">{conv.username}</span>
+                      {conv.isAnonymous ? (
+                        <span className="text-xs text-gray-400 bg-gray-700/30 px-1.5 py-0.5 rounded-full">Anon</span>
+                      ) : (
+                        <img src={verifiedIcon} alt="Verified" className="w-4 h-4" />
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-xs text-gray-400 truncate max-w-[150px]">{conv.latestMessage}</span>
+                      <span className="text-xs text-gray-500">{formatTimestamp(conv.latestMessageTime)}</span>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
-                {unreadMessages[user.id] > 0 && (
-                  <span
-                    className="text-xs text-white bg-blue-500 px-1.5 py-0.5 rounded-full shadow-sm"
-                  >
-                    {unreadMessages[user.id]}
-                  </span>
-                )}
-                <button
-                  onClick={() => handleContextAction('message', user)}
-                  className={`p-2.5 rounded-full text-white shadow-md min-w-[38px] min-h-[38px] ${showMessageHint && index === 0 ? 'bg-[#1A1A1A]/80' : 'bg-[#1A1A1A]/80'} hover:bg-red-600`}
-                  aria-label={`Message ${user.username}`}
-                  title={`Message ${user.username}`}
-                >
-                  <FaComment className="text-lg" style={{ stroke: 'black', strokeWidth: 1, fill: 'white' }} />
-                </button>
-                <button
-                  onClick={() => handleContextAction('profile', user)}
-                  className="p-2.5 rounded-full bg-[#1A1A1A]/80 text-white-400 shadow-md min-w-[38px] min-h-[38px] hover:bg-red-600"
-                  aria-label={`View ${user.username}'s profile`}
-                >
-                  <FaInfoCircle className="text-lg" />
-                </button>
-              </div>
-            </div>
-          ))
+            ))
+          )
         )}
       </div>
 
-      {/* Context Menu */}
       {contextMenu && (
         <div
           className="fixed bg-black/90 border border-gray-700/50 rounded-md shadow-md p-2 z-20"
           style={{ top: contextMenu.y, left: contextMenu.x }}
-          role="menu"
-          aria-label="User actions"
         >
           <div
             className="flex items-center space-x-2 p-2 text-sm text-white rounded-md cursor-pointer hover:bg-blue-600"
             onClick={() => handleContextAction('message', contextMenu.user)}
-            role="menuitem"
-            tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && handleContextAction('message', contextMenu.user)}
           >
             <FaComment className="text-sm" />
             <span>Send Message</span>
@@ -568,9 +607,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
           <div
             className="flex items-center space-x-2 p-2 text-sm text-white rounded-md cursor-pointer hover:bg-blue-600"
             onClick={() => handleContextAction('profile', contextMenu.user)}
-            role="menuitem"
-            tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && handleContextAction('profile', contextMenu.user)}
           >
             <FaInfoCircle className="text-sm" />
             <span>View Profile</span>
@@ -578,34 +614,20 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
         </div>
       )}
 
-      {/* Profile Modal */}
       {isProfileModalOpen && selectedProfile && (
-        <div
-          className="fixed inset-0 flex items-center justify-center bg-black/60 z-50"
-          role="dialog"
-          aria-label="User profile"
-          aria-modal="true"
-        >
-          <div
-            className="bg-[#1A1A1A]/95 border border-gray-700/50 p-6 rounded-md shadow-md w-11/12 max-w-sm"
-          >
+        <div className="fixed inset-0 flex items-center justify-center bg-black/60 z-50">
+          <div className="bg-[#1A1A1A]/95 border border-gray-700/50 p-6 rounded-md shadow-md w-11/12 max-w-sm">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold text-white">User Profile</h2>
               <button
                 onClick={closeProfileModal}
                 className="text-gray-400 hover:text-red-400 transition-colors duration-200"
-                aria-label="Close profile"
               >
                 <FaTimes className="text-lg" />
               </button>
             </div>
             {error && (
-              <p
-                className="text-red-400 text-center mb-4 bg-red-900/20 p-2 rounded-md text-xs shadow-inner"
-                role="alert"
-              >
-                {error}
-              </p>
+              <p className="text-red-400 text-center mb-4 bg-red-900/20 p-2 rounded-md text-xs shadow-inner">{error}</p>
             )}
             <div className="text-center mb-4">
               <div
@@ -615,12 +637,16 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
                 {selectedProfile.username[0]?.toUpperCase() || '?'}
               </div>
               <h4 className="mt-3 text-sm font-semibold text-white">{selectedProfile.username}</h4>
-              <p className="text-xs text-gray-400">Joined {new Date(selectedProfile.createdAt).toLocaleDateString()}</p>
+              <p className="text-xs text-gray-400">
+                Joined {new Date(selectedProfile.createdAt).toLocaleDateString()}
+              </p>
             </div>
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-medium text-gray-400 block mb-1">Bio</label>
-                <p className="text-sm text-gray-300 bg-gray-800/30 p-2 rounded-md">{selectedProfile.bio || 'No bio available'}</p>
+                <p className="text-sm text-gray-300 bg-gray-800/30 p-2 rounded-md">
+                  {selectedProfile.bio || 'No bio available'}
+                </p>
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-400 block mb-1">Country</label>
@@ -632,7 +658,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
                         svg
                         className="mr-2 w-6 h-4 rounded-sm"
                         style={{ width: '24px', height: '16px' }}
-                        aria-label={`Flag of ${countries.getName(selectedProfile.country, 'en')}`}
                       />
                       {countries.getName(selectedProfile.country, 'en')}
                     </>
@@ -643,18 +668,21 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-400 block mb-1">Age</label>
-                <p className="text-sm text-gray-300 bg-gray-800/30 p-2 rounded-md">{selectedProfile.age ? `${selectedProfile.age} years` : 'Not specified'}</p>
+                <p className="text-sm text-gray-300 bg-gray-800/30 p-2 rounded-md">
+                  {selectedProfile.age ? `${selectedProfile.age} years` : 'Not specified'}
+                </p>
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-400 block mb-1">Status</label>
-                <p className="text-sm text-gray-300 bg-gray-800/30 p-2 rounded-md">{selectedProfile.status || 'Available'}</p>
+                <p className="text-sm text-gray-300 bg-gray-800/30 p-2 rounded-md">
+                  {selectedProfile.status || 'Available'}
+                </p>
               </div>
             </div>
             <div className="mt-6 flex justify-center">
               <button
                 onClick={closeProfileModal}
-                className="px-4 py-2 rounded-md bg-gray-600 hover:bg-gray-700 text-white text-sm font-semibold transition-all duration-200 shadow-md min-w-[44px] min-h-[44px]"
-                aria-label="Close"
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-md hover:bg-blue-700 transition-colors duration-200"
               >
                 Close
               </button>
@@ -662,11 +690,6 @@ const UserList = ({ users, setSelectedUserId, currentUserId, unreadMessages: ini
           </div>
         </div>
       )}
-
-      {/* Footer */}
-      <div className="mt-4 text-center text-xs text-gray-400">
-        © 2025 Chatify | All Rights Reserved
-      </div>
     </div>
   );
 };
@@ -676,21 +699,15 @@ UserList.propTypes = {
     PropTypes.shape({
       id: PropTypes.string.isRequired,
       username: PropTypes.string.isRequired,
-      online: PropTypes.bool.isRequired,
-      isAnonymous: PropTypes.bool.isRequired,
+      online: PropTypes.bool,
+      isAnonymous: PropTypes.bool,
       country: PropTypes.string,
+      gender: PropTypes.string,
       age: PropTypes.number,
-      gender: PropTypes.oneOf(['male', 'female', 'M', 'F']),
     })
   ).isRequired,
   setSelectedUserId: PropTypes.func.isRequired,
   currentUserId: PropTypes.string.isRequired,
-  unreadMessages: PropTypes.objectOf(PropTypes.number).isRequired,
-  typingUsers: PropTypes.arrayOf(PropTypes.string),
-};
-
-UserList.defaultProps = {
-  typingUsers: [],
 };
 
 export default UserList;
