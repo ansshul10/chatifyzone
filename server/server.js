@@ -88,7 +88,7 @@ const addActivityLog = async (userId, action) => {
       $push: {
         activityLog: {
           $each: [{ action, timestamp: new Date() }],
-          $slice: -5, // Keep only the last 5 entries
+          $slice: -5,
         },
       },
     });
@@ -306,29 +306,55 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('updateMessageStatus', async ({ messageId, userId, status }) => {
+  socket.on('updateMessageStatus', async ({ messageId, userId, status, senderId }) => {
     try {
-      const message = await Message.findById(messageId);
-      if (!message || message.receiver.toString() !== userId) {
-        return socket.emit('error', { msg: 'Unauthorized or message not found' });
+      console.log('[Socket.IO] updateMessageStatus: Received:', { messageId, userId, status, senderId });
+      if (messageId) {
+        const message = await Message.findById(messageId);
+        if (!message || message.receiver.toString() !== userId) {
+          console.error('[Socket.IO] updateMessageStatus: Unauthorized or message not found:', messageId);
+          return socket.emit('error', { msg: 'Unauthorized or message not found' });
+        }
+
+        if (status === 'delivered' && !message.deliveredAt) {
+          message.deliveredAt = new Date();
+        } else if (status === 'read' && !message.readAt) {
+          message.readAt = new Date();
+        }
+        await message.save();
+
+        const messageData = {
+          ...message.toObject(),
+          sender: message.sender.toString(),
+          receiver: message.receiver.toString(),
+          _id: message._id.toString(),
+        };
+
+        console.log('[Socket.IO] updateMessageStatus: Emitting messageStatusUpdate for single message:', messageData);
+        io.to(message.sender.toString()).emit('messageStatusUpdate', messageData);
+        io.to(message.receiver.toString()).emit('messageStatusUpdate', messageData);
+      } else if (senderId && status === 'read') {
+        const messages = await Message.find({
+          sender: senderId,
+          receiver: userId,
+          readAt: null,
+        });
+
+        console.log('[Socket.IO] updateMessageStatus: Found', messages.length, 'unread messages to mark as read');
+        for (const message of messages) {
+          message.readAt = new Date();
+          await message.save();
+          const messageData = {
+            ...message.toObject(),
+            sender: message.sender.toString(),
+            receiver: message.receiver.toString(),
+            _id: message._id.toString(),
+          };
+          console.log('[Socket.IO] updateMessageStatus: Emitting messageStatusUpdate for message:', messageData._id);
+          io.to(message.sender.toString()).emit('messageStatusUpdate', messageData);
+          io.to(message.receiver.toString()).emit('messageStatusUpdate', messageData);
+        }
       }
-
-      if (status === 'delivered' && !message.deliveredAt) {
-        message.deliveredAt = new Date();
-      } else if (status === 'read' && !message.readAt) {
-        message.readAt = new Date();
-      }
-      await message.save();
-
-      const messageData = {
-        ...message.toObject(),
-        sender: message.sender.toString(),
-        receiver: message.receiver.toString(),
-        _id: message._id.toString(),
-      };
-
-      io.to(message.sender.toString()).emit('messageStatusUpdate', messageData);
-      io.to(message.receiver.toString()).emit('messageStatusUpdate', messageData);
     } catch (err) {
       console.error('[Socket.IO] UpdateMessageStatus error:', err.message);
       socket.emit('error', { msg: 'Failed to update message status' });
@@ -596,7 +622,6 @@ io.on('connection', (socket) => {
 
   socket.on('reportUser', async ({ userId, targetId }) => {
     try {
-      // Implement report logic (e.g., save to a reports collection)
       socket.emit('actionResponse', { type: 'report', success: true, msg: 'User reported successfully' });
 
       await addActivityLog(userId, `Reported user ID: ${targetId}`);
