@@ -7,7 +7,6 @@ const Message = require('../models/Message');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 
-// Validation schema for anonymous session
 const anonymousSessionSchema = Joi.object({
   username: Joi.string().min(3).max(20).required(),
   country: Joi.string().required(),
@@ -15,35 +14,19 @@ const anonymousSessionSchema = Joi.object({
   age: Joi.number().integer().min(13).max(120).required(),
 });
 
-// Create anonymous session
 router.post('/anonymous-session', async (req, res) => {
   try {
-    console.log('[Anonymous Session] Received request:', req.body);
     const { error } = anonymousSessionSchema.validate(req.body);
-    if (error) {
-      console.error('[Anonymous Session] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
+    if (error) return res.status(400).json({ msg: error.details[0].message });
 
     const { username, country, state, age } = req.body;
     const existingSession = await AnonymousSession.findOne({ username });
-    if (existingSession) {
-      console.error('[Anonymous Session] Username already in use:', username);
-      return res.status(400).json({ msg: 'Username already in use' });
-    }
+    if (existingSession) return res.status(400).json({ msg: 'Username already in use' });
 
     const anonymousId = `anon-${uuidv4()}`;
-    const session = new AnonymousSession({
-      username,
-      anonymousId,
-      country,
-      state,
-      age,
-      status: 'online',
-    });
+    const session = new AnonymousSession({ username, anonymousId, country, state, age, status: 'online' });
     await session.save();
 
-    console.log(`[Anonymous Session] Created for: ${username} (ID: ${anonymousId})`);
     res.json({ anonymousId, username, country, state, age });
   } catch (err) {
     console.error('[Anonymous Session] Server error:', err.message);
@@ -51,7 +34,6 @@ router.post('/anonymous-session', async (req, res) => {
   }
 });
 
-// Get messages for authenticated user
 router.get('/messages', auth, async (req, res) => {
   try {
     const userId = req.user || req.anonymousUser?.anonymousId;
@@ -68,22 +50,16 @@ router.get('/messages', auth, async (req, res) => {
   }
 });
 
-// Get all users (registered and anonymous)
 router.get('/users', auth, async (req, res) => {
   try {
-    console.log('[Get Users] Fetching all users');
     const currentUserId = req.user || req.anonymousUser?.anonymousId;
     if (!currentUserId) return res.status(401).json({ msg: 'User not authenticated' });
 
-    const registeredUsers = await User.find()
-      .select('id username online country state age')
-      .lean();
-    const anonymousUsers = await AnonymousSession.find()
-      .select('anonymousId username status country state age')
-      .lean();
+    const registeredUsers = await User.find().select('id username online country state age gender').lean();
+    const anonymousUsers = await AnonymousSession.find().select('anonymousId username status country state age').lean();
 
     const userList = [
-      ...registeredUsers.map(user => ({
+      ...registeredUsers.map((user) => ({
         id: user._id.toString(),
         username: user.username,
         online: user.online,
@@ -91,8 +67,9 @@ router.get('/users', auth, async (req, res) => {
         country: user.country,
         state: user.state,
         age: user.age,
+        gender: user.gender,
       })),
-      ...anonymousUsers.map(session => ({
+      ...anonymousUsers.map((session) => ({
         id: session.anonymousId,
         username: session.username,
         online: session.status === 'online',
@@ -100,10 +77,10 @@ router.get('/users', auth, async (req, res) => {
         country: session.country,
         state: session.state,
         age: session.age,
+        gender: null,
       })),
-    ].filter(user => user.id !== currentUserId); // Exclude the current user
+    ].filter((user) => user.id !== currentUserId);
 
-    // Sort users: Indian users first, then alphabetically by username
     const sortedUsers = userList.sort((a, b) => {
       const aIsIndia = a.country === 'IN';
       const bIsIndia = b.country === 'IN';
@@ -112,10 +89,98 @@ router.get('/users', auth, async (req, res) => {
       return a.username.localeCompare(b.username);
     });
 
-    console.log('[Get Users] Fetched users:', sortedUsers.length);
     res.json(sortedUsers);
   } catch (err) {
     console.error('[Get Users] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.get('/conversations', auth, async (req, res) => {
+  try {
+    const userId = req.user || req.anonymousUser?.anonymousId;
+    if (!userId) return res.status(401).json({ msg: 'User not authenticated' });
+
+    const messages = await Message.find({ receiver: userId }).sort({ createdAt: -1 }).lean();
+
+    const conversationsMap = new Map();
+    for (const msg of messages) {
+      const senderId = msg.sender.toString();
+      if (!conversationsMap.has(senderId)) {
+        conversationsMap.set(senderId, {
+          senderId,
+          latestMessage: msg.content,
+          latestMessageTime: msg.createdAt,
+        });
+      }
+    }
+
+    const conversations = [];
+    for (const [senderId, conv] of conversationsMap) {
+      let sender;
+      if (senderId.startsWith('anon-')) {
+        sender = await AnonymousSession.findOne({ anonymousId: senderId }).lean();
+        if (sender) {
+          conversations.push({
+            senderId,
+            username: sender.username || `Anon_${senderId.slice(-4)}`,
+            isAnonymous: true,
+            gender: null,
+            latestMessage: conv.latestMessage,
+            latestMessageTime: conv.latestMessageTime,
+          });
+        }
+      } else {
+        sender = await User.findById(senderId).select('username isAnonymous gender').lean();
+        if (sender) {
+          conversations.push({
+            senderId,
+            username: sender.username,
+            isAnonymous: sender.isAnonymous || false,
+            gender: sender.gender,
+            latestMessage: conv.latestMessage,
+            latestMessageTime: conv.latestMessageTime,
+          });
+        }
+      }
+    }
+
+    conversations.sort((a, b) => new Date(b.latestMessageTime) - new Date(a.latestMessageTime));
+    res.json(conversations);
+  } catch (err) {
+    console.error('[Get Conversations] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.get('/unread-count', auth, async (req, res) => {
+  try {
+    const userId = req.user || req.anonymousUser?.anonymousId;
+    if (!userId) return res.status(401).json({ msg: 'User not authenticated' });
+
+    const unreadCount = await Message.countDocuments({ receiver: userId, readAt: null });
+    res.json({ unreadCount });
+  } catch (err) {
+    console.error('[Get Unread Count] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+router.post('/mark-read', auth, async (req, res) => {
+  try {
+    const userId = req.user || req.anonymousUser?.anonymousId;
+    const { senderId } = req.body;
+    if (!userId) return res.status(401).json({ msg: 'User not authenticated' });
+    if (!senderId) return res.status(400).json({ msg: 'Sender ID is required' });
+
+    const updatedMessages = await Message.updateMany(
+      { sender: senderId, receiver: userId, readAt: null },
+      { $set: { readAt: new Date() } }
+    );
+
+    res.json({ msg: 'Messages marked as read', modifiedCount: updatedMessages.nModified });
+  } catch (err) {
+    console.error('[Mark Read] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
