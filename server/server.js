@@ -18,59 +18,26 @@ const server = http.createServer(app);
 
 // Validate environment variables
 if (!process.env.MONGO_URI || !process.env.SESSION_SECRET || !process.env.JWT_SECRET) {
-  console.warn('[Server] Warning: Missing environment variables (MONGO_URI, SESSION_SECRET, JWT_SECRET).');
+  console.error('[Server] Missing critical environment variables');
+  process.exit(1);
 }
 
 // Session middleware configuration
 const sessionMiddleware = session({
-  secret: process.env.SESSION_SECRET || 'fallback-secret',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI || 'mongodb://localhost:27017/chatify',
+    mongoUrl: process.env.MONGO_URI,
     collectionName: 'sessions',
-    ttl: 24 * 60 * 60, // 24 hours
+    ttl: 24 * 60 * 60,
   }),
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    maxAge: 24 * 60 * 60 * 1000,
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    domain: process.env.NODE_ENV === 'production' ? process.env.COOKIE_DOMAIN : undefined,
   },
-});
-
-// Update session with lastActive timestamp
-app.use((req, res, next) => {
-  if (req.session) {
-    req.session.lastActive = Date.now();
-  }
-  next();
-});
-
-// Apply session middleware to Express
-app.use(sessionMiddleware);
-
-// Convert session middleware for Socket.IO
-const wrap = middleware => (socket, next) => middleware(socket.request, {}, next);
-const io = new Server(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true,
-  },
-  pingInterval: 10000,
-  pingTimeout: 5000,
-});
-
-// Apply session middleware to Socket.IO
-io.use(wrap(sessionMiddleware));
-
-// Connect to MongoDB
-connectDB().then(() => {
-  console.log('[Server] MongoDB connected successfully');
-}).catch((err) => {
-  console.error('[Server] MongoDB connection failed:', err.message);
 });
 
 // Middleware
@@ -81,6 +48,29 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(sessionMiddleware);
+
+// Convert session middleware for Socket.IO
+const wrap = middleware => (socket, next) => middleware(socket.request, {}, next);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+  pingInterval: 10000,
+  pingTimeout: 5000,
+});
+
+io.use(wrap(sessionMiddleware));
+
+// Connect to MongoDB
+connectDB().then(() => {
+  console.log('[Server] MongoDB connected successfully');
+}).catch((err) => {
+  console.error('[Server] MongoDB connection failed:', err.message);
+  process.exit(1);
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -88,34 +78,49 @@ app.use('/api/chat', chatRoutes);
 
 // Socket.IO Logic
 const userSocketMap = new Map();
-const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours
-const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
+const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000;
+const CLEANUP_INTERVAL = 10 * 60 * 1000;
+
+// Helper to add activity log
+const addActivityLog = async (userId, action) => {
+  try {
+    await User.findByIdAndUpdate(userId, {
+      $push: {
+        activityLog: {
+          $each: [{ action, timestamp: new Date() }],
+          $slice: -5, // Keep only the last 5 entries
+        },
+      },
+    });
+  } catch (err) {
+    console.error('[Activity Log] Error:', err.message);
+  }
+};
 
 const getOnlineUsers = async () => {
   try {
     const registeredUsers = await User.find({}).select('_id username online country gender age isAnonymous');
     const anonymousUsers = await AnonymousSession.find({}).select('anonymousId username status');
     const users = [
-      ...registeredUsers.map((user) => ({
+      ...registeredUsers.map(user => ({
         id: user._id.toString(),
-        username: user.username || `User_${user._id.toString().slice(-4)}`,
-        isAnonymous: user.isAnonymous || false,
-        online: user.online || false,
-        country: user.country || null,
-        gender: user.gender || null,
-        age: user.age || null,
+        username: user.username,
+        isAnonymous: false,
+        online: user.online,
+        country: user.country,
+        gender: user.gender,
+        age: user.age,
       })),
-      ...anonymousUsers.map((session) => ({
+      ...anonymousUsers.map(session => ({
         id: session.anonymousId,
-        username: session.username || `Anon_${session.anonymousId.slice(-4)}`,
+        username: session.username,
         isAnonymous: true,
         online: session.status === 'online',
         country: null,
         gender: null,
         age: null,
       })),
-    ].filter((user) => user.id && user.username);
-    console.log('[Server] getOnlineUsers fetched:', users.length, 'users');
+    ].filter(user => user.id && user.username);
     return users;
   } catch (err) {
     console.error('[Server] getOnlineUsers error:', err.message);
@@ -125,7 +130,9 @@ const getOnlineUsers = async () => {
 
 const getPreviousMessages = async (userId) => {
   try {
-    return await Message.find({ $or: [{ sender: userId }, { receiver: userId }] }).sort({ createdAt: 1 });
+    return await Message.find({
+      $or: [{ sender: userId }, { receiver: userId }],
+    }).sort({ createdAt: 1 }).lean();
   } catch (err) {
     console.error('[Server] getPreviousMessages error:', err.message);
     return [];
@@ -142,20 +149,8 @@ setInterval(async () => {
       if (sessionData.lastActive && now - sessionData.lastActive > INACTIVITY_TIMEOUT) {
         const userId = sessionData.passport?.user || sessionData.anonymousId;
         if (userId) {
-          if (userId.startsWith('anon-')) {
-            await AnonymousSession.findOneAndDelete({ anonymousId: userId });
-            await Message.deleteMany({ sender: userId, isAnonymous: true });
-          } else {
-            await User.findByIdAndUpdate(userId, { online: false, lastActive: new Date() }, { new: true });
-          }
-          const socketId = userSocketMap.get(userId);
-          if (socketId) {
-            io.to(socketId).emit('logout', { reason: 'Inactivity timeout' });
-            userSocketMap.delete(userId);
-          }
+          await handleUserDisconnect(userId);
           await sessionMiddleware.store.destroy(session.sid);
-          io.emit('userStatus', { userId, status: 'offline' });
-          console.log(`[Server] Logged out inactive user: ${userId}`);
         }
       }
     }
@@ -164,172 +159,129 @@ setInterval(async () => {
   }
 }, CLEANUP_INTERVAL);
 
+const handleUserDisconnect = async (userId) => {
+  try {
+    if (userId.startsWith('anon-')) {
+      await AnonymousSession.findOneAndDelete({ anonymousId: userId });
+      await Message.deleteMany({ sender: userId, isAnonymous: true });
+    } else {
+      await User.findByIdAndUpdate(userId, { online: false, lastActive: new Date() });
+    }
+    userSocketMap.delete(userId);
+    io.emit('userStatus', { userId, status: 'offline' });
+    console.log(`[Socket.IO] User disconnected: ${userId}`);
+  } catch (err) {
+    console.error('[Socket.IO] Disconnect error:', err.message);
+  }
+};
+
 io.on('connection', (socket) => {
   console.log(`[Socket.IO] User connected: ${socket.id}`);
 
   socket.on('join', async (userId) => {
     try {
       if (!userId) {
-        socket.emit('error', { msg: 'No user ID provided' });
-        return;
+        return socket.emit('error', { msg: 'No user ID provided' });
       }
+
       socket.join(userId);
       userSocketMap.set(userId, socket.id);
 
-      let username = socket.request.session.username || socket.handshake.query.username;
-      let userData = {};
+      let userData;
       if (userId.startsWith('anon-')) {
         let session = await AnonymousSession.findOne({ anonymousId: userId });
         if (!session) {
-          username = username || `Anon_${userId.slice(-4)}`;
+          const username = socket.request.session.username || `Anon_${userId.slice(-4)}`;
           session = new AnonymousSession({ anonymousId: userId, username, status: 'online' });
           await session.save();
         } else {
-          username = session.username;
           session.status = 'online';
           await session.save();
         }
-        userData = { id: userId, username, isAnonymous: true, online: true, country: null, gender: null, age: null };
+        userData = {
+          id: userId,
+          username: session.username,
+          isAnonymous: true,
+          online: true,
+          country: null,
+          gender: null,
+          age: null,
+        };
       } else {
         const user = await User.findByIdAndUpdate(
           userId,
           { online: true, lastActive: new Date() },
           { new: true }
-        )
-          .populate('friends', 'username online')
-          .populate('friendRequests', 'username')
-          .populate('blockedUsers', 'username');
+        ).populate('friends blockedUsers friendRequests', 'username');
+
         if (!user) {
-          socket.emit('error', { msg: 'User not found' });
-          return;
+          return socket.emit('error', { msg: 'User not found' });
         }
-        username = user.username || `User_${userId.slice(-4)}`;
+
         userData = {
           id: user._id.toString(),
-          username,
-          isAnonymous: user.isAnonymous || false,
+          username: user.username,
+          isAnonymous: false,
           online: true,
-          country: user.country || null,
-          gender: user.gender || null,
-          age: user.age || null,
+          country: user.country,
+          gender: user.gender,
+          age: user.age,
         };
+
         socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => ({ _id: u._id.toString(), username: u.username })));
         socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
         socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
       }
 
       socket.request.session.lastActive = Date.now();
-      socket.request.session.username = username;
+      socket.request.session.userId = userId;
       socket.request.session.save();
 
-      // Send full user list to the joining user
       socket.emit('userListUpdate', await getOnlineUsers());
-      // Notify others of status
       io.emit('userStatus', userData);
+      socket.emit('loadPreviousMessages', await getPreviousMessages(userId));
 
-      const previousMessages = await getPreviousMessages(userId);
-      socket.emit('loadPreviousMessages', previousMessages);
-
-      console.log(`[Socket.IO Join] User joined: ${userId} (${username})`);
+      console.log(`[Socket.IO] User joined: ${userId} (${userData.username})`);
     } catch (err) {
-      console.error('[Socket.IO Join] Error:', err.message);
+      console.error('[Socket.IO] Join error:', err.message);
       socket.emit('error', { msg: 'Failed to join' });
-    }
-  });
-
-  socket.on('refresh', async (userId) => {
-    try {
-      if (!userId) {
-        socket.emit('error', { msg: 'No user ID provided' });
-        return;
-      }
-      socket.emit('userListUpdate', await getOnlineUsers());
-      console.log(`[Socket.IO Refresh] User list sent to: ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO Refresh] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to refresh user list' });
-    }
-  });
-
-  socket.on('updateProfile', async ({ userId, updates }) => {
-    try {
-      if (!userId) {
-        socket.emit('error', { msg: 'No user ID provided' });
-        return;
-      }
-      const allowedFields = ['username', 'country', 'gender', 'age', 'bio', 'status'];
-      const filteredUpdates = {};
-      for (const key of allowedFields) {
-        if (updates[key] !== undefined) {
-          filteredUpdates[key] = updates[key];
-        }
-      }
-      if (Object.keys(filteredUpdates).length === 0) {
-        socket.emit('error', { msg: 'No valid fields to update' });
-        return;
-      }
-      const user = await User.findByIdAndUpdate(userId, filteredUpdates, { new: true });
-      if (!user) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
-      }
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-      const userData = {
-        id: user._id.toString(),
-        username: user.username,
-        isAnonymous: user.isAnonymous || false,
-        online: user.online || false,
-        country: user.country || null,
-        gender: user.gender || null,
-        age: user.age || null,
-      };
-      io.emit('userStatus', userData);
-      socket.emit('actionResponse', { type: 'updateProfile', success: true, msg: 'Profile updated successfully' });
-      console.log(`[Socket.IO UpdateProfile] Profile updated for user: ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO UpdateProfile] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to update profile' });
     }
   });
 
   socket.on('sendMessage', async ({ sender, receiver, content }) => {
     try {
       if (!sender || !receiver || !content) {
-        socket.emit('error', { msg: 'Missing message data' });
-        return;
+        return socket.emit('error', { msg: 'Missing message data' });
       }
 
-      const senderExists = sender.startsWith('anon-')
-        ? await AnonymousSession.findOne({ anonymousId: sender })
-        : await User.findById(sender);
-      const receiverExists = receiver.startsWith('anon-')
-        ? await AnonymousSession.findOne({ anonymousId: receiver })
-        : await User.findById(receiver);
+      const senderId = sender.toString();
+      const receiverId = receiver.toString();
+
+      const senderExists = senderId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: senderId })
+        : await User.findById(senderId);
+      const receiverExists = receiverId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: receiverId })
+        : await User.findById(receiverId);
 
       if (!senderExists || !receiverExists) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
+        return socket.emit('error', { msg: 'User not found' });
       }
 
-      if (sender.startsWith('anon-') && !receiver.startsWith('anon-')) {
-        socket.emit('error', { msg: 'Anonymous users cannot message registered users' });
-        return;
+      if (senderId.startsWith('anon-') && !receiverId.startsWith('anon-')) {
+        return socket.emit('error', { msg: 'Anonymous users cannot message registered users' });
       }
 
-      if (!sender.startsWith('anon-')) {
-        const receiverUser = await User.findById(receiver);
-        if (receiverUser && receiverUser.blockedUsers.includes(sender)) {
-          socket.emit('error', { msg: 'You are blocked by this user' });
-          return;
-        }
+      const receiverUser = receiverId.startsWith('anon-') ? null : await User.findById(receiverId);
+      if (receiverUser?.blockedUsers.includes(senderId)) {
+        return socket.emit('error', { msg: 'You are blocked by this user' });
       }
 
       const message = new Message({
-        sender,
-        receiver,
+        sender: senderId,
+        receiver: receiverId,
         content,
-        isAnonymous: sender.startsWith('anon-'),
+        isAnonymous: senderId.startsWith('anon-'),
         deliveredAt: new Date(),
       });
       await message.save();
@@ -337,54 +289,28 @@ io.on('connection', (socket) => {
       socket.request.session.lastActive = Date.now();
       socket.request.session.save();
 
-      io.to(sender).emit('receiveMessage', message);
-      io.to(receiver).emit('receiveMessage', message);
-      io.to(receiver).emit('notification', {
-        senderId: sender,
-        text: `New message from ${senderExists.username || 'Anonymous'}`,
-      });
+      const messageData = {
+        ...message.toObject(),
+        sender: senderId,
+        receiver: receiverId,
+        _id: message._id.toString(),
+      };
 
-      console.log(`[Socket.IO SendMessage] Message sent from ${sender} to ${receiver}`);
+      io.to(senderId).emit('receiveMessage', messageData);
+      io.to(receiverId).emit('receiveMessage', messageData);
+
+      console.log(`[Socket.IO] Message sent from ${senderId} to ${receiverId}`);
     } catch (err) {
-      console.error('[Socket.IO SendMessage] Error:', err.message);
+      console.error('[Socket.IO] SendMessage error:', err.message);
       socket.emit('error', { msg: 'Failed to send message' });
-    }
-  });
-
-  socket.on('typing', ({ sender, receiver }) => {
-    try {
-      io.to(receiver).emit('userTyping', { sender });
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-      console.log(`[Socket.IO Typing] ${sender} is typing to ${receiver}`);
-    } catch (err) {
-      console.error('[Socket.IO Typing] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to send typing status' });
-    }
-  });
-
-  socket.on('stopTyping', ({ sender, receiver }) => {
-    try {
-      io.to(receiver).emit('userStoppedTyping', { sender });
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-      console.log(`[Socket.IO StopTyping] ${sender} stopped typing to ${receiver}`);
-    } catch (err) {
-      console.error('[Socket.IO StopTyping] Error:', err.message);
-      socket.emit('error', { msg: 'Failed to send stop typing status' });
     }
   });
 
   socket.on('updateMessageStatus', async ({ messageId, userId, status }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) {
-        socket.emit('error', { msg: 'Message not found' });
-        return;
-      }
-      if (message.receiver.toString() !== userId) {
-        socket.emit('error', { msg: 'Unauthorized' });
-        return;
+      if (!message || message.receiver.toString() !== userId) {
+        return socket.emit('error', { msg: 'Unauthorized or message not found' });
       }
 
       if (status === 'delivered' && !message.deliveredAt) {
@@ -394,14 +320,17 @@ io.on('connection', (socket) => {
       }
       await message.save();
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
+      const messageData = {
+        ...message.toObject(),
+        sender: message.sender.toString(),
+        receiver: message.receiver.toString(),
+        _id: message._id.toString(),
+      };
 
-      io.to(message.sender).emit('messageStatusUpdate', message);
-      io.to(message.receiver).emit('messageStatusUpdate', message);
-      console.log(`[Socket.IO UpdateMessageStatus] Updated status for message ${messageId} to ${status}`);
+      io.to(message.sender.toString()).emit('messageStatusUpdate', messageData);
+      io.to(message.receiver.toString()).emit('messageStatusUpdate', messageData);
     } catch (err) {
-      console.error('[Socket.IO UpdateMessageStatus] Error:', err.message);
+      console.error('[Socket.IO] UpdateMessageStatus error:', err.message);
       socket.emit('error', { msg: 'Failed to update message status' });
     }
   });
@@ -409,27 +338,25 @@ io.on('connection', (socket) => {
   socket.on('editMessage', async ({ messageId, content, userId }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) {
-        socket.emit('error', { msg: 'Message not found' });
-        return;
-      }
-      if (message.sender.toString() !== userId) {
-        socket.emit('error', { msg: 'Only the sender can edit the message' });
-        return;
+      if (!message || message.sender.toString() !== userId) {
+        return socket.emit('error', { msg: 'Unauthorized or message not found' });
       }
 
       message.content = content;
       message.edited = true;
       await message.save();
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
+      const messageData = {
+        ...message.toObject(),
+        sender: message.sender.toString(),
+        receiver: message.receiver.toString(),
+        _id: message._id.toString(),
+      };
 
-      io.to(message.sender).emit('messageEdited', message);
-      io.to(message.receiver).emit('messageEdited', message);
-      console.log(`[Socket.IO EditMessage] Message ${messageId} edited by ${userId}`);
+      io.to(message.sender.toString()).emit('messageEdited', messageData);
+      io.to(message.receiver.toString()).emit('messageEdited', messageData);
     } catch (err) {
-      console.error('[Socket.IO EditMessage] Error:', err.message);
+      console.error('[Socket.IO] EditMessage error:', err.message);
       socket.emit('error', { msg: 'Failed to edit message' });
     }
   });
@@ -437,25 +364,16 @@ io.on('connection', (socket) => {
   socket.on('deleteMessage', async ({ messageId, userId }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) {
-        socket.emit('error', { msg: 'Message not found' });
-        return;
-      }
-      if (message.sender.toString() !== userId) {
-        socket.emit('error', { msg: 'Only the sender can delete the message' });
-        return;
+      if (!message || message.sender.toString() !== userId) {
+        return socket.emit('error', { msg: 'Unauthorized or message not found' });
       }
 
       await Message.deleteOne({ _id: messageId });
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-
-      io.to(message.sender).emit('messageDeleted', messageId);
-      io.to(message.receiver).emit('messageDeleted', messageId);
-      console.log(`[Socket.IO DeleteMessage] Message ${messageId} deleted by ${userId}`);
+      io.to(message.sender.toString()).emit('messageDeleted', messageId);
+      io.to(message.receiver.toString()).emit('messageDeleted', messageId);
     } catch (err) {
-      console.error('[Socket.IO DeleteMessage] Error:', err.message);
+      console.error('[Socket.IO] DeleteMessage error:', err.message);
       socket.emit('error', { msg: 'Failed to delete message' });
     }
   });
@@ -463,62 +381,79 @@ io.on('connection', (socket) => {
   socket.on('addReaction', async ({ messageId, emoji, userId }) => {
     try {
       const message = await Message.findById(messageId);
-      if (!message) {
-        socket.emit('error', { msg: 'Message not found' });
-        return;
-      }
-      if (![message.sender.toString(), message.receiver.toString()].includes(userId)) {
-        socket.emit('error', { msg: 'Unauthorized' });
-        return;
+      if (!message || ![message.sender.toString(), message.receiver.toString()].includes(userId)) {
+        return socket.emit('error', { msg: 'Unauthorized or message not found' });
       }
 
-      message.reactions = message.reactions || new Map();
-      const currentCount = message.reactions.get(emoji) || 0;
-      message.reactions.set(emoji, currentCount + 1);
+      message.reactions.set(emoji, (message.reactions.get(emoji) || 0) + 1);
       await message.save();
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
+      const reactionData = {
+        messageId,
+        reactions: Object.fromEntries(message.reactions),
+      };
 
-      io.to(message.sender).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
-      io.to(message.receiver).emit('reactionUpdate', { messageId, reactions: Object.fromEntries(message.reactions) });
-      console.log(`[Socket.IO AddReaction] Reaction added to message ${messageId} by ${userId}`);
+      io.to(message.sender.toString()).emit('reactionUpdate', reactionData);
+      io.to(message.receiver.toString()).emit('reactionUpdate', reactionData);
     } catch (err) {
-      console.error('[Socket.IO AddReaction] Error:', err.message);
+      console.error('[Socket.IO] AddReaction error:', err.message);
       socket.emit('error', { msg: 'Failed to add reaction' });
+    }
+  });
+
+  socket.on('typing', ({ sender, receiver, username }) => {
+    io.to(receiver).emit('userTyping', { sender, username });
+  });
+
+  socket.on('stopTyping', ({ sender, receiver }) => {
+    io.to(receiver).emit('userStoppedTyping', { sender });
+  });
+
+  socket.on('clearChatHistory', async ({ userId, targetId }) => {
+    try {
+      await Message.deleteMany({
+        $or: [
+          { sender: userId, receiver: targetId },
+          { sender: targetId, receiver: userId },
+        ],
+      });
+
+      socket.emit('actionResponse', {
+        type: 'clearChatHistory',
+        success: true,
+        msg: 'Chat history cleared successfully',
+      });
+
+      if (!userId.startsWith('anon-')) {
+        await addActivityLog(userId, `Cleared chat history with user ID: ${targetId}`);
+      }
+    } catch (err) {
+      console.error('[Socket.IO] ClearChatHistory error:', err.message);
+      socket.emit('error', { msg: 'Failed to clear chat history' });
     }
   });
 
   socket.on('blockUser', async ({ userId, targetId }) => {
     try {
       const user = await User.findById(userId);
-      if (!user) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
-      }
-      if (user.blockedUsers.includes(targetId)) {
-        socket.emit('error', { msg: 'User already blocked' });
-        return;
+      if (!user || user.blockedUsers.includes(targetId)) {
+        return socket.emit('error', { msg: 'User not found or already blocked' });
       }
 
       user.blockedUsers.push(targetId);
-      user.friends = user.friends.filter((friend) => friend.toString() !== targetId);
+      user.friends = user.friends.filter(friend => friend.toString() !== targetId);
       await user.save();
 
       await User.findByIdAndUpdate(targetId, { $pull: { friends: userId } });
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(id => id.toString()));
-      socket.emit('friendsUpdate', user.friends);
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => ({ _id: u._id.toString(), username: u.username })));
+      socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
       io.to(targetId).emit('friendRemoved', { friendId: userId });
-      socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully', targetId });
+      socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully' });
 
-      io.emit('userStatus', { userId, status: 'blocked', targetId });
-      console.log(`[Socket.IO BlockUser] User ${targetId} blocked by ${userId}`);
+      await addActivityLog(userId, `Blocked user ID: ${targetId}`);
     } catch (err) {
-      console.error('[Socket.IO BlockUser] Error:', err.message);
+      console.error('[Socket.IO] BlockUser error:', err.message);
       socket.emit('error', { msg: 'Failed to block user' });
     }
   });
@@ -526,28 +461,19 @@ io.on('connection', (socket) => {
   socket.on('unblockUser', async ({ userId, targetId }) => {
     try {
       const user = await User.findById(userId);
-      if (!user) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
-      }
-      if (!user.blockedUsers.includes(targetId)) {
-        socket.emit('error', { msg: 'User not blocked' });
-        return;
+      if (!user || !user.blockedUsers.includes(targetId)) {
+        return socket.emit('error', { msg: 'User not found or not blocked' });
       }
 
-      user.blockedUsers = user.blockedUsers.filter((id) => id.toString() !== targetId);
+      user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== targetId);
       await user.save();
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => ({ _id: u._id.toString(), username: u.username })));
+      socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully' });
 
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(id => id.toString()));
-      socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully', targetId });
-
-      io.emit('userStatus', { userId, status: 'online', targetId });
-      console.log(`[Socket.IO UnblockUser] User ${targetId} unblocked by ${userId}`);
+      await addActivityLog(userId, `Unblocked user ID: ${targetId}`);
     } catch (err) {
-      console.error('[Socket.IO UnblockUser] Error:', err.message);
+      console.error('[Socket.IO] UnblockUser error:', err.message);
       socket.emit('error', { msg: 'Failed to unblock user' });
     }
   });
@@ -557,162 +483,138 @@ io.on('connection', (socket) => {
       const sender = await User.findById(userId);
       const receiver = await User.findById(friendId);
       if (!sender || !receiver) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
+        return socket.emit('error', { msg: 'User not found' });
       }
+
       if (receiver.friendRequests.includes(userId) || receiver.friends.includes(userId)) {
-        socket.emit('error', { msg: 'Friend request already sent or already friends' });
-        return;
+        return socket.emit('error', { msg: 'Friend request already sent or already friends' });
       }
+
       if (receiver.blockedUsers.includes(userId)) {
-        socket.emit('error', { msg: 'You are blocked by this user' });
-        return;
+        return socket.emit('error', { msg: 'You are blocked by this user' });
       }
-      const allowFriendRequests = receiver.privacy?.allowFriendRequests ?? true;
-      if (!allowFriendRequests) {
-        socket.emit('error', { msg: 'This user is not accepting friend requests' });
-        return;
+
+      if (!receiver.privacy?.allowFriendRequests) {
+        return socket.emit('error', { msg: 'This user is not accepting friend requests' });
       }
 
       receiver.friendRequests.push(userId);
       await receiver.save();
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-
+      socket.emit('actionResponse', { type: 'sendFriendRequest', success: true, msg: 'Friend request sent' });
       io.to(friendId).emit('friendRequestReceived', { _id: userId, username: sender.username });
-      socket.emit('actionResponse', { type: 'sendFriendRequest', success: true, msg: 'Friend request sent', friendId });
-      console.log(`[Socket.IO SendFriendRequest] Friend request sent from ${userId} to ${friendId}`);
+
+      await addActivityLog(userId, `Sent friend request to user ID: ${friendId}`);
     } catch (err) {
-      console.error('[Socket.IO SendFriendRequest] Error:', err.message);
+      console.error('[Socket.IO] SendFriendRequest error:', err.message);
       socket.emit('error', { msg: 'Failed to send friend request' });
     }
   });
 
   socket.on('acceptFriendRequest', async ({ userId, friendId }) => {
     try {
-      const userUpdate = await User.findByIdAndUpdate(
+      const user = await User.findByIdAndUpdate(
         userId,
         { $pull: { friendRequests: friendId }, $push: { friends: friendId } },
         { new: true }
-      );
-      if (!userUpdate) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
-      }
+      ).populate('friends friendRequests', 'username');
 
-      const friendUpdate = await User.findByIdAndUpdate(
+      const friend = await User.findByIdAndUpdate(
         friendId,
         { $push: { friends: userId } },
         { new: true }
-      );
-      if (!friendUpdate) {
-        socket.emit('error', { msg: 'Friend not found' });
-        return;
+      ).populate('friends', 'username');
+
+      if (!user || !friend) {
+        return socket.emit('error', { msg: 'User not found' });
       }
 
-      const user = await User.findById(userId).populate('friendRequests', 'username').populate('friends', 'username');
-      const friend = await User.findById(friendId).populate('friends', 'username');
+      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
+      socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
+      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
+      socket.emit('actionResponse', { type: 'acceptFriendRequest', success: true, msg: 'Friend request accepted' });
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-
-      const updatedFriendRequests = user.friendRequests.map((req) => ({ _id: req._id.toString(), username: req.username }));
-      const updatedUserFriends = user.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
-      const updatedFriendFriends = friend.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
-
-      socket.emit('friendRequestsUpdate', updatedFriendRequests);
-      socket.emit('friendsUpdate', updatedUserFriends);
-      io.to(friendId).emit('friendsUpdate', updatedFriendFriends);
-      io.to(friendId).emit('friendRequestAccepted', { userId });
-      socket.emit('actionResponse', { type: 'acceptFriendRequest', success: true, msg: 'Friend request accepted', friendId });
-      console.log(`[Socket.IO AcceptFriendRequest] Friend request accepted: ${userId} and ${friendId}`);
+      await addActivityLog(userId, `Accepted friend request from user ID: ${friendId}`);
+      await addActivityLog(friendId, `Friend request accepted by user ID: ${userId}`);
     } catch (err) {
-      console.error('[Socket.IO AcceptFriendRequest] Error:', err.message);
+      console.error('[Socket.IO] AcceptFriendRequest error:', err.message);
       socket.emit('error', { msg: 'Failed to accept friend request' });
     }
   });
 
   socket.on('declineFriendRequest', async ({ userId, friendId }) => {
     try {
-      const userUpdate = await User.findByIdAndUpdate(
+      const user = await User.findByIdAndUpdate(
         userId,
         { $pull: { friendRequests: friendId } },
         { new: true }
-      );
-      if (!userUpdate) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
+      ).populate('friendRequests', 'username');
+
+      if (!user) {
+        return socket.emit('error', { msg: 'User not found' });
       }
 
-      const user = await User.findById(userId).populate('friendRequests', 'username');
+      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
+      socket.emit('actionResponse', { type: 'declineFriendRequest', success: true, msg: 'Friend request declined' });
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-
-      const updatedFriendRequests = user.friendRequests.map((req) => ({ _id: req._id.toString(), username: req.username }));
-
-      socket.emit('friendRequestsUpdate', updatedFriendRequests);
-      socket.emit('actionResponse', { type: 'declineFriendRequest', success: true, msg: 'Friend request declined', friendId });
-      console.log(`[Socket.IO DeclineFriendRequest] Friend request declined: ${userId} declined ${friendId}`);
+      await addActivityLog(userId, `Declined friend request from user ID: ${friendId}`);
     } catch (err) {
-      console.error('[Socket.IO DeclineFriendRequest] Error:', err.message);
+      console.error('[Socket.IO] DeclineFriendRequest error:', err.message);
       socket.emit('error', { msg: 'Failed to decline friend request' });
     }
   });
 
   socket.on('unfriend', async ({ userId, friendId }) => {
     try {
-      const userUpdate = await User.findByIdAndUpdate(
+      const user = await User.findByIdAndUpdate(
         userId,
         { $pull: { friends: friendId } },
         { new: true }
-      );
-      const friendUpdate = await User.findByIdAndUpdate(
+      ).populate('friends', 'username');
+
+      const friend = await User.findByIdAndUpdate(
         friendId,
         { $pull: { friends: userId } },
         { new: true }
-      );
-      if (!userUpdate || !friendUpdate) {
-        socket.emit('error', { msg: 'User not found' });
-        return;
+      ).populate('friends', 'username');
+
+      if (!user || !friend) {
+        return socket.emit('error', { msg: 'User not found' });
       }
 
-      const user = await User.findById(userId).populate('friends', 'username');
-      const friend = await User.findById(friendId).populate('friends', 'username');
+      socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
+      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
+      socket.emit('actionResponse', { type: 'unfriend', success: true, msg: 'Unfriended successfully' });
 
-      socket.request.session.lastActive = Date.now();
-      socket.request.session.save();
-
-      const updatedUserFriends = user.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
-      const updatedFriendFriends = friend.friends.map((f) => ({ _id: f._id.toString(), username: f.username }));
-
-      socket.emit('friendsUpdate', updatedUserFriends);
-      io.to(friendId).emit('friendsUpdate', updatedFriendFriends);
-      io.to(friendId).emit('friendRemoved', { friendId: userId });
-      socket.emit('actionResponse', { type: 'unfriend', success: true, msg: 'Unfriended successfully', friendId });
-      console.log(`[Socket.IO Unfriend] Unfriended: ${userId} and ${friendId}`);
+      await addActivityLog(userId, `Unfriended user ID: ${friendId}`);
+      await addActivityLog(friendId, `Unfriended by user ID: ${userId}`);
     } catch (err) {
-      console.error('[Socket.IO Unfriend] Error:', err.message);
+      console.error('[Socket.IO] Unfriend error:', err.message);
       socket.emit('error', { msg: 'Failed to unfriend' });
     }
   });
 
-  socket.on('disconnect', async () => {
+  socket.on('reportUser', async ({ userId, targetId }) => {
     try {
-      const userId = [...userSocketMap.entries()].find(([_, sid]) => sid === socket.id)?.[0];
-      if (!userId) return;
-      if (userId.startsWith('anon-')) {
-        await AnonymousSession.findOneAndDelete({ anonymousId: userId });
-        await Message.deleteMany({ sender: userId, isAnonymous: true });
-      } else {
-        await User.findByIdAndUpdate(userId, { online: false, lastActive: new Date() }, { new: true });
-      }
-      userSocketMap.delete(userId);
-      io.emit('userStatus', { userId, status: 'offline' });
-      console.log(`[Socket.IO Disconnect] User disconnected: ${userId}`);
+      // Implement report logic (e.g., save to a reports collection)
+      socket.emit('actionResponse', { type: 'report', success: true, msg: 'User reported successfully' });
+
+      await addActivityLog(userId, `Reported user ID: ${targetId}`);
     } catch (err) {
-      console.error('[Socket.IO Disconnect] Error:', err.message);
+      console.error('[Socket.IO] ReportUser error:', err.message);
+      socket.emit('error', { msg: 'Failed to report user' });
+    }
+  });
+
+  socket.on('logout', async (userId) => {
+    await handleUserDisconnect(userId);
+    socket.disconnect();
+  });
+
+  socket.on('disconnect', async () => {
+    const userId = [...userSocketMap.entries()].find(([_, sid]) => sid === socket.id)?.[0];
+    if (userId) {
+      await handleUserDisconnect(userId);
     }
   });
 });
