@@ -6,6 +6,8 @@ import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
 
+const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
+
 const ChatWindow = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
