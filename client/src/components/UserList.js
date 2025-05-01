@@ -112,6 +112,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
       const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
       api.defaults.headers.common['x-auth-token'] = token;
       const { data } = await api.get('/chat/conversations');
+      console.log('[UserList] fetchConversations: Fetched conversations:', data);
       setConversations(data);
       setError('');
     } catch (err) {
@@ -127,6 +128,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
       const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
       api.defaults.headers.common['x-auth-token'] = token;
       const { data } = await api.get('/chat/unread-count');
+      console.log('[UserList] fetchUnreadCount: Fetched unread count:', data.unreadCount);
       setUnreadCount(data.unreadCount);
       setError('');
     } catch (err) {
@@ -137,13 +139,30 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
 
   const markMessagesAsRead = async (senderId) => {
     try {
+      console.log('[UserList] markMessagesAsRead: Marking messages as read for sender:', senderId);
       const token = localStorage.getItem('token') || localStorage.getItem('anonymousId');
       api.defaults.headers.common['x-auth-token'] = token;
       const { data } = await api.post('/chat/mark-read', { senderId });
+      console.log('[UserList] markMessagesAsRead: API response:', data);
       if (data.modifiedCount > 0) {
-        setConversations((prev) => prev.filter((conv) => conv.senderId !== senderId));
-        setUnreadCount((prev) => Math.max(0, prev - data.modifiedCount));
-        socket.emit('updateMessageStatus', { senderId, userId: currentUserId, status: 'read' });
+        setConversations((prev) => {
+          const updated = prev.filter((conv) => conv.senderId !== senderId);
+          console.log('[UserList] markMessagesAsRead: Updated conversations:', updated);
+          return updated;
+        });
+        setUnreadCount((prev) => {
+          const newCount = Math.max(0, prev - data.modifiedCount);
+          console.log('[UserList] markMessagesAsRead: Updated unreadCount:', newCount);
+          return newCount;
+        });
+        socket.emit('updateMessageStatus', {
+          messageId: null,
+          userId: currentUserId,
+          status: 'read',
+          senderId,
+        });
+      } else {
+        console.warn('[UserList] markMessagesAsRead: No messages were updated for sender:', senderId);
       }
     } catch (err) {
       console.error('[UserList] markMessagesAsRead error:', err);
@@ -233,36 +252,59 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
       const receiver = message.receiver?.toString();
 
       if (sender && sender !== currentUserId && receiver === currentUserId && !message.readAt) {
-        setUnreadCount((prev) => prev + 1);
-        const senderDetails = await api.get(`/auth/profile/${sender}`).then((res) => res.data);
-        setConversations((prev) => {
-          const existingConv = prev.find((conv) => conv.senderId === sender);
-          const updated = existingConv
-            ? prev.map((conv) =>
-                conv.senderId === sender
-                  ? { ...conv, latestMessage: message.content, latestMessageTime: message.createdAt }
-                  : conv
-              )
-            : [
-                {
-                  senderId: sender,
-                  username: senderDetails.username,
-                  isAnonymous: senderDetails.isAnonymous,
-                  gender: senderDetails.gender,
-                  latestMessage: message.content,
-                  latestMessageTime: message.createdAt,
-                },
-                ...prev,
-              ];
-          return updated.sort((a, b) => new Date(b.latestMessageTime) - new Date(a.latestMessageTime));
+        setUnreadCount((prev) => {
+          const newCount = prev + 1;
+          console.log('[UserList] handleReceiveMessage: Updated unreadCount:', newCount);
+          return newCount;
         });
+        try {
+          const { data: senderDetails } = await api.get(`/auth/profile/${sender}`);
+          setConversations((prev) => {
+            const existingConv = prev.find((conv) => conv.senderId === sender);
+            const updated = existingConv
+              ? prev.map((conv) =>
+                  conv.senderId === sender
+                    ? {
+                        ...conv,
+                        unreadCount: (conv.unreadCount || 0) + 1,
+                        latestMessageTime: message.createdAt,
+                      }
+                    : conv
+                )
+              : [
+                  {
+                    senderId: sender,
+                    username: senderDetails.username,
+                    isAnonymous: senderDetails.isAnonymous,
+                    gender: senderDetails.gender,
+                    unreadCount: 1,
+                    latestMessageTime: message.createdAt,
+                  },
+                  ...prev,
+                ];
+            console.log('[UserList] handleReceiveMessage: Updated conversations:', updated);
+            return updated.sort((a, b) => new Date(b.latestMessageTime) - new Date(a.latestMessageTime));
+          });
+        } catch (err) {
+          console.error('[UserList] Failed to fetch sender profile:', err);
+          setError('Failed to load sender details');
+        }
       }
     };
 
-    const handleMessageStatusUpdate = async (message) => {
+    const handleMessageStatusUpdate = (message) => {
+      console.log('[Socket.IO MessageStatusUpdate] Received:', message);
       if (message.receiver === currentUserId && message.readAt) {
-        setUnreadCount((prev) => Math.max(0, prev - 1));
-        setConversations((prev) => prev.filter((conv) => conv.senderId !== message.sender.toString()));
+        setConversations((prev) => {
+          const updated = prev.filter((conv) => conv.senderId !== message.sender.toString());
+          console.log('[UserList] handleMessageStatusUpdate: Updated conversations:', updated);
+          return updated;
+        });
+        setUnreadCount((prev) => {
+          const newCount = Math.max(0, prev - 1);
+          console.log('[UserList] handleMessageStatusUpdate: Updated unreadCount:', newCount);
+          return newCount;
+        });
       }
     };
 
@@ -557,6 +599,7 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
                 key={conv.senderId}
                 className="p-3 rounded-md bg-[#1A1A1A]/80 flex items-center justify-between border border-gray-700/50 shadow-md hover:shadow-md transition-shadow duration-300 cursor-pointer"
                 onClick={() => {
+                  console.log('[UserList] Conversation clicked for sender:', conv.senderId);
                   markMessagesAsRead(conv.senderId);
                   setSelectedUserId(conv.senderId);
                 }}
@@ -581,7 +624,9 @@ const UserList = ({ users, setSelectedUserId, currentUserId }) => {
                       )}
                     </div>
                     <div className="flex items-center justify-between mt-1">
-                      <span className="text-xs text-gray-400 truncate max-w-[150px]">{conv.latestMessage}</span>
+                      <span className="text-xs text-gray-400">
+                        {conv.unreadCount} {conv.unreadCount === 1 ? 'message' : 'messages'}
+                      </span>
                       <span className="text-xs text-gray-500">{formatTimestamp(conv.latestMessageTime)}</span>
                     </div>
                   </div>
@@ -703,7 +748,7 @@ UserList.propTypes = {
       isAnonymous: PropTypes.bool,
       country: PropTypes.string,
       gender: PropTypes.string,
-      age: PropTypes.number,
+      age: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
     })
   ).isRequired,
   setSelectedUserId: PropTypes.func.isRequired,
