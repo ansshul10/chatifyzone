@@ -23,7 +23,7 @@ const Profile = () => {
     bio: '',
     age: null,
     status: 'Available',
-    privacy: { allowFriendRequests: true, twoFactorEnabled: false, profileVisibility: 'Public' },
+    privacy: { allowFriendRequests: true, profileVisibility: 'Public' },
     friends: [],
     blockedUsers: [],
     createdAt: null,
@@ -33,7 +33,6 @@ const Profile = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [isBlockedUsersOpen, setIsBlockedUsersOpen] = useState(false);
-  const [is2FAModalOpen, setIs2FAModalOpen] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -69,7 +68,6 @@ const Profile = () => {
           status: data.status || 'Available',
           privacy: {
             allowFriendRequests: data.privacy?.allowFriendRequests ?? true,
-            twoFactorEnabled: data.privacy?.twoFactorEnabled ?? false,
             profileVisibility: data.privacy?.profileVisibility ?? 'Public',
           },
           friends: Array.isArray(data.friends) ? data.friends : [],
@@ -77,7 +75,7 @@ const Profile = () => {
           createdAt: data.createdAt || null,
         });
         setFriendRequests(Array.isArray(data.friendRequests) ? data.friendRequests : []);
-        setActivityLog(data.activityLog || []); // Simulated activity log
+        setActivityLog(Array.isArray(data.activityLog) ? data.activityLog : []);
         setError('');
       } catch (err) {
         setError(err.response?.data.msg || 'Failed to load profile');
@@ -107,29 +105,25 @@ const Profile = () => {
 
     socket.on('friendsUpdate', (friendList) => {
       const validFriends = Array.isArray(friendList) ? friendList.filter(friend => friend && friend._id && friend.username) : [];
-      setProfile((prev) => ({ ...prev, friends: validFriends }));
+      setProfile(prev => ({ ...prev, friends: validFriends }));
     });
 
     socket.on('friendRequestReceived', (request) => {
       if (request._id === userId) return;
-      setFriendRequests((prev) => {
+      setFriendRequests(prev => {
         if (prev.some(req => req._id === request._id)) return prev;
         setNewFriendRequest(request);
         setTimeout(() => setNewFriendRequest(null), 5000);
         return [...prev, request];
       });
-      setActivityLog((prev) => [
-        { action: `Received friend request from ${request.username}`, timestamp: new Date().toISOString() },
-        ...prev.slice(0, 4),
-      ]);
     });
 
     socket.on('blockedUsersUpdate', (blockedUsers) => {
       const validBlocked = Array.isArray(blockedUsers) ? blockedUsers.filter(user => user && user._id) : [];
-      setProfile((prev) => ({ ...prev, blockedUsers: validBlocked }));
+      setProfile(prev => ({ ...prev, blockedUsers: validBlocked }));
     });
 
-    socket.on('actionResponse', ({ success, msg }) => {
+    socket.on('actionResponse', ({ type, success, msg }) => {
       setError(success ? '' : msg);
       setSuccess(success ? msg : '');
       setTimeout(() => { setError(''); setSuccess(''); }, 3000);
@@ -150,8 +144,8 @@ const Profile = () => {
       setError('Bio cannot exceed 150 characters');
       return;
     }
-    if (profile.age && (profile.age < 13 || profile.age > 120)) {
-      setError('Age must be between 13 and 120');
+    if (profile.age && (profile.age < 18 || profile.age > 120)) {
+      setError('Age must be between 18 and 120');
       return;
     }
     try {
@@ -160,24 +154,18 @@ const Profile = () => {
         age: profile.age,
         status: profile.status,
         allowFriendRequests: profile.privacy.allowFriendRequests,
-        twoFactorEnabled: profile.privacy.twoFactorEnabled,
         profileVisibility: profile.privacy.profileVisibility,
       });
-      setProfile((prev) => ({
+      setProfile(prev => ({
         ...prev,
         bio: data.bio,
         age: data.age,
         status: data.status,
         privacy: {
           allowFriendRequests: data.privacy.allowFriendRequests,
-          twoFactorEnabled: data.privacy.twoFactorEnabled,
           profileVisibility: data.privacy.profileVisibility,
         },
       }));
-      setActivityLog((prev) => [
-        { action: `Updated profile (${data.status})`, timestamp: new Date().toISOString() },
-        ...prev.slice(0, 4),
-      ]);
       setIsEditing(false);
       setSuccess('Profile updated successfully!');
       setTimeout(() => setSuccess(''), 3000);
@@ -188,36 +176,17 @@ const Profile = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setProfile((prev) => ({
+    setProfile(prev => ({
       ...prev,
       [name]: name === 'age' ? (value === '' ? null : Number(value)) : value,
     }));
   };
 
   const handlePrivacyChange = (key, value) => {
-    setProfile((prev) => ({
+    setProfile(prev => ({
       ...prev,
       privacy: { ...prev.privacy, [key]: value },
     }));
-  };
-
-  const handleToggle2FA = async () => {
-    try {
-      const { data } = await api.put('/auth/toggle-2fa', { enable: !profile.privacy.twoFactorEnabled });
-      setProfile((prev) => ({
-        ...prev,
-        privacy: { ...prev.privacy, twoFactorEnabled: data.twoFactorEnabled },
-      }));
-      setActivityLog((prev) => [
-        { action: `2FA ${data.twoFactorEnabled ? 'enabled' : 'disabled'}`, timestamp: new Date().toISOString() },
-        ...prev.slice(0, 4),
-      ]);
-      setSuccess(`2FA ${data.twoFactorEnabled ? 'enabled' : 'disabled'} successfully!`);
-      setIs2FAModalOpen(false);
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (err) {
-      setError(err.response?.data.msg || 'Failed to toggle 2FA');
-    }
   };
 
   const handleChangePassword = async (e) => {
@@ -233,12 +202,8 @@ const Profile = () => {
       return;
     }
     try {
-      const { data } = await api.put('/auth/change-password', { currentPassword, newPassword });
+      const { data } = await api.post('/auth/change-password', { currentPassword, newPassword });
       setSuccess(data.msg);
-      setActivityLog((prev) => [
-        { action: 'Changed password', timestamp: new Date().toISOString() },
-        ...prev.slice(0, 4),
-      ]);
       setCurrentPassword('');
       setNewPassword('');
       setIsChangePasswordOpen(false);
@@ -265,54 +230,26 @@ const Profile = () => {
 
   const handleUnblockUser = (targetId) => {
     socketRef.current.emit('unblockUser', { userId, targetId });
-    setActivityLog((prev) => [
-      { action: 'Unblocked a user', timestamp: new Date().toISOString() },
-      ...prev.slice(0, 4),
-    ]);
   };
 
   const handleUnfriend = (friendId) => {
     socketRef.current.emit('unfriend', { userId, friendId });
     setSuccess('Removing friend...');
-    setActivityLog((prev) => [
-      { action: 'Removed a friend', timestamp: new Date().toISOString() },
-      ...prev.slice(0, 4),
-    ]);
     setTimeout(() => setSuccess(''), 3000);
   };
 
   const handleChatWithFriend = (friendId) => navigate(`/chat?friendId=${friendId}`);
 
   const handleAcceptFriendRequest = (friendId) => {
-    const friendRequest = friendRequests.find((req) => req._id === friendId);
-    if (friendRequest) {
-      setFriendRequests((prev) => prev.filter((req) => req._id !== friendId));
-      setProfile((prev) => {
-        if (prev.friends.some(f => f._id === friendId)) return prev;
-        return {
-          ...prev,
-          friends: [...prev.friends, { _id: friendId, username: friendRequest.username }],
-        };
-      });
-      setActivityLog((prev) => [
-        { action: `Accepted friend request from ${friendRequest.username}`, timestamp: new Date().toISOString() },
-        ...prev.slice(0, 4),
-      ]);
-    }
     socketRef.current.emit('acceptFriendRequest', { userId, friendId });
   };
 
   const handleDeclineFriendRequest = (friendId) => {
-    setFriendRequests((prev) => prev.filter((req) => req._id !== friendId));
     socketRef.current.emit('declineFriendRequest', { userId, friendId });
-    setActivityLog((prev) => [
-      { action: 'Declined a friend request', timestamp: new Date().toISOString() },
-      ...prev.slice(0, 4),
-    ]);
   };
 
   const toggleDarkMode = () => {
-    setIsDarkMode((prev) => {
+    setIsDarkMode(prev => {
       localStorage.setItem('darkMode', !prev);
       return !prev;
     });
@@ -462,15 +399,6 @@ const Profile = () => {
                       <span>Blocked Users</span>
                     </motion.div>
                     <motion.div
-                      whileHover={{ x: 5, color: isDarkMode ? '#FF6666' : '#FF0000' }}
-                      onClick={() => { setIsSettingsOpen(false); setIs2FAModalOpen(true); }}
-                      className="flex items-center space-x-2 text-sm cursor-pointer"
-                      role="menuitem"
-                    >
-                      <FaShieldAlt />
-                      <span>{profile.privacy.twoFactorEnabled ? 'Disable 2FA' : 'Enable 2FA'}</span>
-                    </motion.div>
-                    <motion.div
                       whileHover={{ x: 5, color: '#EF4444' }}
                       onClick={handleDeleteAccount}
                       className="flex items-center space-x-2 text-sm cursor-pointer"
@@ -542,7 +470,7 @@ const Profile = () => {
                     name="age"
                     value={profile.age || ''}
                     onChange={handleChange}
-                    min="13"
+                    min="18"
                     max="120"
                     variants={inputVariants}
                     whileHover="hover"
@@ -596,7 +524,7 @@ const Profile = () => {
                     friendRequests.map((req, index) => (
                       <motion.div
                         key={req._id || `req-${index}`}
-                        whileHover={{ scale: 1.02 }}
+                        whileHover={{ scale: 1 }}
                         className={`${isDarkMode ? 'bg-gray-800/10' : 'bg-gray-50'} p-3 rounded-lg flex justify-between items-center border ${isDarkMode ? 'border-gray-700/20' : 'border-gray-200'}`}
                       >
                         <span className={isDarkMode ? 'text-white' : 'text-gray-900'}>{req.username || 'Unknown'}</span>
@@ -654,7 +582,7 @@ const Profile = () => {
                     filteredFriends.map((friend, index) => (
                       <motion.div
                         key={friend._id || `friend-${index}`}
-                        whileHover={{ scale: 1.02 }}
+                        whileHover={{ scale: 1 }}
                         className={`${isDarkMode ? 'bg-gray-800/10' : 'bg-gray-50'} p-3 rounded-lg flex justify-between items-center border ${isDarkMode ? 'border-gray-700/20' : 'border-gray-200'}`}
                       >
                         <span
@@ -930,54 +858,6 @@ const Profile = () => {
             </motion.div>
           )}
         </AnimatePresence>
-
-        <AnimatePresence>
-          {is2FAModalOpen && (
-            <motion.div
-              initial="hidden"
-              animate="visible"
-              exit="hidden"
-              variants={modalVariants}
-              className="fixed inset-0 flex items-center justify-center bg-black/40 z-50"
-              role="dialog"
-              aria-label="Two-factor authentication"
-            >
-              <div className={`${isDarkMode ? 'bg-white/5 backdrop-blur-md border-gray-800/20' : 'bg-white border-gray-200'} p-6 rounded-2xl shadow-lg w-full max-w-sm`}>
-                <h3 className={`text-lg font-semibold mb-4 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                  {profile.privacy.twoFactorEnabled ? 'Disable 2FA' : 'Enable 2FA'}
-                </h3>
-                <p className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-500'} mb-4`}>
-                  {profile.privacy.twoFactorEnabled
-                    ? 'Disabling two-factor authentication will reduce account security.'
-                    : 'Enabling two-factor authentication adds an extra layer of security to your account.'}
-                </p>
-                <div className="flex justify-end space-x-3">
-                  <motion.button
-                    whileHover="hover"
-                    whileTap="tap"
-                    variants={buttonVariants}
-                    onClick={handleToggle2FA}
-                    className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium shadow-sm transition-colors duration-200"
-                    aria-label={profile.privacy.twoFactorEnabled ? 'Disable 2FA' : 'Enable 2FA'}
-                  >
-                    {profile.privacy.twoFactorEnabled ? 'Disable' : 'Enable'}
-                  </motion.button>
-                  <motion.button
-                    whileHover="hover"
-                    whileTap="tap"
-                    variants={buttonVariants}
-                    onClick={() => setIs2FAModalOpen(false)}
-                    className="px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-700 text-white text-sm font-medium shadow-sm transition-colors duration-200"
-                    aria-label="Cancel"
-                  >
-                    Cancel
-                  </motion.button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
       </div>
     </motion.div>
   );
