@@ -101,7 +101,7 @@ router.get('/conversations', auth, async (req, res) => {
     const userId = req.user || req.anonymousUser?.anonymousId;
     if (!userId) return res.status(401).json({ msg: 'User not authenticated' });
 
-    const messages = await Message.find({ receiver: userId }).sort({ createdAt: -1 }).lean();
+    const messages = await Message.find({ receiver: userId, readAt: null }).sort({ createdAt: -1 }).lean();
 
     const conversationsMap = new Map();
     for (const msg of messages) {
@@ -109,10 +109,11 @@ router.get('/conversations', auth, async (req, res) => {
       if (!conversationsMap.has(senderId)) {
         conversationsMap.set(senderId, {
           senderId,
-          latestMessage: msg.content,
           latestMessageTime: msg.createdAt,
+          unreadCount: 0,
         });
       }
+      conversationsMap.get(senderId).unreadCount += 1;
     }
 
     const conversations = [];
@@ -126,7 +127,7 @@ router.get('/conversations', auth, async (req, res) => {
             username: sender.username || `Anon_${senderId.slice(-4)}`,
             isAnonymous: true,
             gender: null,
-            latestMessage: conv.latestMessage,
+            unreadCount: conv.unreadCount,
             latestMessageTime: conv.latestMessageTime,
           });
         }
@@ -138,7 +139,7 @@ router.get('/conversations', auth, async (req, res) => {
             username: sender.username,
             isAnonymous: sender.isAnonymous || false,
             gender: sender.gender,
-            latestMessage: conv.latestMessage,
+            unreadCount: conv.unreadCount,
             latestMessageTime: conv.latestMessageTime,
           });
         }
@@ -146,6 +147,7 @@ router.get('/conversations', auth, async (req, res) => {
     }
 
     conversations.sort((a, b) => new Date(b.latestMessageTime) - new Date(a.latestMessageTime));
+    console.log('[Chat] conversations: Returning conversations:', conversations);
     res.json(conversations);
   } catch (err) {
     console.error('[Get Conversations] Server error:', err.message);
@@ -159,6 +161,7 @@ router.get('/unread-count', auth, async (req, res) => {
     if (!userId) return res.status(401).json({ msg: 'User not authenticated' });
 
     const unreadCount = await Message.countDocuments({ receiver: userId, readAt: null });
+    console.log('[Chat] unread-count: Returning unread count:', unreadCount);
     res.json({ unreadCount });
   } catch (err) {
     console.error('[Get Unread Count] Server error:', err.message);
@@ -173,12 +176,14 @@ router.post('/mark-read', auth, async (req, res) => {
     if (!userId) return res.status(401).json({ msg: 'User not authenticated' });
     if (!senderId) return res.status(400).json({ msg: 'Sender ID is required' });
 
-    const updatedMessages = await Message.updateMany(
+    console.log('[Chat] mark-read: Marking messages as read for user:', userId, 'from sender:', senderId);
+    const result = await Message.updateMany(
       { sender: senderId, receiver: userId, readAt: null },
       { $set: { readAt: new Date() } }
     );
+    console.log('[Chat] mark-read: Update result:', result);
 
-    res.json({ msg: 'Messages marked as read', modifiedCount: updatedMessages.nModified });
+    res.json({ msg: 'Messages marked as read', modifiedCount: result.modifiedCount });
   } catch (err) {
     console.error('[Mark Read] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
