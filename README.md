@@ -92,26 +92,22 @@ In server/ .env
 - WEBAUTHN_RP_ID=your_webauthn_rp_id
 - SESSION_SECRET=your_session_secret
 
-
 In client/ .env
 
 - REACT_APP_API_URL=YOUR_URL/api
 - REACT_APP_SOCKET_URL=YOUR_URL
-
-
 
 ⚠️ Note: Replace placeholders (e.g., your_mongo_connection_string, YOUR_URL) with actual values. Ensure .env files are listed in .gitignore to protect sensitive data.
 
 Run the Application:
 
 Start the Backend:
-cd server
-node server.js
-
+- cd server
+- node server.js
 
 Start the Frontend:
-cd client
-npm start
+- cd client
+- npm start
 
 Access ChatifyZone:Open YOUR_URL (e.g., http://localhost:3000) in your browser and start chatting! 🎉
 
