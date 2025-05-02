@@ -10,6 +10,7 @@ import ResetPassword from './components/ResetPassword';
 import Profile from './components/Profile';
 import TermsOfService from './components/TermsOfService';
 import PrivacyPolicy from './components/PrivacyPolicy';
+import Unsubscribe from './components/Unsubscribe';
 import NotFound from './pages/NotFound';
 import io from 'socket.io-client';
 
@@ -47,6 +48,7 @@ function App() {
           <Route path="/reset-password/:token" element={<ResetPassword />} />
           <Route path="/terms" element={<TermsOfService isDarkMode={true} />} />
           <Route path="/privacy" element={<PrivacyPolicy isDarkMode={true} />} />
+          <Route path="/unsubscribe" element={<Unsubscribe />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
