@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const Joi = require('joi');
 const User = require('../models/User');
+const Subscriber = require('../models/Subscriber');
 const auth = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const {
@@ -14,9 +15,9 @@ const {
   verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 
-const rpID = process.env.WEBAUTHN_RP_ID || 'chatify-10.vercel.app';
+const rpID = process.env.WEBAUTHN_RP_ID || 'https://chatifyzone.vercel.app';
 const rpName = 'Chatify';
-const expectedOrigin = process.env.CLIENT_URL || 'https://chatify-10.vercel.app';
+const expectedOrigin = process.env.CLIENT_URL || 'https://chatifyzone.vercel.app';
 
 // Validation schemas
 const loginSchema = Joi.object({
@@ -143,6 +144,14 @@ const userIdSchema = Joi.object({
   userId: Joi.string().required(),
 });
 
+const subscribeSchema = Joi.object({
+  email: Joi.string().email().required(),
+});
+
+const unsubscribeSchema = Joi.object({
+  token: Joi.string().required(),
+});
+
 // Helper to add activity log
 const addActivityLog = async (userId, action) => {
   try {
@@ -158,6 +167,230 @@ const addActivityLog = async (userId, action) => {
     console.error('[Activity Log] Error:', err.message);
   }
 };
+
+// Newsletter subscription
+router.post('/subscribe', async (req, res) => {
+  try {
+    console.log('[Subscribe] Received subscription request for email:', req.body.email);
+    const { error } = subscribeSchema.validate(req.body);
+    if (error) {
+      console.error('[Subscribe] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email } = req.body;
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check if already subscribed
+    const existingSubscriber = await Subscriber.findOne({ email: normalizedEmail });
+    if (existingSubscriber) {
+      console.error('[Subscribe] Email already subscribed:', normalizedEmail);
+      return res.status(400).json({ msg: 'This email is already subscribed' });
+    }
+
+    // Save subscriber with unsubscribe token
+    const subscriber = new Subscriber({ email: normalizedEmail });
+    await subscriber.save();
+
+    // Generate unsubscribe link
+    const unsubscribeLink = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/api/auth/unsubscribe?token=${subscriber.unsubscribeToken}`;
+
+    // Send confirmation email with advanced UI
+    const message = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to ChatifyZone Newsletter</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
+          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+          .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+          .header img { max-width: 150px; margin-bottom: 15px; }
+          .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
+          .content { padding: 20px 0; }
+          .content p { margin-bottom: 15px; font-size: 16px; }
+          .content ul { list-style: disc; margin-left: 20px; margin-bottom: 20px; }
+          .content ul li { margin-bottom: 10px; }
+          .button { display: inline-block; padding: 14px 32px; background: #FF0000; color: white; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; transition: background 0.3s ease; text-align: center; }
+          .button:hover { background: #CC0000; }
+          .warning { color: rgba(255, 255, 255, 0.7); font-size: 14px; margin-top: 20px; }
+          .footer { text-align: center; padding-top: 30px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+          .highlight { color: #FF0000; font-weight: 600; }
+          a { color: #FF0000; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          .button-container { text-align: center; margin: 20px 0; }
+          @media only screen and (max-width: 600px) {
+            .container { margin: 20px; padding: 20px; }
+            .header h1 { font-size: 22px; }
+            .header img { max-width: 120px; }
+            .button { display: block; width: 100%; }
+            .content p { font-size: 14px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Welcome to ChatifyZone</h1>
+          </div>
+          <div class="content">
+            <p>Hello <span class="highlight">${normalizedEmail}</span>,</p>
+            <p>Thank you for subscribing to the ChatifyZone Newsletter! You're now part of our vibrant community, and we're thrilled to have you on board.</p>
+            <p>Here's what you can expect from us:</p>
+            <ul>
+              <li>Real-time chat feature updates</li>
+              <li>Exclusive event invitations</li>
+              <li>Tips for secure and fun chatting</li>
+              <li>Community highlights and stories</li>
+            </ul>
+            <div class="button-container">
+              <a href="https://chatifyzone.vercel.app" class="button">Explore ChatifyZone Now</a>
+            </div>
+            <p class="warning">If you did not subscribe or wish to stop receiving our emails, you can unsubscribe at any time:</p>
+            <div class="button-container">
+              <a href="${unsubscribeLink}" class="button" style="background: #666666;">Unsubscribe</a>
+            </div>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
+            <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
+            <p>Follow us: <a href="https://x.com/chatifyzone">X</a> | <a href="https://instagram.com/chatifyzone">Instagram</a></p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    await sendEmail(normalizedEmail, 'ChatifyZone Newsletter Subscription', message);
+
+    console.log(`[Subscribe] Subscription successful for: ${normalizedEmail}`);
+    res.json({ msg: 'Subscribed successfully! Check your email for confirmation.' });
+  } catch (err) {
+    console.error('[Subscribe] Server error:', err.message);
+    res.status(500).json({ msg: 'Failed to subscribe. Please try again later.' });
+  }
+});
+
+// Unsubscribe from newsletter
+router.get('/unsubscribe', async (req, res) => {
+  try {
+    console.log('[Unsubscribe] Received unsubscribe request for token:', req.query.token);
+    const { error } = unsubscribeSchema.validate({ token: req.query.token });
+    if (error) {
+      console.error('[Unsubscribe] Validation error:', error.details[0].message);
+      return res.status(400).send('Invalid unsubscribe token');
+    }
+
+    const { token } = req.query;
+    const subscriber = await Subscriber.findOne({ unsubscribeToken: token });
+    if (!subscriber) {
+      console.error('[Unsubscribe] Subscriber not found for token:', token);
+      return res.status(404).send('Subscriber not found or already unsubscribed');
+    }
+
+    // Remove subscriber
+    await Subscriber.deleteOne({ unsubscribeToken: token });
+
+    // Send unsubscription confirmation email with advanced UI
+    const message = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Unsubscribed from ChatifyZone Newsletter</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
+          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+          .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+          .header img { max-width: 150px; margin-bottom: 15px; }
+          .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
+          .content { padding: 20px 0; }
+          .content p { margin-bottom: 15px; font-size: 16px; }
+          .button { display: inline-block; padding: 14px 32px; background: #FF0000; color: white; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; transition: background 0.3s ease; text-align: center; }
+          .button:hover { background: #CC0000; }
+          .warning { color: rgba(255, 255, 255, 0.7); font-size: 14px; margin-top: 20px; }
+          .footer { text-align: center; padding-top: 30px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+          .highlight { color: #FF0000; font-weight: 600; }
+          a { color: #FF0000; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          .button-container { text-align: center; margin: 20px 0; }
+          @media only screen and (max-width: 600px) {
+            .container { margin: 20px; padding: 20px; }
+            .header h1 { font-size: 22px; }
+            .header img { max-width: 120px; }
+            .button { display: block; width: 100%; }
+            .content p { font-size: 14px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Unsubscribed</h1>
+          </div>
+          <div class="content">
+            <p>Hello <span class="highlight">${subscriber.email}</span>,</p>
+            <p>You have successfully unsubscribed from the ChatifyZone Newsletter. We're sorry to see you go!</p>
+            <p>If this was a mistake or you'd like to rejoin our community, you can resubscribe anytime.</p>
+            <div class="button-container">
+              <a href="https://chatifyzone.vercel.app" class="button">Resubscribe Now</a>
+            </div>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
+            <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
+            <p>Follow us: <a href="https://x.com/chatifyzone">X</a> | <a href="https://instagram.com/chatifyzone">Instagram</a></p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    await sendEmail(subscriber.email, 'Unsubscribed from ChatifyZone Newsletter', message);
+
+    console.log(`[Unsubscribe] Successfully unsubscribed: ${subscriber.email}`);
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Unsubscribed</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+          .container { max-width: 500px; margin: 20px; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 30px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); text-align: center; }
+          h1 { font-size: 24px; font-weight: 700; color: white; margin-bottom: 20px; }
+          p { margin-bottom: 15px; font-size: 16px; }
+          .button { display: inline-block; padding: 12px 24px; background: #FF0000; color: white; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; transition: background 0.3s ease; }
+          .button:hover { background: #CC0000; }
+          a { color: #FF0000; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          @media only screen and (max-width: 600px) {
+            .container { padding: 20px; }
+            h1 { font-size: 20px; }
+            .button { display: block; width: 100%; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Unsubscribed Successfully</h1>
+          <p>You have been removed from the ChatifyZone Newsletter.</p>
+          <p>Want to rejoin? <a href="https://chatifyzone.vercel.app">Resubscribe here</a>.</p>
+          <a href="https://chatifyzone.vercel.app" class="button">Return to ChatifyZone</a>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('[Unsubscribe] Server error:', err.message);
+    res.status(500).send('Server error. Please try again later.');
+  }
+});
 
 // Get current user profile
 router.get('/profile', auth, async (req, res) => {
@@ -382,7 +615,7 @@ router.post('/block-user', auth, async (req, res) => {
     const { username } = req.body;
     const user = await User.findById(req.user);
     const userToBlock = await User.findOne({ username });
-    if (!userToBlock){
+    if (!userToBlock) {
       console.error('[Block User] User to block not found:', username);
       return res.status(404).json({ msg: 'User not found' });
     }
@@ -871,13 +1104,55 @@ router.post('/forgot-password', async (req, res) => {
 
     await addActivityLog(user.id, 'Requested password reset');
 
-    const resetUrl = `${process.env.CLIENT_URL || 'https://chatify-10.vercel.app'}/reset-password/${resetToken}`;
+    const resetUrl = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/reset-password/${resetToken}`;
     const message = `
-      <h1>Password Reset Request</h1>
-      <p>You requested a password reset. Click the link below to reset your password:</p>
-      <a href="${resetUrl}">${resetUrl}</a>
-      <p>This link will expire in 1 hour.</p>
-      <p>If you did not request this, please ignore this email.</p>
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Password Reset</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
+          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+          .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+          .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
+          .content { padding: 20px 0; }
+          .content p { margin-bottom: 15px; }
+          .button { display: inline-block; padding: 14px 32px; background: #FF0000; color: white; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; transition: background 0.3s ease; text-align: center; }
+          .button:hover { background: #CC0000; }
+          .warning { color: rgba(255, 255, 255, 0.7); font-size: 14px; margin-top: 20px; }
+          .footer { text-align: center; padding-top: 30px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+          .highlight { color: #FF0000; font-weight: 600; }
+          a { color: #FF0000; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          @media only screen and (max-width: 600px) {
+            .container { margin: 20px; padding: 20px; }
+            .header h1 { font-size: 22px; }
+            .button { display: block; width: 100%; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Password Reset</h1>
+          </div>
+          <div class="content">
+            <p>Hello <span class="highlight">${user.username}</span>,</p>
+            <p>We received a request to reset your password. Click the button below to create a new password:</p>
+            <a href="${resetUrl}" class="button">Reset Your Password</a>
+            <p class="warning">This link will expire in <span class="highlight">1 hour</span>. 
+              If you didn't request this reset, please ignore this email or contact our support team.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
+            <p>Having issues? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
+          </div>
+        </div>
+      </body>
+      </html>
     `;
 
     await sendEmail(user.email, 'Password Reset Request', message);
