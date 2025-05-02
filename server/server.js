@@ -12,6 +12,7 @@ const chatRoutes = require('./routes/chat');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
+const adminRoutes = require('./routes/admin'); // Add this
 
 const app = express();
 const server = http.createServer(app);
@@ -75,6 +76,8 @@ connectDB().then(() => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/admin', adminRoutes); // Add this
+
 
 // Socket.IO Logic
 const userSocketMap = new Map();
