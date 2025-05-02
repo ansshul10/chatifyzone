@@ -193,7 +193,7 @@ router.post('/subscribe', async (req, res) => {
     await subscriber.save();
 
     // Generate unsubscribe link
-    const unsubscribeLink = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/api/auth/unsubscribe?token=${subscriber.unsubscribeToken}`;
+    const unsubscribeLink = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/unsubscribe?token=${subscriber.unsubscribeToken}`;
 
     // Send confirmation email with advanced UI
     const message = `
