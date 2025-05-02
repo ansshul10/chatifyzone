@@ -11,10 +11,10 @@ const sendEmail = async (to, subject, html) => {
     });
 
     await transporter.sendMail({
-      from: `"Chatify" <${process.env.EMAIL_USER}>`,
+      from: `"ChatifyZone" <${process.env.EMAIL_USER}>`,
       to,
       subject,
-      html, // Changed from text to html to support HTML content
+      html,
     });
     console.log(`Email sent to ${to}`);
   } catch (err) {
@@ -23,4 +23,17 @@ const sendEmail = async (to, subject, html) => {
   }
 };
 
-module.exports = { sendEmail };
+// New function for bulk newsletter sending
+const sendNewsletter = async (subject, html, subscribers) => {
+  const emails = subscribers.map((sub) => sub.email);
+  const BATCH_SIZE = 100; // Adjust based on email service limits
+
+  for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+    const batch = emails.slice(i, i + BATCH_SIZE);
+    await sendEmail(batch.join(','), subject, html);
+    // Delay to avoid rate limits
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+};
+
+module.exports = { sendEmail, sendNewsletter };
