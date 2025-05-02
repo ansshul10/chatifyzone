@@ -15,18 +15,21 @@ const userSchema = new mongoose.Schema({
   blockedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   bio: { type: String, default: '', maxlength: 150 },
   age: { type: Number, min: 18, max: 120 },
-  country: { type: String, required: false }, // Made optional
+  country: { type: String, required: false },
   state: { type: String, default: '' },
-  gender: { type: String, enum: ['male', 'female', null], required: false }, // Made optional
+  gender: { type: String, enum: ['male', 'female', null], required: false },
   status: { type: String, default: 'Available', maxlength: 30 },
+  isAdmin: { type: Boolean, default: false }, // Added for admin role
   privacy: {
     allowFriendRequests: { type: Boolean, default: true },
     profileVisibility: { type: String, enum: ['Public', 'Friends', 'Private'], default: 'Public' },
   },
-  activityLog: [{
-    action: { type: String, required: true },
-    timestamp: { type: Date, default: Date.now },
-  }],
+  activityLog: [
+    {
+      action: { type: String, required: true },
+      timestamp: { type: Date, default: Date.now },
+    },
+  ],
   webauthnUserID: { type: String },
   webauthnCredentials: [
     {
