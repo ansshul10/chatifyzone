@@ -127,6 +127,34 @@ const updateProfileSchema = Joi.object({
   profileVisibility: Joi.string().valid('Public', 'Friends', 'Private').optional(),
 });
 
+// Admin registration schema
+const adminRegisterSchema = Joi.object({
+  email: Joi.string().email().required(),
+  username: Joi.string().min(3).max(30).required(),
+  password: Joi.string().min(6).required(),
+  adminSecret: Joi.string().required(),
+  country: Joi.string().allow('').optional(),
+  state: Joi.string().allow('').optional(),
+  age: Joi.string()
+    .pattern(/^\d+$/)
+    .custom((value, helpers) => {
+      const num = parseInt(value, 10);
+      if (isNaN(num) || num < 18 || num > 120) {
+        return helpers.error('any.invalid');
+      }
+      return num.toString();
+    }, 'age validation')
+    .optional(),
+  gender: Joi.string().valid('male', 'female', null).optional(),
+});
+
+// Admin login schema
+const adminLoginSchema = Joi.object({
+  email: Joi.string().email().required(),
+  password: Joi.string().min(6).required(),
+  adminSecret: Joi.string().required(),
+});
+
 const changePasswordSchema = Joi.object({
   currentPassword: Joi.string().required(),
   newPassword: Joi.string().min(6).required(),
@@ -159,7 +187,7 @@ const addActivityLog = async (userId, action) => {
       $push: {
         activityLog: {
           $each: [{ action, timestamp: new Date() }],
-          $slice: -5, // Keep only the last 5 entries
+          $slice: -5,
         },
       },
     });
@@ -1046,7 +1074,7 @@ router.post('/login', async (req, res) => {
 // Password-based registration
 router.post('/register', async (req, res) => {
   try {
-    console.log('[Password Register] Received registration request:', req.body);
+    console.log('[Password Register] Received registration request:', req.body.email);
     const { error } = registerSchema.validate(req.body);
     if (error) {
       console.error('[Password Register] Validation error:', error.details[0].message);
@@ -1060,9 +1088,18 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    user = new User({ email, username, password, country, state, age, gender });
-    await user.save();
+    user = new User({
+      email,
+      username,
+      password,
+      country,
+      state,
+      age,
+      gender,
+      activityLog: [{ action: 'Account created', timestamp: new Date() }],
+    });
 
+    await user.save();
     await addActivityLog(user.id, 'Account created');
 
     const payload = { userId: user.id };
@@ -1093,8 +1130,13 @@ router.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
     const user = await User.findOne({ email });
     if (!user) {
-      console.error('[Forgot Password] User not found:', email);
+      console.error('[Forgot Password] User not found for email:', email);
       return res.status(404).json({ msg: 'User not found' });
+    }
+
+    if (!user.password) {
+      console.error('[Forgot Password] Account uses biometric login only:', email);
+      return res.status(400).json({ msg: 'This account uses biometric login.' });
     }
 
     const resetToken = crypto.randomBytes(20).toString('hex');
@@ -1102,16 +1144,14 @@ router.post('/forgot-password', async (req, res) => {
     user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
     await user.save();
 
-    await addActivityLog(user.id, 'Requested password reset');
-
-    const resetUrl = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/reset-password/${resetToken}`;
+    const resetLink = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/reset-password?token=${resetToken}`;
     const message = `
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Password Reset</title>
+        <title>Reset Your ChatifyZone Password</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
@@ -1119,7 +1159,7 @@ router.post('/forgot-password', async (req, res) => {
           .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
           .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
           .content { padding: 20px 0; }
-          .content p { margin-bottom: 15px; }
+          .content p { margin-bottom: 15px; font-size: 16px; }
           .button { display: inline-block; padding: 14px 32px; background: #FF0000; color: white; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; transition: background 0.3s ease; text-align: center; }
           .button:hover { background: #CC0000; }
           .warning { color: rgba(255, 255, 255, 0.7); font-size: 14px; margin-top: 20px; }
@@ -1127,35 +1167,38 @@ router.post('/forgot-password', async (req, res) => {
           .highlight { color: #FF0000; font-weight: 600; }
           a { color: #FF0000; text-decoration: none; }
           a:hover { text-decoration: underline; }
+          .button-container { text-align: center; margin: 20px 0; }
           @media only screen and (max-width: 600px) {
             .container { margin: 20px; padding: 20px; }
             .header h1 { font-size: 22px; }
             .button { display: block; width: 100%; }
+            .content p { font-size: 14px; }
           }
         </style>
       </head>
       <body>
         <div class="container">
           <div class="header">
-            <h1>Password Reset</h1>
+            <h1>Password Reset Request</h1>
           </div>
           <div class="content">
             <p>Hello <span class="highlight">${user.username}</span>,</p>
-            <p>We received a request to reset your password. Click the button below to create a new password:</p>
-            <a href="${resetUrl}" class="button">Reset Your Password</a>
-            <p class="warning">This link will expire in <span class="highlight">1 hour</span>. 
-              If you didn't request this reset, please ignore this email or contact our support team.</p>
+            <p>We received a request to reset your ChatifyZone password. Click the button below to reset it:</p>
+            <div class="button-container">
+              <a href="${resetLink}" class="button">Reset Password</a>
+            </div>
+            <p class="warning">This link will expire in 1 hour. If you did not request a password reset, please ignore this email.</p>
           </div>
           <div class="footer">
-            <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
-            <p>Having issues? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
+            <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
+            <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
           </div>
         </div>
       </body>
       </html>
     `;
 
-    await sendEmail(user.email, 'Password Reset Request', message);
+    await sendEmail(user.email, 'Reset Your ChatifyZone Password', message);
 
     console.log(`[Forgot Password] Password reset email sent to: ${user.email}`);
     res.json({ msg: 'Password reset email sent' });
@@ -1166,9 +1209,9 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // Reset password
-router.post('/reset-password/:token', async (req, res) => {
+router.post('/reset-password', async (req, res) => {
   try {
-    console.log('[Reset Password] Received request for token:', req.params.token);
+    console.log('[Reset Password] Received request with token:', req.query.token);
     const { error } = resetPasswordSchema.validate(req.body);
     if (error) {
       console.error('[Reset Password] Validation error:', error.details[0].message);
@@ -1176,13 +1219,15 @@ router.post('/reset-password/:token', async (req, res) => {
     }
 
     const { password } = req.body;
+    const { token } = req.query;
+
     const user = await User.findOne({
-      resetPasswordToken: req.params.token,
+      resetPasswordToken: token,
       resetPasswordExpires: { $gt: Date.now() },
     });
 
     if (!user) {
-      console.error('[Reset Password] Invalid or expired reset token');
+      console.error('[Reset Password] Invalid or expired reset token:', token);
       return res.status(400).json({ msg: 'Invalid or expired reset token' });
     }
 
@@ -1197,6 +1242,185 @@ router.post('/reset-password/:token', async (req, res) => {
     res.json({ msg: 'Password reset successfully' });
   } catch (err) {
     console.error('[Reset Password] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Unblock user
+router.post('/unblock-user', auth, async (req, res) => {
+  try {
+    console.log('[Unblock User] Unblocking user for user ID:', req.user);
+    const { error } = unblockUserSchema.validate(req.body);
+    if (error) {
+      console.error('[Unblock User] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { userId } = req.body;
+    const user = await User.findById(req.user);
+    if (!user) {
+      console.error('[Unblock User] User not found:', req.user);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    if (!user.blockedUsers.includes(userId)) {
+      console.error('[Unblock User] User not in blocked list:', userId);
+      return res.status(400).json({ msg: 'User is not blocked' });
+    }
+
+    user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
+    await user.save();
+
+    await addActivityLog(req.user, `Unblocked user ID: ${userId}`);
+
+    console.log(`[Unblock User] User unblocked: ${userId} by ${user.username}`);
+    res.json({ msg: 'User unblocked successfully' });
+  } catch (err) {
+    console.error('[Unblock User] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Admin registration
+router.post('/admin/register', async (req, res) => {
+  try {
+    console.log('[Admin Register] Received registration request:', req.body.email);
+    const { error } = adminRegisterSchema.validate(req.body);
+    if (error) {
+      console.error('[Admin Register] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email, username, password, adminSecret, country, state, age, gender } = req.body;
+
+    // Verify admin secret key
+    if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
+      console.error('[Admin Register] Invalid admin secret key for:', email);
+      return res.status(403).json({ msg: 'Invalid admin secret key' });
+    }
+
+    // Check for existing user
+    let user = await User.findOne({ $or: [{ email }, { username }] });
+    if (user) {
+      console.error('[Admin Register] User already exists:', { email, username });
+      return res.status(400).json({ msg: 'User already exists with this email or username' });
+    }
+
+    // Create new admin user
+    user = new User({
+      email,
+      username,
+      password,
+      country,
+      state,
+      age,
+      gender,
+      isAdmin: true, // Set admin flag
+      activityLog: [{ action: 'Admin account created', timestamp: new Date() }],
+    });
+
+    await user.save();
+    await addActivityLog(user.id, 'Admin account created');
+
+    // Generate JWT token
+    const payload = { userId: user.id };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    // Set session data
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    await req.session.save();
+
+    console.log(`[Admin Register] Admin registered: ${user.username} (ID: ${user.id})`);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        country: user.country,
+        state: user.state,
+        age: user.age,
+        gender: user.gender,
+        isAdmin: user.isAdmin,
+      },
+    });
+  } catch (err) {
+    console.error('[Admin Register] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Admin login
+router.post('/admin/login', async (req, res) => {
+  try {
+    console.log('[Admin Login] Received login request:', req.body.email);
+    const { error } = adminLoginSchema.validate(req.body);
+    if (error) {
+      console.error('[Admin Login] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email, password, adminSecret } = req.body;
+
+    // Verify admin secret key
+    if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
+      console.error('[Admin Login] Invalid admin secret key for:', email);
+      return res.status(403).json({ msg: 'Invalid admin secret key' });
+    }
+
+    // Find user
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) {
+      console.error('[Admin Login] User not found for email:', email);
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
+
+    // Verify admin status
+    if (!user.isAdmin) {
+      console.error('[Admin Login] User is not an admin:', email);
+      return res.status(403).json({ msg: 'Admin access required' });
+    }
+
+    // Verify password
+    if (!user.password) {
+      console.error('[Admin Login] Account uses biometric login only:', email);
+      return res.status(400).json({ msg: 'This account uses biometric login.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      console.error('[Admin Login] Password mismatch for email:', email);
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
+
+    // Generate JWT token
+    const payload = { userId: user.id };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    // Set session data
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    await req.session.save();
+
+    await addActivityLog(user.id, 'Logged in as admin');
+
+    console.log(`[Admin Login] Admin logged in: ${user.username} (ID: ${user.id})`);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        country: user.country,
+        state: user.state,
+        age: user.age,
+        gender: user.gender,
+        isAdmin: user.isAdmin,
+      },
+    });
+  } catch (err) {
+    console.error('[Admin Login] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
