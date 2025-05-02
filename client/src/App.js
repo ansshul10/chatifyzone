@@ -7,7 +7,9 @@ import AnonymousEntry from './components/AnonymousEntry';
 import ChatWindow from './components/ChatWindow';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
-import Profile from './components/Profile'; // Add this import
+import Profile from './components/Profile';
+import TermsOfService from './components/TermsOfService';
+import PrivacyPolicy from './components/PrivacyPolicy';
 import NotFound from './pages/NotFound';
 import io from 'socket.io-client';
 
@@ -20,10 +22,10 @@ function App() {
 
     socket.on('notification', ({ text }) => {
       if (Notification.permission === 'granted') {
-        new Notification('Chatify', { body: text });
+        new Notification('ChatifyZone', { body: text });
       } else if (Notification.permission !== 'denied') {
         Notification.requestPermission().then((permission) => {
-          if (permission === 'granted') new Notification('Chatify', { body: text });
+          if (permission === 'granted') new Notification('ChatifyZone', { body: text });
         });
       }
     });
@@ -40,9 +42,11 @@ function App() {
           <Route path="/signup" element={<Register />} />
           <Route path="/anonymous" element={<AnonymousEntry />} />
           <Route path="/chat" element={<ChatWindow />} />
-          <Route path="/profile" element={<Profile />} /> {/* Add this route */}
+          <Route path="/profile" element={<Profile />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password/:token" element={<ResetPassword />} />
+          <Route path="/terms" element={<TermsOfService isDarkMode={true} />} />
+          <Route path="/privacy" element={<PrivacyPolicy isDarkMode={true} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
