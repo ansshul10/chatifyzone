@@ -1,6 +1,6 @@
 /* eslint-disable no-undef */
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaGoogle, FaApple, FaFingerprint } from 'react-icons/fa';
 import { startAuthentication } from '@simplewebauthn/browser';
@@ -373,7 +373,7 @@ const Login = () => {
             </motion.div>
           </motion.div>
           <motion.div variants={formVariants} className="w-full lg:w-1/2 flex items-start justify-center px-4 sm:px-0">
-            <div className={`bg-opacity-80 backdrop-blur-lg p-6 sm:p-8 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} hover:shadow-[0_15px_30px_rgba(255,0,0,0.3)] transform transition-all duration-300 w-full max-w-md`}>
+            <div className={`bg-opacity-80 backdrop-blur-lg p-6 sm:p-8 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} transform transition-all duration-300 w-full max-w-md`}>
               <h2 className={`text-2xl sm:text-3xl font-bold mb-6 sm:mb-8 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
                 Log In to Your Account
               </h2>
@@ -531,9 +531,14 @@ const Login = () => {
               </form>
               <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                 Don't have an account?{' '}
-                <a href="/signup" className="text-red-500 hover:underline">
+                <Link to="/signup" className="text-red-500 hover:underline">
                   Sign up
-                </a>
+                </Link>
+                <br />
+                Forgot your password?{' '}
+                <Link to="/forgot-password" className="text-red-500 hover:underline">
+                  Reset password
+                </Link>
               </div>
             </div>
           </motion.div>
