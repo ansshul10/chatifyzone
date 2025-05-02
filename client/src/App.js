@@ -11,10 +11,15 @@ import Profile from './components/Profile';
 import TermsOfService from './components/TermsOfService';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import Unsubscribe from './components/Unsubscribe';
+import AdminPanel from './components/AdminPanel';
+import AdminLogin from './components/AdminLogin';
 import NotFound from './pages/NotFound';
 import io from 'socket.io-client';
+import AdminSignup from './components/AdminSignup';
 
-const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
+const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+  withCredentials: true,
+});
 
 function App() {
   useEffect(() => {
@@ -49,6 +54,9 @@ function App() {
           <Route path="/terms" element={<TermsOfService isDarkMode={true} />} />
           <Route path="/privacy" element={<PrivacyPolicy isDarkMode={true} />} />
           <Route path="/unsubscribe" element={<Unsubscribe />} />
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin/signup" element={<AdminSignup />} />
+          <Route path="/admin/panel" element={<AdminPanel />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
