@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import Login from './components/Login';
@@ -13,15 +13,36 @@ import PrivacyPolicy from './components/PrivacyPolicy';
 import Unsubscribe from './components/Unsubscribe';
 import AdminPanel from './components/AdminPanel';
 import AdminLogin from './components/AdminLogin';
-import NotFound from './pages/NotFound';
-import io from 'socket.io-client';
 import AdminSignup from './components/AdminSignup';
+import NotFound from './pages/NotFound';
+import Maintenance from './components/Maintenance';
+import io from 'socket.io-client';
+import { checkMaintenanceStatus } from './utils/api';
 
 const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
   withCredentials: true,
 });
 
 function App() {
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchMaintenanceStatus = async () => {
+      try {
+        const { maintenanceMode } = await checkMaintenanceStatus();
+        setMaintenanceMode(maintenanceMode);
+      } catch (error) {
+        console.error('Failed to fetch maintenance status:', error);
+        setMaintenanceMode(false); // Default to false on error
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMaintenanceStatus();
+  }, []);
+
   useEffect(() => {
     const userId = JSON.parse(localStorage.getItem('user'))?.id || localStorage.getItem('anonymousId');
     if (userId) socket.emit('join', userId);
@@ -38,6 +59,18 @@ function App() {
 
     return () => socket.off('notification');
   }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black flex items-center justify-center">
+        <p className="text-white text-lg">Loading...</p>
+      </div>
+    );
+  }
+
+  if (maintenanceMode) {
+    return <Maintenance />;
+  }
 
   return (
     <Router>
