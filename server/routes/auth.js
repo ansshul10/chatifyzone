@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const Joi = require('joi');
 const User = require('../models/User');
 const Subscriber = require('../models/Subscriber');
+const Setting = require('../models/Setting');
 const auth = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const {
@@ -195,6 +196,22 @@ const addActivityLog = async (userId, action) => {
     console.error('[Activity Log] Error:', err.message);
   }
 };
+
+// Check maintenance status
+router.get('/maintenance-status', async (req, res) => {
+  try {
+    console.log('[Maintenance Status] Checking maintenance status');
+    let settings = await Setting.findOne();
+    if (!settings) {
+      settings = new Setting();
+      await settings.save();
+    }
+    res.json({ maintenanceMode: settings.maintenanceMode });
+  } catch (err) {
+    console.error('[Maintenance Status] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
 
 // Newsletter subscription
 router.post('/subscribe', async (req, res) => {
@@ -681,6 +698,17 @@ router.post('/webauthn/register/begin', async (req, res) => {
     console.log('[WebAuthn Register Begin] Deployed Version: Buffer Fix 2025-04-26 v2');
     console.log('[WebAuthn Register Begin] Step 1: Received request:', req.body);
 
+    // Check if registration is enabled
+    let settings = await Setting.findOne();
+    if (!settings) {
+      settings = new Setting();
+      await settings.save();
+    }
+    if (!settings.registrationEnabled) {
+      console.error('[WebAuthn Register Begin] Registration is disabled');
+      return res.status(403).json({ msg: 'Registration is currently disabled' });
+    }
+
     console.log('[WebAuthn Register Begin] Step 2: Validating request body');
     const { error } = webauthnRegisterBeginSchema.validate(req.body);
     if (error) {
@@ -759,6 +787,18 @@ router.post('/webauthn/register/begin', async (req, res) => {
 router.post('/webauthn/register/complete', async (req, res) => {
   try {
     console.log('[WebAuthn Register Complete] Received request:', req.body);
+
+    // Check if registration is enabled
+    let settings = await Setting.findOne();
+    if (!settings) {
+      settings = new Setting();
+      await settings.save();
+    }
+    if (!settings.registrationEnabled) {
+      console.error('[WebAuthn Register Complete] Registration is disabled');
+      return res.status(403).json({ msg: 'Registration is currently disabled' });
+    }
+
     const { error } = webauthnRegisterCompleteSchema.validate(req.body);
     if (error) {
       console.error('[WebAuthn Register Complete] Validation error:', error.details[0].message);
@@ -836,237 +876,171 @@ router.post('/webauthn/register/complete', async (req, res) => {
   }
 });
 
-// WebAuthn login: Begin
+// WebAuthn login begin
 router.post('/webauthn/login/begin', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Begin] Step 1: Received request:', req.body.email);
+    console.log('[WebAuthn Login Begin] Received request for email:', req.body.email);
     const { error } = webauthnLoginBeginSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Login Begin] Step 1 Error: Validation error:', error.details[0].message);
+      console.error('[WebAuthn Login Begin] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { email } = req.body;
-    console.log('[WebAuthn Login Begin] Step 2: Fetching user for email:', email);
-    const user = await User.findOne({ email });
-    if (!user || !user.webauthnCredentials.length) {
-      console.error('[WebAuthn Login Begin] Step 2 Error: No biometric credentials found for:', email);
-      return res.status(400).json({ msg: 'No biometric credentials found for this user' });
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      console.error('[WebAuthn Login Begin] User not found for email:', email);
+      return res.status(400).json({ msg: 'User not found' });
     }
-    console.log('[WebAuthn Login Begin] Step 2: User found:', { userId: user._id, username: user.username });
 
-    console.log('[WebAuthn Login Begin] Step 3: Validating webauthnCredentials');
-    const allowCredentials = user.webauthnCredentials.map((cred, index) => {
-      if (typeof cred.credentialID !== 'string') {
-        console.error('[WebAuthn Login Begin] Step 3 Error: Invalid credentialID type at index', index, ':', typeof cred.credentialID);
-        throw new Error(`Invalid credentialID type for credential at index ${index}`);
-      }
-      try {
-        const decoded = Buffer.from(cred.credentialID, 'base64');
-        console.log('[WebAuthn Login Begin] Step 3: Valid credentialID at index', index, ':', cred.credentialID.substring(0, 20) + '...');
-        return {
-          id: cred.credentialID,
-          type: 'public-key',
-        };
-      } catch (base64Error) {
-        console.error('[WebAuthn Login Begin] Step 3 Error: Invalid base64 credentialID at index', index, ':', cred.credentialID);
-        throw new Error(`Invalid base64 format for credentialID at index ${index}`);
-      }
+    // Check if user is banned
+    if (user.isBanned) {
+      console.error('[WebAuthn Login Begin] Attempted login by banned user:', email);
+      return res.status(403).json({ msg: 'Your account is banned. Please contact support.' });
+    }
+
+    const options = await generateAuthenticationOptions({
+      rpID,
+      userVerification: 'required',
+      allowCredentials: user.webauthnCredentials.map((cred) => ({
+        id: Buffer.from(cred.credentialID, 'base64'),
+        type: 'public-key',
+      })),
     });
-    console.log('[WebAuthn Login Begin] Step 3: allowCredentials prepared:', allowCredentials.length, 'credentials');
 
-    console.log('[WebAuthn Login Begin] Step 4: Generating authentication options');
-    let options;
-    try {
-      options = await generateAuthenticationOptions({
-        rpID,
-        allowCredentials,
-        userVerification: 'required',
-      });
-      console.log('[WebAuthn Login Begin] Step 4: Authentication options generated:', {
-        challenge: options.challenge,
-        allowCredentialsCount: options.allowCredentials.length,
-      });
-    } catch (webauthnError) {
-      console.error('[WebAuthn Login Begin] Step 4 Error: Failed to generate authentication options:', {
-        message: webauthnError.message,
-        stack: webauthnError.stack,
-      });
-      return res.status(500).json({ msg: `Failed to generate authentication options: ${webauthnError.message}` });
-    }
+    // Store challenge in database for verification
+    user.webauthnChallenge = options.challenge;
+    await user.save();
 
-    console.log('[WebAuthn Login Begin] Step 5: Saving session data');
-    req.session.challenge = options.challenge;
-    req.session.email = email;
-    req.session.webauthnUserID = user.webauthnUserID;
-    req.session.challengeExpires = Date.now() + 5 * 60 * 1000;
-
-    try {
-      await req.session.save();
-      console.log('[WebAuthn Login Begin] Step 5: Session saved:', {
-        sessionId: req.sessionID,
-        challenge: options.challenge,
-        webauthnUserID: user.webauthnUserID,
-      });
-    } catch (sessionError) {
-      console.error('[WebAuthn Login Begin] Step 5 Error: Failed to save session:', sessionError.message);
-      return res.status(500).json({ msg: 'Failed to save session data' });
-    }
-
-    console.log('[WebAuthn Login Begin] Step 6: Sending response');
-    res.json(options);
+    console.log('[WebAuthn Login Begin] Authentication options generated for:', email);
+    res.json({ publicKey: options, challenge: options.challenge });
   } catch (err) {
-    console.error('[WebAuthn Login Begin] Step 7 Error: Server error:', {
-      message: err.message,
-      stack: err.stack,
-    });
-    res.status(500).json({ msg: `Server error: ${err.message}` });
+    console.error('[WebAuthn Login Begin] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
   }
 });
 
-// WebAuthn login: Complete
+// WebAuthn login complete
 router.post('/webauthn/login/complete', async (req, res) => {
   try {
-    console.log('[WebAuthn Login Complete] Step 1: Received request:', req.body.email);
+    console.log('[WebAuthn Login Complete] Received request for email:', req.body.email);
     const { error } = webauthnLoginCompleteSchema.validate(req.body);
     if (error) {
-      console.error('[WebAuthn Login Complete] Step 1 Error: Validation error:', error.details[0].message);
+      console.error('[WebAuthn Login Complete] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { email, credential } = req.body;
-
-    console.log('[WebAuthn Login Complete] Step 2: Validating session data');
-    if (
-      !req.session.challenge ||
-      req.session.email !== email ||
-      !req.session.webauthnUserID ||
-      req.session.challengeExpires < Date.now()
-    ) {
-      console.error('[WebAuthn Login Complete] Step 2 Error: Invalid session data:', {
-        sessionId: req.sessionID,
-        sessionChallenge: req.session.challenge,
-        sessionEmail: req.session.email,
-        sessionWebauthnUserID: req.session.webauthnUserID,
-        providedEmail: email,
-        challengeExpired: req.session.challengeExpires < Date.now(),
-      });
-      return res.status(400).json({ msg: 'Invalid session or email' });
-    }
-
-    console.log('[WebAuthn Login Complete] Step 3: Fetching user for email:', email);
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
-      console.error('[WebAuthn Login Complete] Step 3 Error: User not found:', email);
+      console.error('[WebAuthn Login Complete] User not found for email:', email);
       return res.status(400).json({ msg: 'User not found' });
     }
 
-    console.log('[WebAuthn Login Complete] Step 4: Matching credential');
-    const credentialID = Buffer.from(credential.rawId).toString('base64');
-    const credentialMatch = user.webauthnCredentials.find(
-      cred => cred.credentialID === credentialID
+    // Check if user is banned
+    if (user.isBanned) {
+      console.error('[WebAuthn Login Complete] Attempted login by banned user:', email);
+      return res.status(403).json({ msg: 'Your account is banned. Please contact support.' });
+    }
+
+    const authenticator = user.webauthnCredentials.find(
+      (cred) => cred.credentialID === Buffer.from(credential.rawId).toString('base64')
     );
-    if (!credentialMatch) {
-      console.error('[WebAuthn Login Complete] Step 4 Error: Invalid credential for:', email, 'Provided credentialID:', credentialID);
+    if (!authenticator) {
+      console.error('[WebAuthn Login Complete] No matching authenticator found for:', email);
       return res.status(400).json({ msg: 'Invalid credential' });
     }
-    console.log('[WebAuthn Login Complete] Step 4: Credential matched:', {
-      credentialID: credentialMatch.credentialID.substring(0, 20) + '...',
-      counter: credentialMatch.counter,
-    });
 
-    console.log('[WebAuthn Login Complete] Step 5: Verifying authentication response');
-    const verification = await verifyAuthenticationResponse({
-      response: credential,
-      expectedChallenge: req.session.challenge,
-      expectedOrigin,
-      expectedRPID: rpID,
-      authenticator: {
-        credentialID: Buffer.from(credentialMatch.credentialID, 'base64'),
-        credentialPublicKey: Buffer.from(credentialMatch.publicKey, 'base64'),
-        counter: credentialMatch.counter,
-      },
-    });
+    let verification;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge: user.webauthnChallenge,
+        expectedOrigin,
+        expectedRPID: rpID,
+        authenticator: {
+          credentialID: Buffer.from(authenticator.credentialID, 'base64'),
+          credentialPublicKey: Buffer.from(authenticator.publicKey, 'base64'),
+          counter: authenticator.counter,
+        },
+      });
+    } catch (verifyError) {
+      console.error('[WebAuthn Login Complete] Verification error:', verifyError.message);
+      return res.status(400).json({ msg: 'Authentication verification failed' });
+    }
 
     if (!verification.verified) {
-      console.error('[WebAuthn Login Complete] Step 5 Error: Verification failed for:', email);
-      return res.status(400).json({ msg: 'Fingerprint authentication failed' });
+      console.error('[WebAuthn Login Complete] Verification failed for:', email);
+      return res.status(400).json({ msg: 'Authentication failed' });
     }
-    console.log('[WebAuthn Login Complete] Step 5: Verification successful:', {
-      newCounter: verification.authenticationInfo.newCounter,
-    });
 
-    console.log('[WebAuthn Login Complete] Step 6: Updating credential counter');
-    credentialMatch.counter = verification.authenticationInfo.newCounter;
+    // Update counter
+    authenticator.counter = verification.authenticationInfo.newCounter;
+    user.webauthnChallenge = null;
     await user.save();
 
-    console.log('[WebAuthn Login Complete] Step 7: Generating JWT token');
-    const payload = { userId: user.id };
+    const payload = { user: { id: user.id, username: user.username } };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    console.log('[WebAuthn Login Complete] Step 8: Updating session');
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    req.session.challenge = null;
-    req.session.email = null;
-    req.session.webauthnUserID = null;
-    req.session.challengeExpires = null;
-    await req.session.save();
+    await addActivityLog(user.id, 'Logged in with WebAuthn');
 
-    await addActivityLog(user.id, 'Logged in via WebAuthn');
-
-    console.log(`[WebAuthn Login Complete] Step 9: User logged in: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
-  } catch (err) {
-    console.error('[WebAuthn Login Complete] Step 10 Error: Server error:', {
-      message: err.message,
-      stack: err.stack,
+    console.log(`[WebAuthn Login Complete] User logged in: ${user.username} (ID: ${user.id})`);
+    res.json({
+      token,
+      user: { id: user.id, username: user.username, email: user.email },
     });
-    res.status(500).json({ msg: `Server error: ${err.message}` });
+  } catch (err) {
+    console.error('[WebAuthn Login Complete] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
   }
 });
 
-// Password-based login
+// Password login
 router.post('/login', async (req, res) => {
   try {
-    console.log('[Password Login] Received login request:', req.body.email);
+    console.log('[Login] Received login request for email:', req.body.email);
     const { error } = loginSchema.validate(req.body);
     if (error) {
-      console.error('[Password Login] Validation error:', error.details[0].message);
+      console.error('[Login] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { email, password } = req.body;
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
     if (!user) {
-      console.error('[Password Login] User not found for email:', email);
+      console.error('[Login] User not found for email:', email);
       return res.status(400).json({ msg: 'Invalid credentials' });
     }
 
+    // Check if user is banned
+    if (user.isBanned) {
+      console.error('[Login] Attempted login by banned user:', email);
+      return res.status(403).json({ msg: 'Your account is banned. Please contact support.' });
+    }
+
     if (!user.password) {
-      console.error('[Password Login] Account uses biometric login only:', email);
+      console.error('[Login] Account uses biometric login only:', email);
       return res.status(400).json({ msg: 'This account uses biometric login.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      console.error('[Password Login] Password mismatch for email:', email);
+      console.error('[Login] Invalid password for email:', email);
       return res.status(400).json({ msg: 'Invalid credentials' });
     }
 
-    const payload = { userId: user.id };
+    const payload = { user: { id: user.id, username: user.username } };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
+    await addActivityLog(user.id, 'Logged in with password');
 
-    await addActivityLog(user.id, 'Logged in via password');
-
-    console.log(`[Password Login] User logged in: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
+    console.log(`[Login] User logged in: ${user.username} (ID: ${user.id})`);
+    res.json({
+      token,
+      user: { id: user.id, username: user.username, email: user.email },
+    });
   } catch (err) {
-    console.error('[Password Login] Server error:', err.message);
+    console.error('[Login] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1075,6 +1049,18 @@ router.post('/login', async (req, res) => {
 router.post('/register', async (req, res) => {
   try {
     console.log('[Password Register] Received registration request:', req.body.email);
+
+    // Check if registration is enabled
+    let settings = await Setting.findOne();
+    if (!settings) {
+      settings = new Setting();
+      await settings.save();
+    }
+    if (!settings.registrationEnabled) {
+      console.error('[Password Register] Registration is disabled');
+      return res.status(403).json({ msg: 'Registration is currently disabled' });
+    }
+
     const { error } = registerSchema.validate(req.body);
     if (error) {
       console.error('[Password Register] Validation error:', error.details[0].message);
@@ -1285,6 +1271,18 @@ router.post('/unblock-user', auth, async (req, res) => {
 router.post('/admin/register', async (req, res) => {
   try {
     console.log('[Admin Register] Received registration request:', req.body.email);
+
+    // Check if registration is enabled
+    let settings = await Setting.findOne();
+    if (!settings) {
+      settings = new Setting();
+      await settings.save();
+    }
+    if (!settings.registrationEnabled) {
+      console.error('[Admin Register] Registration is disabled');
+      return res.status(403).json({ msg: 'Registration is currently disabled' });
+    }
+
     const { error } = adminRegisterSchema.validate(req.body);
     if (error) {
       console.error('[Admin Register] Validation error:', error.details[0].message);
@@ -1315,7 +1313,7 @@ router.post('/admin/register', async (req, res) => {
       state,
       age,
       gender,
-      isAdmin: true, // Set admin flag
+      isAdmin: true,
       activityLog: [{ action: 'Admin account created', timestamp: new Date() }],
     });
 
