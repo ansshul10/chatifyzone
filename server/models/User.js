@@ -19,7 +19,10 @@ const userSchema = new mongoose.Schema({
   state: { type: String, default: '' },
   gender: { type: String, enum: ['male', 'female', null], required: false },
   status: { type: String, default: 'Available', maxlength: 30 },
-  isAdmin: { type: Boolean, default: false }, // Added for admin role
+  isAdmin: { type: Boolean, default: false },
+  isBanned: { type: Boolean, default: false },
+  bannedAt: { type: Date, default: null },
+  role: { type: String, enum: ['user', 'moderator', 'admin'], default: 'user' },
   privacy: {
     allowFriendRequests: { type: Boolean, default: true },
     profileVisibility: { type: String, enum: ['Public', 'Friends', 'Private'], default: 'Public' },
