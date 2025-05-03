@@ -30,6 +30,7 @@ import {
 } from 'react-icons/fa';
 import { Link, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
+import AnnouncementBanner from '../components/AnnouncementBanner'; // Import the new component
 import api from '../utils/api';
 
 // Separate Email Subscription Component
@@ -482,6 +483,7 @@ const Home = () => {
       className={`min-h-screen flex flex-col ${isDarkMode ? 'bg-black text-white' : 'bg-gray-100 text-gray-900'} pt-20`}
     >
       <Navbar setIsDarkMode={setIsDarkMode} isDarkMode={isDarkMode} />
+      <AnnouncementBanner isDarkMode={isDarkMode} /> {/* Add the announcement banner here */}
       {isAuthenticated ? <ChatHome /> : isAnonymous ? <AnonymousHome /> : <NormalHome />}
       <motion.footer
         variants={footerVariants}
