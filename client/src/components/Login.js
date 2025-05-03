@@ -29,11 +29,12 @@ const Login = () => {
     reconnectionDelay: 1000,
   });
 
-  // Check WebAuthn support on component mount
+  // Check WebAuthn support and handle logout event
   useEffect(() => {
-    console.log('[Login] Checking WebAuthn support');
+    console.log('[Login] Component mounted, checking WebAuthn support');
     const checkWebAuthnSupport = async () => {
       try {
+        console.log('[Login] Verifying WebAuthn availability');
         if (window.PublicKeyCredential) {
           const isSupported = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
           console.log('[Login] WebAuthn support check result:', isSupported);
@@ -55,17 +56,48 @@ const Login = () => {
     // Handle logout event from server
     socket.on('logout', ({ reason }) => {
       console.log('[Socket.IO Logout] Received logout event:', reason);
-      setError(`You have been logged out due to ${reason.toLowerCase()}.`);
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      delete api.defaults.headers.common['x-auth-token'];
-      setTimeout(() => {
+      const token = localStorage.getItem('token');
+      console.log('[Socket.IO Logout] Current token in localStorage:', token ? token.substring(0, 20) + '...' : 'None');
+      if (token) {
+        console.log('[Socket.IO Logout] Validating token with /auth/profile');
+        api.get('/auth/profile')
+          .then((response) => {
+            console.log('[Socket.IO Logout] Token is valid, user:', response.data?.username || 'Unknown');
+            console.log('[Socket.IO Logout] Ignoring logout event due to valid token');
+          })
+          .catch((err) => {
+            console.error('[Socket.IO Logout] Token validation failed:', {
+              status: err.response?.status,
+              data: err.response?.data,
+              message: err.message,
+            });
+            console.log('[Socket.IO Logout] Proceeding with logout');
+            setError(`You have been logged out due to ${reason.toLowerCase()}.`);
+            try {
+              localStorage.removeItem('token');
+              localStorage.removeItem('user');
+              console.log('[Socket.IO Logout] Cleared token and user from localStorage');
+            } catch (storageError) {
+              console.error('[Socket.IO Logout] Error clearing localStorage:', storageError.message);
+              setError('Failed to clear authentication data. Please clear your browser storage and try again.');
+            }
+            delete api.defaults.headers.common['x-auth-token'];
+            console.log('[Socket.IO Logout] Cleared x-auth-token header');
+            setTimeout(() => {
+              console.log('[Socket.IO Logout] Navigating to /login');
+              navigate('/login');
+            }, 3000);
+          });
+      } else {
+        console.log('[Socket.IO Logout] No token found, redirecting to /login');
+        setError(`You have been logged out due to ${reason.toLowerCase()}.`);
         navigate('/login');
-      }, 3000);
+      }
     });
 
     // Cleanup socket listeners
     return () => {
+      console.log('[Login] Component unmounting, cleaning up Socket.IO listeners');
       socket.off('logout');
       socket.disconnect();
     };
@@ -73,6 +105,10 @@ const Login = () => {
 
   const handleBiometricLogin = async () => {
     console.log('[Fingerprint Login] Starting fingerprint login process');
+    if (isLoading || success) {
+      console.warn('[Fingerprint Login] Login already in progress or completed, aborting');
+      return;
+    }
     setError('');
     setSuccess(false);
     setIsLoading(true);
@@ -180,14 +216,17 @@ const Login = () => {
       }
 
       // Step 6: Send request to /webauthn/login/complete
-      console.log('[Fingerprint Login Step 6] Sending request to /auth/webauthn/login/complete:', { email, credential });
+      console.log('[Fingerprint Login Step 6] Sending request to /auth/webauthn/login/complete:', { email });
       let completeResponse;
       try {
         completeResponse = await api.post('/auth/webauthn/login/complete', {
           email,
           credential,
         });
-        console.log('[Fingerprint Login Step 6] Fingerprint login successful:', completeResponse.data);
+        console.log('[Fingerprint Login Step 6] Fingerprint login successful:', {
+          token: completeResponse.data.token ? completeResponse.data.token.substring(0, 20) + '...' : 'None',
+          user: completeResponse.data.user,
+        });
       } catch (completeError) {
         console.error('[Fingerprint Login Step 6 Error] Failed to complete fingerprint authentication:', completeError.message);
         console.error('[Fingerprint Login Step 6 Error] API error details:', {
@@ -199,19 +238,36 @@ const Login = () => {
         return;
       }
 
-      // Step 7: Store token and user data
-      console.log('[Fingerprint Login Step 7] Storing authentication data');
+      // Step 7: Validate and store token and user data
+      console.log('[Fingerprint Login Step 7] Validating response data');
+      if (!completeResponse.data.token || !completeResponse.data.user) {
+        console.error('[Fingerprint Login Step 7 Error] Invalid response data:', completeResponse.data);
+        setError('Invalid server response: missing token or user data.');
+        setIsLoading(false);
+        return;
+      }
+      console.log('[Fingerprint Login Step 7] Response data valid, storing authentication data');
       try {
         localStorage.setItem('token', completeResponse.data.token);
         localStorage.setItem('user', JSON.stringify(completeResponse.data.user));
-        api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
-        console.log('[Fingerprint Login Step 7] Token and user data stored successfully:', {
+        console.log('[Fingerprint Login Step 7] Token and user data saved to localStorage:', {
           token: completeResponse.data.token.substring(0, 20) + '...',
           user: completeResponse.data.user,
         });
+        // Verify token was saved
+        const savedToken = localStorage.getItem('token');
+        if (!savedToken) {
+          console.error('[Fingerprint Login Step 7 Error] Token not found in localStorage after saving');
+          setError('Failed to save authentication token. Please check your browser settings (e.g., disable incognito mode).');
+          setIsLoading(false);
+          return;
+        }
+        console.log('[Fingerprint Login Step 7] Token verified in localStorage:', savedToken.substring(0, 20) + '...');
+        api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
+        console.log('[Fingerprint Login Step 7] Set x-auth-token header:', completeResponse.data.token.substring(0, 20) + '...');
       } catch (storageError) {
         console.error('[Fingerprint Login Step 7 Error] Failed to store authentication data:', storageError.message);
-        setError('Failed to save authentication data. Please try again.');
+        setError('Failed to save authentication data. Your browser may be blocking localStorage (e.g., incognito mode). Please check your settings.');
         setIsLoading(false);
         return;
       }
@@ -225,9 +281,8 @@ const Login = () => {
         navigate('/');
       }, 2000);
     } catch (unexpectedError) {
-      // Step 9: Catch any unexpected errors
-      console.error('[Fingerprint Login Step 9 Error] Unexpected error during fingerprint login:', unexpectedError.message);
-      console.error('[Fingerprint Login Step 9 Error] Full error details:', unexpectedError);
+      console.error('[Fingerprint Login Error] Unexpected error during fingerprint login:', unexpectedError.message);
+      console.error('[Fingerprint Login Error] Full error details:', unexpectedError);
       setError('An unexpected error occurred during fingerprint login. Please try again.');
       setIsLoading(false);
     }
@@ -236,12 +291,16 @@ const Login = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     console.log('[Password Login] Starting password login process');
+    if (isLoading || success) {
+      console.warn('[Password Login] Login already in progress or completed, aborting');
+      return;
+    }
     setError('');
     setSuccess(false);
     setIsLoading(true);
 
     // Validate input fields
-    console.log('[Password Login] Validating input fields:', { email, password });
+    console.log('[Password Login] Validating input fields:', { email });
     if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       console.error('[Password Login Error] Email is empty or invalid');
       setError('Please enter a valid email address');
@@ -257,21 +316,53 @@ const Login = () => {
     console.log('[Password Login] Input validation passed');
 
     try {
-      console.log('[Password Login] Sending login request:', { email });
+      console.log('[Password Login] Sending login request to /auth/login:', { email });
       const { data } = await api.post('/auth/login', { email, password });
       console.log('[Password Login] Login successful:', {
-        userId: data.user.id,
-        username: data.user.username,
-        token: data.token.substring(0, 20) + '...',
+        userId: data.user?.id,
+        username: data.user?.username,
+        token: data.token ? data.token.substring(0, 20) + '...' : 'None',
       });
 
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      api.defaults.headers.common['x-auth-token'] = data.token;
+      // Validate response data
+      console.log('[Password Login] Validating response data');
+      if (!data.token || !data.user) {
+        console.error('[Password Login Error] Invalid response data:', data);
+        setError('Invalid server response: missing token or user data.');
+        setIsLoading(false);
+        return;
+      }
+      console.log('[Password Login] Response data valid, storing authentication data');
 
+      // Store token and user data
+      try {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        console.log('[Password Login] Token and user data saved to localStorage:', {
+          token: data.token.substring(0, 20) + '...',
+          user: data.user,
+        });
+        // Verify token was saved
+        const savedToken = localStorage.getItem('token');
+        if (!savedToken) {
+          console.error('[Password Login Error] Token not found in localStorage after saving');
+          setError('Failed to save authentication token. Please check your browser settings (e.g., disable incognito mode).');
+          setIsLoading(false);
+          return;
+        }
+        console.log('[Password Login] Token verified in localStorage:', savedToken.substring(0, 20) + '...');
+        api.defaults.headers.common['x-auth-token'] = data.token;
+        console.log('[Password Login] Set x-auth-token header:', data.token.substring(0, 20) + '...');
+      } catch (storageError) {
+        console.error('[Password Login Error] Failed to store authentication data:', storageError.message);
+        setError('Failed to save authentication data. Your browser may be blocking localStorage (e.g., incognito mode). Please check your settings.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Update UI and redirect
       console.log('[Password Login] Setting success state');
       setSuccess(true);
-
       console.log('[Password Login] Redirecting to home page in 2 seconds');
       setTimeout(() => {
         console.log('[Password Login] Navigating to home page');
@@ -421,7 +512,7 @@ const Login = () => {
                         setEmail(e.target.value);
                       }}
                       placeholder="Your Email"
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-gray-400' : 'bg-gray-300 text-black placeholder-gray-600'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
                       disabled={isLoading}
                     />
@@ -444,7 +535,7 @@ const Login = () => {
                           setPassword(e.target.value);
                         }}
                         placeholder="Your Password"
-                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-gray-400' : 'bg-gray-300 text-black placeholder-gray-600'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                         required
                         disabled={isLoading}
                       />
