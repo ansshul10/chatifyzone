@@ -27,7 +27,7 @@ const countryList = Country.getAllCountries()
     iso2: c.isoCode,
     name: c.name,
   }))
-  .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically by name
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 const getStatesForCountry = (iso2) => {
   console.log('[getStatesForCountry] Fetching states for iso2:', iso2);
@@ -40,7 +40,7 @@ const getStatesForCountry = (iso2) => {
       name: s.name,
       iso2: s.isoCode,
     }))
-    .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically
+    .sort((a, b) => a.name.localeCompare(b.name));
   console.log('[getStatesForCountry] States found:', states);
   return states;
 };
@@ -52,7 +52,7 @@ const Signup = () => {
   const [country, setCountry] = useState('');
   const [state, setState] = useState('');
   const [age, setAge] = useState('18');
-  const [gender, setGender] = useState(''); // New state for gender
+  const [gender, setGender] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [error, setError] = useState('');
@@ -62,6 +62,7 @@ const Signup = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isWebAuthnSupported, setIsWebAuthnSupported] = useState(false);
   const [states, setStates] = useState([]);
+  const [isRegistrationEnabled, setIsRegistrationEnabled] = useState(true); // New state for registration status
   const navigate = useNavigate();
 
   // Generate age options (18 to 120)
@@ -78,13 +79,13 @@ const Signup = () => {
     }
     const newStates = getStatesForCountry(country);
     setStates(newStates);
-    setState(''); // Reset state when country changes
+    setState('');
     console.log('[Signup] States updated for country', country, ':', newStates);
   }, [country]);
 
-  // Check WebAuthn support on component mount
+  // Check WebAuthn support and registration status on component mount
   useEffect(() => {
-    console.log('[Signup] Checking WebAuthn support');
+    console.log('[Signup] Checking WebAuthn support and registration status');
     const checkWebAuthnSupport = async () => {
       try {
         if (window.PublicKeyCredential) {
@@ -103,24 +104,42 @@ const Signup = () => {
         setIsWebAuthnSupported(false);
       }
     };
+
+    const checkRegistrationStatus = async () => {
+      try {
+        const response = await api.get('/admin/settings/public');
+        setIsRegistrationEnabled(response.data.registrationEnabled);
+        if (!response.data.registrationEnabled) {
+          setError('Registration is currently disabled. Please contact support.');
+        }
+      } catch (err) {
+        console.error('[Signup] Error checking registration status:', err.message);
+        setError('Failed to check registration status. Please try again later.');
+        setIsRegistrationEnabled(false);
+      }
+    };
+
     checkWebAuthnSupport();
+    checkRegistrationStatus();
   }, []);
 
   const handleFingerprintSignup = async () => {
+    if (!isRegistrationEnabled) {
+      setError('Registration is currently disabled. Please contact support.');
+      return;
+    }
     console.log('[Fingerprint Signup] Starting fingerprint signup process');
     setError('');
     setSuccess(false);
     setIsLoading(true);
 
     try {
-      // Step 1: Check WebAuthn support
       if (!isWebAuthnSupported) {
         setError('Fingerprint authentication is not supported on this device or browser.');
         setIsLoading(false);
         return;
       }
 
-      // Step 2: Validate input fields
       if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         setError('Please enter a valid email address');
         setIsLoading(false);
@@ -157,7 +176,6 @@ const Signup = () => {
         return;
       }
 
-      // Step 3: Send request to /webauthn/register/begin
       let beginResponse;
       try {
         beginResponse = await api.post('/auth/webauthn/register/begin', { email, username, country, state, age, gender });
@@ -167,7 +185,6 @@ const Signup = () => {
         return;
       }
 
-      // Step 4: Validate WebAuthn registration options
       const { publicKey, challenge, userID, email: responseEmail, username: responseUsername } = beginResponse.data;
       if (!publicKey || !publicKey.rp || !publicKey.user || !publicKey.challenge) {
         setError('Invalid server response: missing or malformed WebAuthn options');
@@ -180,7 +197,6 @@ const Signup = () => {
         return;
       }
 
-      // Step 5: Start WebAuthn registration
       let credential;
       try {
         credential = await startRegistration(publicKey);
@@ -200,7 +216,6 @@ const Signup = () => {
         return;
       }
 
-      // Step 6: Send request to /webauthn/register/complete
       let completeResponse;
       try {
         completeResponse = await api.post('/auth/webauthn/register/complete', {
@@ -220,12 +235,10 @@ const Signup = () => {
         return;
       }
 
-      // Step 7: Store token and user data
       localStorage.setItem('token', completeResponse.data.token);
       localStorage.setItem('user', JSON.stringify(completeResponse.data.user));
       api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
 
-      // Step 8: Update UI and redirect
       setSuccess(true);
       setTimeout(() => navigate('/'), 2000);
     } catch (unexpectedError) {
@@ -236,12 +249,15 @@ const Signup = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!isRegistrationEnabled) {
+      setError('Registration is currently disabled. Please contact support.');
+      return;
+    }
     console.log('[Password Signup] Starting password signup process');
     setError('');
     setSuccess(false);
     setIsLoading(true);
 
-    // Validate input fields
     if (!email.trim()) {
       setError('Please enter a valid email address');
       setIsLoading(false);
@@ -297,10 +313,18 @@ const Signup = () => {
   };
 
   const handleGoogleSignup = () => {
+    if (!isRegistrationEnabled) {
+      setError('Registration is currently disabled. Please contact support.');
+      return;
+    }
     setError('Google signup is not implemented. Please use email and password or fingerprint.');
   };
 
   const handleAppleSignup = () => {
+    if (!isRegistrationEnabled) {
+      setError('Registration is currently disabled. Please contact support.');
+      return;
+    }
     setError('Apple signup is not implemented. Please use email and password or fingerprint.');
   };
 
@@ -441,16 +465,16 @@ By checking the box during signup, you acknowledge that you have read, understoo
               <div className="flex justify-center space-x-4 mb-6">
                 <button
                   onClick={() => setSignupMethod('password')}
-                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'}`}
-                  disabled={isLoading}
+                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  disabled={isLoading || !isRegistrationEnabled}
                 >
                   Password
                 </button>
                 <button
                   onClick={() => setSignupMethod('webauthn')}
-                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} ${!isWebAuthnSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={isLoading || !isWebAuthnSupported}
-                  title={!isWebAuthnSupported ? 'Fingerprint signup is not supported on this device' : ''}
+                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} ${(!isWebAuthnSupported || !isRegistrationEnabled) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  disabled={isLoading || !isWebAuthnSupported || !isRegistrationEnabled}
+                  title={!isWebAuthnSupported ? 'Fingerprint signup is not supported on this device' : !isRegistrationEnabled ? 'Registration is disabled' : ''}
                 >
                   Fingerprint
                 </button>
@@ -464,9 +488,9 @@ By checking the box during signup, you acknowledge that you have read, understoo
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="Your Email"
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
-                      disabled={isLoading}
+                      disabled={isLoading || !isRegistrationEnabled}
                     />
                   </div>
                 </div>
@@ -478,9 +502,9 @@ By checking the box during signup, you acknowledge that you have read, understoo
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       placeholder="Your Username"
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
-                      disabled={isLoading}
+                      disabled={isLoading || !isRegistrationEnabled}
                     />
                   </div>
                 </div>
@@ -493,9 +517,9 @@ By checking the box during signup, you acknowledge that you have read, understoo
                         setState('');
                         console.log('[Signup] Country selected:', e.target.value);
                       }}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
-                      disabled={isLoading}
+                      disabled={isLoading || !isRegistrationEnabled}
                     >
                       <option value="">Select Country</option>
                       {countryList.map((c) => (
@@ -514,8 +538,8 @@ By checking the box during signup, you acknowledge that you have read, understoo
                         setState(e.target.value);
                         console.log('[Signup] State selected:', e.target.value);
                       }}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      disabled={isLoading}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      disabled={isLoading || !isRegistrationEnabled}
                     >
                       <option value="">Select State</option>
                       {states.length > 0 ? (
@@ -535,9 +559,9 @@ By checking the box during signup, you acknowledge that you have read, understoo
                     <select
                       value={age}
                       onChange={(e) => setAge(e.target.value)}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
-                      disabled={isLoading}
+                      disabled={isLoading || !isRegistrationEnabled}
                     >
                       <option value="">Select Age</option>
                       {ageOptions.map((ageValue) => (
@@ -553,9 +577,9 @@ By checking the box during signup, you acknowledge that you have read, understoo
                     <select
                       value={gender}
                       onChange={(e) => setGender(e.target.value)}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                       required
-                      disabled={isLoading}
+                      disabled={isLoading || !isRegistrationEnabled}
                     >
                       <option value="">Select Gender</option>
                       <option value="male">Male</option>
@@ -572,9 +596,9 @@ By checking the box during signup, you acknowledge that you have read, understoo
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="Your Password"
-                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                         required
-                        disabled={isLoading}
+                        disabled={isLoading || !isRegistrationEnabled}
                       />
                     </div>
                   </div>
@@ -586,7 +610,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                     onChange={(e) => setTermsAccepted(e.target.checked)}
                     className="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
                     required
-                    disabled={isLoading}
+                    disabled={isLoading || !isRegistrationEnabled}
                     id="termsCheckbox"
                   />
                   <label htmlFor="termsCheckbox" className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
@@ -629,8 +653,8 @@ By checking the box during signup, you acknowledge that you have read, understoo
                 {signupMethod === 'password' && (
                   <button
                     type="submit"
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
-                    disabled={isLoading || success}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    disabled={isLoading || success || !isRegistrationEnabled}
                   >
                     <span>{isLoading ? 'Signing Up...' : 'Sign Up Now'}</span>
                   </button>
@@ -638,8 +662,8 @@ By checking the box during signup, you acknowledge that you have read, understoo
                 <button
                   type="button"
                   onClick={handleGoogleSignup}
-                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
-                  disabled={isLoading}
+                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  disabled={isLoading || !isRegistrationEnabled}
                 >
                   <FaGoogle />
                   <span>Sign Up with Google</span>
@@ -647,8 +671,8 @@ By checking the box during signup, you acknowledge that you have read, understoo
                 <button
                   type="button"
                   onClick={handleAppleSignup}
-                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2`}
-                  disabled={isLoading}
+                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  disabled={isLoading || !isRegistrationEnabled}
                 >
                   <FaApple />
                   <span>Sign Up with Apple</span>
@@ -657,9 +681,9 @@ By checking the box during signup, you acknowledge that you have read, understoo
                   <button
                     type="button"
                     onClick={handleFingerprintSignup}
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isWebAuthnSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    disabled={isLoading || !isWebAuthnSupported}
-                    title={!isWebAuthnSupported ? 'Fingerprint signup is not supported on this device' : ''}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${(!isWebAuthnSupported || !isRegistrationEnabled) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    disabled={isLoading || !isWebAuthnSupported || !isRegistrationEnabled}
+                    title={!isWebAuthnSupported ? 'Fingerprint signup is not supported on this device' : !isRegistrationEnabled ? 'Registration is disabled' : ''}
                   >
                     <FaFingerprint />
                     <span>{isLoading ? 'Processing...' : 'Sign Up with Fingerprint'}</span>
@@ -676,7 +700,6 @@ By checking the box during signup, you acknowledge that you have read, understoo
           </motion.div>
         </div>
 
-        {/* Terms and Conditions Modal */}
         <AnimatePresence>
           {showTermsModal && (
             <motion.div
@@ -687,8 +710,8 @@ By checking the box during signup, you acknowledge that you have read, understoo
               className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
             >
               <div
-                className={`relative w-full max-w-3xl max-h-[80vh] overflow-y-auto p-6 rounded-xl shadow-2xl ${
-                  isDarkMode ? 'bg-gray-900 text-white' : 'bg-white text-gray-900'
+                className={`relative w-full max-w-[100vh] max-h-[70vh] overflow-y-auto p-6 rounded-xl shadow-2xl ${
+                  isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-white text-gray-900'
                 }`}
               >
                 <button
