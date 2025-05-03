@@ -32,7 +32,7 @@ const isAdmin = async (req, res, next) => {
 const newsletterSchema = Joi.object({
   subject: Joi.string().min(3).max(100).required(),
   content: Joi.string().min(10).required(),
-  scheduledDate: Joi.date().optional(),
+  scheduledDate: Joi.date().allow(null).optional(),
 });
 
 const maintenanceSchema = Joi.object({
@@ -154,6 +154,75 @@ router.get('/banned-users', [auth, isAdmin], async (req, res) => {
   }
 });
 
+// Ban a user
+router.post('/ban-user', [auth, isAdmin], async (req, res) => {
+  try {
+    const { error } = userIdSchema.validate(req.body);
+    if (error) {
+      console.error('[Ban User] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { userId } = req.body;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    if (user.isAdmin) {
+      return res.status(400).json({ msg: 'Cannot ban an admin' });
+    }
+    if (user.isBanned) {
+      return res.status(400).json({ msg: 'User is already banned' });
+    }
+
+    user.isBanned = true;
+    user.bannedAt = new Date();
+    await user.save();
+    await AuditLog.create({
+      action: 'ban_user',
+      adminId: req.user,
+      details: { userId, email: user.email },
+    });
+    res.json({ msg: 'User banned successfully' });
+  } catch (err) {
+    console.error('[Ban User] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Unban a user
+router.post('/unban-user', [auth, isAdmin], async (req, res) => {
+  try {
+    const { error } = userIdSchema.validate(req.body);
+    if (error) {
+      console.error('[Unban User] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { userId } = req.body;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    if (!user.isBanned) {
+      return res.status(400).json({ msg: 'User is not banned' });
+    }
+
+    user.isBanned = false;
+    user.bannedAt = null;
+    await user.save();
+    await AuditLog.create({
+      action: 'unban_user',
+      adminId: req.user,
+      details: { userId, email: user.email },
+    });
+    res.json({ msg: 'User unbanned successfully', user });
+  } catch (err) {
+    console.error('[Unban User] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 // Update user role
 router.post('/update-role', [auth, isAdmin], async (req, res) => {
   try {
@@ -256,7 +325,10 @@ router.get('/analytics', [auth, isAdmin], async (req, res) => {
       User.countDocuments({ isBanned: { $ne: true } }),
       Subscriber.countDocuments(),
       Post.countDocuments(),
-      User.find({ isBanned: { $ne: true } }).sort({ createdAt: -1 }).limit(5).select('username email createdAt'),
+      User.find({ isBanned: { $ne: true } })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('username email createdAt'),
     ]);
 
     res.json({
@@ -284,31 +356,29 @@ router.post('/send-newsletter', [auth, isAdmin], async (req, res) => {
 
     const { subject, content, scheduledDate } = req.body;
 
-    if (scheduledDate && new Date(scheduledDate) > new Date()) {
-      const newsletter = new Newsletter({
-        subject,
-        content,
-        scheduledDate,
-        createdBy: req.user,
-        status: 'scheduled',
-      });
-      await newsletter.save();
-      await AuditLog.create({
-        action: 'schedule_newsletter',
-        adminId: req.user,
-        details: { subject, scheduledDate },
-      });
-      res.json({ msg: 'Newsletter scheduled successfully', newsletter });
-    } else {
+    const newsletter = new Newsletter({
+      subject,
+      content,
+      scheduledDate,
+      createdBy: req.user,
+      status: scheduledDate && new Date(scheduledDate) > new Date() ? 'scheduled' : 'pending',
+    });
+    await newsletter.save();
+
+    if (!scheduledDate || new Date(scheduledDate) <= new Date()) {
       const subscribers = await Subscriber.find();
       if (!subscribers.length) {
+        newsletter.status = 'failed';
+        await newsletter.save();
         return res.status(404).json({ msg: 'No subscribers found' });
       }
 
       const emailPromises = subscribers.map((subscriber) => {
-        const unsubscribeToken = jwt.sign({ id: subscriber._id }, process.env.JWT_SECRET || 'your_jwt_secret', {
-          expiresIn: '30d',
-        });
+        const unsubscribeToken = jwt.sign(
+          { id: subscriber._id },
+          process.env.JWT_SECRET || 'your_jwt_secret',
+          { expiresIn: '30d' }
+        );
         const unsubscribeLink = `${
           process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'
         }/unsubscribe?token=${unsubscribeToken}`;
@@ -367,19 +437,21 @@ router.post('/send-newsletter', [auth, isAdmin], async (req, res) => {
       });
 
       await Promise.all(emailPromises);
-      const newsletter = new Newsletter({
-        subject,
-        content,
-        createdBy: req.user,
-        status: 'sent',
-      });
+      newsletter.status = 'sent';
       await newsletter.save();
       await AuditLog.create({
         action: 'send_newsletter',
         adminId: req.user,
         details: { subject, subscriberCount: subscribers.length },
       });
-      res.json({ msg: 'Newsletter sent successfully' });
+      res.json({ msg: 'Newsletter sent successfully', newsletter });
+    } else {
+      await AuditLog.create({
+        action: 'schedule_newsletter',
+        adminId: req.user,
+        details: { subject, scheduledDate },
+      });
+      res.json({ msg: 'Newsletter scheduled successfully', newsletter });
     }
   } catch (err) {
     console.error('[Send Newsletter] Server error:', err.message);
@@ -399,9 +471,11 @@ cron.schedule('* * * * *', async () => {
     for (const newsletter of newsletters) {
       const subscribers = await Subscriber.find();
       const emailPromises = subscribers.map((subscriber) => {
-        const unsubscribeToken = jwt.sign({ id: subscriber._id }, process.env.JWT_SECRET || 'your_jwt_secret', {
-          expiresIn: '30d',
-        });
+        const unsubscribeToken = jwt.sign(
+          { id: subscriber._id },
+          process.env.JWT_SECRET || 'your_jwt_secret',
+          { expiresIn: '30d' }
+        );
         const unsubscribeLink = `${
           process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'
         }/unsubscribe?token=${unsubscribeToken}`;
@@ -518,75 +592,6 @@ router.get('/announcements', async (req, res) => {
     res.json(announcements);
   } catch (err) {
     console.error('[Get Announcements] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Ban a user
-router.post('/ban-user', [auth, isAdmin], async (req, res) => {
-  try {
-    const { error } = userIdSchema.validate(req.body);
-    if (error) {
-      console.error('[Ban User] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { userId } = req.body;
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-    if (user.isAdmin) {
-      return res.status(400).json({ msg: 'Cannot ban an admin' });
-    }
-    if (user.isBanned) {
-      return res.status(400).json({ msg: 'User is already banned' });
-    }
-
-    user.isBanned = true;
-    user.bannedAt = new Date();
-    await user.save();
-    await AuditLog.create({
-      action: 'ban_user',
-      adminId: req.user,
-      details: { userId, email: user.email },
-    });
-    res.json({ msg: 'User banned successfully' });
-  } catch (err) {
-    console.error('[Ban User] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Unban a user
-router.post('/unban-user', [auth, isAdmin], async (req, res) => {
-  try {
-    const { error } = userIdSchema.validate(req.body);
-    if (error) {
-      console.error('[Unban User] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { userId } = req.body;
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-    if (!user.isBanned) {
-      return res.status(400).json({ msg: 'User is not banned' });
-    }
-
-    user.isBanned = false;
-    user.bannedAt = null;
-    await user.save();
-    await AuditLog.create({
-      action: 'unban_user',
-      adminId: req.user,
-      details: { userId, email: user.email },
-    });
-    res.json({ msg: 'User unbanned successfully', user });
-  } catch (err) {
-    console.error('[Unban User] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
