@@ -38,8 +38,7 @@ const AdminPanel = () => {
   const [announcementContent, setAnnouncementContent] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [maintenanceStartTime, setMaintenanceStartTime] = useState(null);
-  const [maintenanceDuration, setMaintenanceDuration] = useState(120); // Default 2 hours
-  // Action-specific loading and message states
+  const [maintenanceDuration, setMaintenanceDuration] = useState(120);
   const [actionStates, setActionStates] = useState({
     sendNewsletter: { isLoading: false, error: '', success: '' },
     banUser: { isLoading: false, error: '', success: '' },
@@ -53,7 +52,6 @@ const AdminPanel = () => {
   });
   const navigate = useNavigate();
 
-  // Helper function to update action-specific state
   const updateActionState = (action, updates) => {
     setActionStates((prev) => ({
       ...prev,
@@ -61,7 +59,6 @@ const AdminPanel = () => {
     }));
   };
 
-  // Initialize token from localStorage on mount
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
@@ -72,7 +69,6 @@ const AdminPanel = () => {
     }
   }, [navigate]);
 
-  // Fetch data after token validation
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -115,7 +111,6 @@ const AdminPanel = () => {
     }
   }, [navigate]);
 
-  // Poll for maintenance status only when maintenance mode is enabled
   useEffect(() => {
     if (!settings.maintenanceMode) return;
 
@@ -139,7 +134,7 @@ const AdminPanel = () => {
       }
     };
 
-    const interval = setInterval(checkMaintenance, 30000); // Check every 30 seconds
+    const interval = setInterval(checkMaintenance, 30000);
     return () => clearInterval(interval);
   }, [settings.maintenanceMode, settings.registrationEnabled]);
 
@@ -153,11 +148,14 @@ const AdminPanel = () => {
     }
 
     try {
-      const { data } = await api.post('/admin/send-newsletter', {
+      const payload = {
         subject: emailSubject,
         content: emailContent,
-        scheduledDate,
-      });
+      };
+      if (scheduledDate) {
+        payload.scheduledDate = scheduledDate;
+      }
+      const { data } = await api.post('/admin/send-newsletter', payload);
       updateActionState('sendNewsletter', { success: scheduledDate ? 'Newsletter scheduled successfully' : 'Newsletter sent successfully' });
       setEmailSubject('');
       setEmailContent('');
@@ -330,10 +328,8 @@ const AdminPanel = () => {
     updateActionState('updateSettings', { isLoading: true, error: '', success: '' });
 
     try {
-      // Update registration settings
       await api.post('/admin/settings', { registrationEnabled: settings.registrationEnabled });
 
-      // Update maintenance settings
       const maintenancePayload = {
         maintenanceMode: settings.maintenanceMode,
       };
@@ -463,12 +459,10 @@ const AdminPanel = () => {
             </button>
           </div>
 
-          {/* Initial Load Error */}
           {actionStates.initialLoad?.error && (
             <p className="text-red-500 text-sm text-center">{actionStates.initialLoad.error}</p>
           )}
 
-          {/* Analytics Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -582,7 +576,6 @@ const AdminPanel = () => {
             </div>
           </motion.section>
 
-          {/* Audit Logs Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -645,7 +638,6 @@ const AdminPanel = () => {
             </div>
           </motion.section>
 
-          {/* Newsletter Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -754,7 +746,6 @@ const AdminPanel = () => {
             </div>
           </motion.section>
 
-          {/* Subscribers Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -821,7 +812,6 @@ const AdminPanel = () => {
             </div>
           </motion.section>
 
-          {/* Users Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -959,7 +949,6 @@ const AdminPanel = () => {
             </div>
           </motion.section>
 
-          {/* Banned Users Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -1036,7 +1025,6 @@ const AdminPanel = () => {
             </div>
           </motion.section>
 
-          {/* Posts Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -1113,7 +1101,6 @@ const AdminPanel = () => {
             </div>
           </motion.section>
 
-          {/* Announcement Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
@@ -1167,7 +1154,6 @@ const AdminPanel = () => {
             </form>
           </motion.section>
 
-          {/* Settings Section */}
           <motion.section variants={cardVariants} className="w-full flex flex-col space-y-8">
             <h2
               className={`text-2xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
