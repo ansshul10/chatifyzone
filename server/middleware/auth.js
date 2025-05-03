@@ -16,21 +16,32 @@ module.exports = async (req, res, next) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       console.log('[Auth Middleware] Token decoded:', decoded);
 
-      // Extract userId from decoded.user.id (not decoded.userId)
-      const userId = decoded.user?.id;
-      if (!userId) {
-        console.error('[Auth Middleware] No user ID found in token');
-        return res.status(401).json({ msg: 'Invalid token structure' });
-      }
+      // Check if token is for an admin
+      if (decoded.isAdmin) {
+        const user = await User.findById(decoded.adminId);
+        if (!user || !user.isAdmin) {
+          console.error('[Auth Middleware] Admin not found or not an admin for ID:', decoded.adminId);
+          return res.status(401).json({ msg: 'Invalid admin token' });
+        }
+        req.user = decoded.adminId; // Maintain compatibility with req.user
+        req.isAdmin = true;
+      } else {
+        // Handle regular user token
+        const userId = decoded.user?.id; // Keep existing structure for regular users
+        if (!userId) {
+          console.error('[Auth Middleware] No user ID found in token');
+          return res.status(401).json({ msg: 'Invalid token structure' });
+        }
 
-      const user = await User.findById(userId);
-      if (!user) {
-        console.error('[Auth Middleware] User not found for ID:', userId);
-        return res.status(401).json({ msg: 'User not found' });
-      }
+        const user = await User.findById(userId);
+        if (!user) {
+          console.error('[Auth Middleware] User not found for ID:', userId);
+          return res.status(401).json({ msg: 'User not found' });
+        }
 
-      req.user = userId; // Set req.user to the userId
-      req.isAdmin = user.isAdmin;
+        req.user = userId;
+        req.isAdmin = user.isAdmin;
+      }
     } else if (anonymousId) {
       const session = await AnonymousSession.findOne({ anonymousId });
       if (!session) {
