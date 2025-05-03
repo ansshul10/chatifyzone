@@ -1349,7 +1349,6 @@ router.post('/admin/register', async (req, res) => {
   }
 });
 
-// Admin login
 router.post('/admin/login', async (req, res) => {
   try {
     console.log('[Admin Login] Received login request:', req.body.email);
@@ -1392,8 +1391,8 @@ router.post('/admin/login', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid credentials' });
     }
 
-    // Generate JWT token
-    const payload = { userId: user.id };
+    // Generate JWT token with adminId and isAdmin
+    const payload = { adminId: user.id, isAdmin: true };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     // Set session data
