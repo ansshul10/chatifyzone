@@ -1,0 +1,40 @@
+Voice Message Features in ChatWindow
+
+The ChatWindow component includes a robust voice messaging system designed to provide a seamless and visually stunning user experience. Below are the key features and UI enhancements for voice messaging:
+
+1. Voice Recording
+   - Initiate recording with a single click on the microphone button, accessible in the chat input area.
+   - Real-time recording status indicator with a dynamic gradient background (red to purple) and a pulsing "Recording..." text animation.
+   - Animated progress bar that fills repeatedly during recording, enhancing the premium feel.
+   - Stop recording with a sleek, white stop button featuring a red icon and hover effects (scale and shadow).
+
+2. Voice Message Preview
+   - After recording, preview the audio in a gradient container (blue to purple) with a rounded, shadowed audio player.
+   - Send or cancel the recording using intuitive buttons with white backgrounds, colored icons, and hover animations (scale and rotation).
+   - Audio player is styled with brightness adjustments to match dark/light themes, ensuring visual consistency.
+
+3. Voice Message Display
+   - Sent voice messages appear with a gradient background (red to red) for the sender and gray for the receiver, with hover shadow effects.
+   - A thin, animated gradient progress bar (red to purple) appears below the audio player on load, adding a dynamic visual cue.
+   - Audio players are embedded in a shadowed, rounded container with brightness adjustments for theme compatibility.
+   - Metadata (username, timestamp, and status like "Seen" or "Delivered") is displayed with bold typography and subtle opacity for a polished look.
+
+4. Functionality
+   - Record and send voice messages using the WebRTC API (MediaRecorder) with audio/webm format.
+   - Upload voice messages to the server via a multipart/form-data POST request to /chat/voice-message.
+   - Receive and display voice messages in real-time via Socket.IO, with audio playback using the HTML5 audio element.
+   - Prevent sending voice messages to blocked users, with clear error messaging.
+   - Support for both authenticated and anonymous users, with restrictions on certain actions for anonymous users.
+
+5. UI Enhancements
+   - Premium aesthetic with gradients, glassmorphism (backdrop blur), and consistent shadows for depth.
+   - Smooth animations using Framer Motion for button interactions, progress bars, and container transitions.
+   - Dark/light mode support with adaptive colors and gradients for a cohesive look.
+   - Responsive design ensures usability on mobile and desktop devices, with touch and hover interactions optimized.
+
+6. Limitations
+   - Requires browser support for WebRTC and MediaRecorder APIs.
+   - Voice messaging is disabled when the recipient is blocked.
+   - Anonymous users cannot send friend requests, which may affect related voice messaging interactions.
+
+This voice messaging system combines cutting-edge functionality with a luxurious UI, delivering an experience that feels like a $5B product while maintaining reliability and ease of use.
