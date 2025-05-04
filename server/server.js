@@ -9,10 +9,13 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/auth');
 const chatRoutes = require('./routes/chat');
+const adminRoutes = require('./routes/admin');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
-const adminRoutes = require('./routes/admin');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -23,6 +26,12 @@ if (!process.env.MONGO_URI || !process.env.SESSION_SECRET || !process.env.JWT_SE
   process.exit(1);
 }
 
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+}
+
 // Session middleware configuration
 const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET,
@@ -31,12 +40,12 @@ const sessionMiddleware = session({
   store: MongoStore.create({
     mongoUrl: process.env.MONGO_URI,
     collectionName: 'sessions',
-    ttl: 24 * 60 * 60,
+    ttl: 24 * 60 * 60, // 24 hours
   }),
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   },
 });
@@ -50,6 +59,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(sessionMiddleware);
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Convert session middleware for Socket.IO
 const wrap = middleware => (socket, next) => middleware(socket.request, {}, next);
@@ -80,8 +90,8 @@ app.use('/api/admin', adminRoutes);
 
 // Socket.IO Logic
 const userSocketMap = new Map();
-const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000;
-const CLEANUP_INTERVAL = 10 * 60 * 1000;
+const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours
+const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 // Helper to add activity log
 const addActivityLog = async (userId, action) => {
@@ -90,7 +100,7 @@ const addActivityLog = async (userId, action) => {
       $push: {
         activityLog: {
           $each: [{ action, timestamp: new Date() }],
-          $slice: -5,
+          $slice: -5, // Keep last 5 activities
         },
       },
     });
@@ -99,6 +109,7 @@ const addActivityLog = async (userId, action) => {
   }
 };
 
+// Helper to get online users
 const getOnlineUsers = async () => {
   try {
     const registeredUsers = await User.find({}).select('_id username online country gender age isAnonymous');
@@ -113,18 +124,15 @@ const getOnlineUsers = async () => {
         gender: user.gender,
         age: user.age,
       })),
-      ...anonymousUsers.map(session => {
-        console.log('[getOnlineUsers] Anonymous user:', { id: session.anonymousId, username: session.username });
-        return {
-          id: session.anonymousId,
-          username: session.username, // Use stored username directly
-          isAnonymous: true,
-          online: session.status === 'online',
-          country: session.country,
-          gender: null,
-          age: session.age,
-        };
-      }),
+      ...anonymousUsers.map(session => ({
+        id: session.anonymousId,
+        username: session.username,
+        isAnonymous: true,
+        online: session.status === 'online',
+        country: session.country,
+        gender: null,
+        age: session.age,
+      })),
     ].filter(user => user.id && user.username);
     console.log('[getOnlineUsers] Users sent:', users);
     return users;
@@ -134,6 +142,7 @@ const getOnlineUsers = async () => {
   }
 };
 
+// Helper to get previous messages
 const getPreviousMessages = async (userId) => {
   try {
     return await Message.find({
@@ -165,6 +174,7 @@ setInterval(async () => {
   }
 }, CLEANUP_INTERVAL);
 
+// Helper to handle user disconnection
 const handleUserDisconnect = async (userId) => {
   try {
     if (userId.startsWith('anon-')) {
@@ -206,7 +216,7 @@ io.on('connection', (socket) => {
         }
         userData = {
           id: userId,
-          username: session.username, // Use stored username
+          username: session.username,
           isAnonymous: true,
           online: true,
           country: session.country,
@@ -235,9 +245,9 @@ io.on('connection', (socket) => {
           age: user.age,
         };
 
-        socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => ({ _id: u._id.toString(), username: u.username })));
-        socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
-        socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
+        socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u._id.toString()));
+        socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
+        socket.emit('friendRequestsUpdate', user.friendRequests.map(r => r._id.toString()));
       }
 
       socket.request.session.lastActive = Date.now();
@@ -255,9 +265,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('sendMessage', async ({ sender, receiver, content }) => {
+  socket.on('sendMessage', async ({ sender, receiver, content, audioPath, type }) => {
     try {
-      if (!sender || !receiver || !content) {
+      if (!sender || !receiver || (!content && !audioPath)) {
         return socket.emit('error', { msg: 'Missing message data' });
       }
 
@@ -283,7 +293,9 @@ io.on('connection', (socket) => {
       const message = new Message({
         sender: senderId,
         receiver: receiverId,
-        content,
+        content: type === 'text' ? content : undefined,
+        audioPath: type === 'voice' ? audioPath : undefined,
+        type,
         isAnonymous: senderId.startsWith('anon-'),
         deliveredAt: new Date(),
       });
@@ -311,7 +323,6 @@ io.on('connection', (socket) => {
 
   socket.on('updateMessageStatus', async ({ messageId, userId, status, senderId }) => {
     try {
-      console.log('[Socket.IO] updateMessageStatus: Received:', { messageId, userId, status, senderId });
       if (messageId) {
         const message = await Message.findById(messageId);
         if (!message || message.receiver.toString() !== userId) {
@@ -333,7 +344,6 @@ io.on('connection', (socket) => {
           _id: message._id.toString(),
         };
 
-        console.log('[Socket.IO] updateMessageStatus: Emitting messageStatusUpdate for single message:', messageData);
         io.to(message.sender.toString()).emit('messageStatusUpdate', messageData);
         io.to(message.receiver.toString()).emit('messageStatusUpdate', messageData);
       } else if (senderId && status === 'read') {
@@ -343,7 +353,6 @@ io.on('connection', (socket) => {
           readAt: null,
         });
 
-        console.log('[Socket.IO] updateMessageStatus: Found', messages.length, 'unread messages to mark as read');
         for (const message of messages) {
           message.readAt = new Date();
           await message.save();
@@ -353,7 +362,6 @@ io.on('connection', (socket) => {
             receiver: message.receiver.toString(),
             _id: message._id.toString(),
           };
-          console.log('[Socket.IO] updateMessageStatus: Emitting messageStatusUpdate for message:', messageData._id);
           io.to(message.sender.toString()).emit('messageStatusUpdate', messageData);
           io.to(message.receiver.toString()).emit('messageStatusUpdate', messageData);
         }
@@ -475,8 +483,8 @@ io.on('connection', (socket) => {
 
       await User.findByIdAndUpdate(targetId, { $pull: { friends: userId } });
 
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => ({ _id: u._id.toString(), username: u.username })));
-      socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u.toString()));
+      socket.emit('friendsUpdate', user.friends.map(f => f.toString()));
       io.to(targetId).emit('friendRemoved', { friendId: userId });
       socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully' });
 
@@ -497,7 +505,7 @@ io.on('connection', (socket) => {
       user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== targetId);
       await user.save();
 
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => ({ _id: u._id.toString(), username: u.username })));
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u.toString()));
       socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully' });
 
       await addActivityLog(userId, `Unblocked user ID: ${targetId}`);
@@ -558,9 +566,9 @@ io.on('connection', (socket) => {
         return socket.emit('error', { msg: 'User not found' });
       }
 
-      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
-      socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
-      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
+      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => r._id.toString()));
+      socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
+      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => f._id.toString()));
       socket.emit('actionResponse', { type: 'acceptFriendRequest', success: true, msg: 'Friend request accepted' });
 
       await addActivityLog(userId, `Accepted friend request from user ID: ${friendId}`);
@@ -583,7 +591,7 @@ io.on('connection', (socket) => {
         return socket.emit('error', { msg: 'User not found' });
       }
 
-      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => ({ _id: r._id.toString(), username: r.username })));
+      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => r._id.toString()));
       socket.emit('actionResponse', { type: 'declineFriendRequest', success: true, msg: 'Friend request declined' });
 
       await addActivityLog(userId, `Declined friend request from user ID: ${friendId}`);
@@ -611,22 +619,30 @@ io.on('connection', (socket) => {
         return socket.emit('error', { msg: 'User not found' });
       }
 
-      socket.emit('friendsUpdate', user.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
-      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => ({ _id: f._id.toString(), username: f.username })));
-      socket.emit('actionResponse', { type: 'unfriend', success: true, msg: 'Unfriended successfully' });
+      socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
+      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => f._id.toString()));
+      socket.emit('actionResponse', { type: 'unfriend', success: true, msg: 'Friend removed successfully' });
 
       await addActivityLog(userId, `Unfriended user ID: ${friendId}`);
       await addActivityLog(friendId, `Unfriended by user ID: ${userId}`);
     } catch (err) {
       console.error('[Socket.IO] Unfriend error:', err.message);
-      socket.emit('error', { msg: 'Failed to unfriend' });
+      socket.emit('error', { msg: 'Failed to unfriend user' });
     }
   });
 
   socket.on('reportUser', async ({ userId, targetId }) => {
     try {
-      socket.emit('actionResponse', { type: 'report', success: true, msg: 'User reported successfully' });
+      const user = await User.findById(userId);
+      const target = await User.findById(targetId) || await AnonymousSession.findOne({ anonymousId: targetId });
+      if (!user || !target) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
 
+      // Implement report logic (e.g., save to a reports collection or notify admins)
+      console.log(`[Socket.IO] User ${userId} reported user ${targetId}`);
+
+      socket.emit('actionResponse', { type: 'reportUser', success: true, msg: 'User reported successfully' });
       await addActivityLog(userId, `Reported user ID: ${targetId}`);
     } catch (err) {
       console.error('[Socket.IO] ReportUser error:', err.message);
@@ -635,37 +651,31 @@ io.on('connection', (socket) => {
   });
 
   socket.on('logout', async (userId) => {
-    await handleUserDisconnect(userId);
-    socket.disconnect();
+    try {
+      await handleUserDisconnect(userId);
+      socket.request.session.destroy();
+      socket.disconnect();
+    } catch (err) {
+      console.error('[Socket.IO] Logout error:', err.message);
+      socket.emit('error', { msg: 'Failed to logout' });
+    }
   });
 
   socket.on('disconnect', async () => {
-    const userId = [...userSocketMap.entries()].find(([_, sid]) => sid === socket.id)?.[0];
-    if (userId) {
-      await handleUserDisconnect(userId);
+    try {
+      const userId = socket.request.session.userId;
+      if (userId) {
+        await handleUserDisconnect(userId);
+      }
+      console.log(`[Socket.IO] Socket disconnected: ${socket.id}`);
+    } catch (err) {
+      console.error('[Socket.IO] Disconnect error:', err.message);
     }
   });
 });
 
-// Error Handling Middleware
-app.use((err, req, res, next) => {
-  console.error(`[Server Error] ${req.method} ${req.url}:`, err.message);
-  res.status(500).json({ msg: 'Server error' });
-});
-
-// Start Server
+// Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`[Server] Server running on port ${PORT}`);
-});
-
-// Graceful Shutdown
-process.on('SIGTERM', () => {
-  console.log('[Server] SIGTERM received. Closing server...');
-  server.close(() => {
-    mongoose.connection.close(false, () => {
-      console.log('[Server] MongoDB connection closed.');
-      process.exit(0);
-    });
-  });
 });
