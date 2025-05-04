@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus, FaTrash, FaPhone } from 'react-icons/fa';
+import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus, FaTrash } from 'react-icons/fa';
 import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
-import VoiceCall from './VoiceCall';
 
 const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
 
@@ -29,7 +28,7 @@ const ChatWindow = () => {
   const userId = isAnonymous ? localStorage.getItem('anonymousId') : JSON.parse(localStorage.getItem('user'))?.id;
   const username = isAnonymous ? localStorage.getItem('anonymousUsername') : JSON.parse(localStorage.getItem('user'))?.username;
   const messagesEndRef = useRef(null);
-  const socketRef = useRef(socket);
+  const socketRef = useRef(null);
   const messageInputRef = useRef(null);
   const longPressTimer = useRef(null);
   const hoverTimeout = useRef(null);
@@ -37,7 +36,6 @@ const ChatWindow = () => {
 
   useEffect(() => {
     if (!userId || !username) {
-      console.log('[ChatWindow] No userId or username, redirecting to /');
       window.location.href = '/';
       return;
     }
@@ -66,7 +64,7 @@ const ChatWindow = () => {
           }));
         }
       } else {
-        console.error('[ChatWindow] Invalid message received:', message);
+        console.error('Invalid message received:', message);
       }
     });
 
@@ -79,7 +77,7 @@ const ChatWindow = () => {
       if (updatedMessage && updatedMessage._id) {
         setMessages((prev) => prev.map((msg) => (msg._id === updatedMessage._id ? updatedMessage : msg)));
       } else {
-        console.error('[ChatWindow] Invalid updated message:', updatedMessage);
+        console.error('Invalid updated message:', updatedMessage);
       }
     });
 
@@ -88,7 +86,7 @@ const ChatWindow = () => {
         setMessages((prev) => prev.filter((msg) => msg._id !== deletedMessageId));
         updateUnreadMessages(messages.filter((msg) => msg._id !== deletedMessageId));
       } else {
-        console.error('[ChatWindow] Invalid deleted message ID:', deletedMessageId);
+        console.error('Invalid deleted message ID:', deletedMessageId);
       }
     });
 
@@ -123,7 +121,7 @@ const ChatWindow = () => {
           });
         }
       } else {
-        console.error('[ChatWindow] Invalid message status update:', updatedMessage);
+        console.error('Invalid message status update:', updatedMessage);
       }
     });
 
@@ -133,13 +131,13 @@ const ChatWindow = () => {
           prev.map((msg) => (msg._id === messageId ? { ...msg, reactions } : msg))
         );
       } else {
-        console.error('[ChatWindow] Invalid reaction update:', { messageId, reactions });
+        console.error('Invalid reaction update:', { messageId, reactions });
       }
     });
 
     socket.on('error', ({ msg }) => {
       setError(msg);
-      console.error('[ChatWindow] Socket error:', msg);
+      console.error('Socket error:', msg);
       setTimeout(() => setError(''), 3000);
     });
 
@@ -224,125 +222,150 @@ const ChatWindow = () => {
     }
   }, [selectedUserId, messages, userId]);
 
-  const updateUnreadMessages = useCallback((msgs) => {
+  const updateUnreadMessages = (msgList) => {
     const unread = {};
-    msgs.forEach((msg) => {
+    msgList.forEach((msg) => {
       if (msg.receiver === userId && !msg.readAt && msg.sender !== selectedUserId) {
         unread[msg.sender] = (unread[msg.sender] || 0) + 1;
       }
     });
     setUnreadMessages(unread);
-  }, [userId, selectedUserId]);
+  };
 
-  const handleBackToUserList = useCallback(() => {
-    setSelectedUserId(null);
-    setMessages([]);
-    setBackCount((prev) => prev + 1);
-  }, []);
-
-  const getUsername = useCallback((id) => {
-    const user = users.find((u) => u.id === id);
-    return user ? user.username : 'Unknown';
-  }, [users]);
-
-  const handleTyping = useCallback((e) => {
-    setNewMessage(e.target.value);
-    if (e.target.value && selectedUserId) {
-      socketRef.current.emit('typing', { sender: userId, receiver: selectedUserId, username });
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = setTimeout(() => {
-        socketRef.current.emit('stopTyping', { sender: userId, receiver: selectedUserId });
-      }, 2000);
-    }
-  }, [userId, selectedUserId, username]);
-
-  const handleInputFocus = useCallback(() => {
-    if (selectedUserId) {
-      socketRef.current.emit('updateMessageStatus', { userId, senderId: selectedUserId, status: 'read' });
-    }
-  }, [userId, selectedUserId]);
-
-  const handleSendMessage = useCallback((e) => {
+  const handleSendMessage = (e) => {
     e.preventDefault();
-    if (!newMessage.trim() || !selectedUserId || blockedUsers.includes(selectedUserId)) return;
-    socketRef.current.emit('sendMessage', {
-      sender: userId,
-      receiver: selectedUserId,
-      content: newMessage.trim(),
-    });
+    if (!newMessage.trim() || !selectedUserId) {
+      setError('Please type a message and select a user');
+      return;
+    }
+    if (blockedUsers.includes(selectedUserId)) {
+      setError('You have blocked this user');
+      return;
+    }
+    const messageData = { sender: userId, receiver: selectedUserId, content: newMessage };
+    socketRef.current.emit('sendMessage', messageData);
     setNewMessage('');
-    socketRef.current.emit('stopTyping', { sender: userId, receiver: selectedUserId });
-  }, [newMessage, selectedUserId, blockedUsers, userId]);
+  };
 
-  const handleDoubleClick = useCallback((messageId) => {
-    setActiveMessageId((prev) => (prev === messageId ? null : messageId));
-  }, []);
+  const handleTyping = (e) => {
+    setNewMessage(e.target.value);
+    if (e.target.value.trim() && selectedUserId) {
+      socketRef.current.emit('typing', { sender: userId, receiver: selectedUserId, username });
+      clearTimeout(window.typingTimeout);
+      window.typingTimeout = setTimeout(() => {
+        socketRef.current.emit('stopTyping', { sender: userId, receiver: selectedUserId });
+      }, 1000);
+    }
+  };
 
-  const handleHoverStart = useCallback((messageId) => {
-    hoverTimeout.current = setTimeout(() => {
-      setMenuMessageId(messageId);
-    }, 500);
-  }, []);
-
-  const handleHoverEnd = useCallback(() => {
-    clearTimeout(hoverTimeout.current);
+  const handleDoubleClick = (messageId) => {
+    setActiveMessageId(activeMessageId === messageId ? null : messageId);
     setMenuMessageId(null);
-  }, []);
+  };
 
-  const handleLongPressStart = useCallback((messageId, isSender) => {
+  const handleLongPressStart = (messageId, isSender) => {
+    clearTimeout(longPressTimer.current);
     longPressTimer.current = setTimeout(() => {
-      setMenuMessageId(messageId);
       if (isSender) {
+        setMenuMessageId((prev) => (prev === messageId ? null : messageId));
+      } else {
         setActiveMessageId(messageId);
       }
     }, 500);
-  }, []);
+  };
 
-  const handleLongPressEnd = useCallback(() => {
+  const handleLongPressEnd = () => {
     clearTimeout(longPressTimer.current);
-  }, []);
+  };
 
-  const handleBlockUser = useCallback(() => {
-    socketRef.current.emit('blockUser', { userId, targetId: selectedUserId });
-  }, [userId, selectedUserId]);
+  const handleHoverStart = (messageId) => {
+    clearTimeout(hoverTimeout.current);
+    setMenuMessageId(messageId);
+  };
 
-  const handleUnblockUser = useCallback(() => {
-    socketRef.current.emit('unblockUser', { userId, targetId: selectedUserId });
-  }, [userId, selectedUserId]);
+  const handleHoverEnd = () => {
+    hoverTimeout.current = setTimeout(() => {
+      setMenuMessageId(null);
+    }, 1500);
+  };
 
-  const handleSendFriendRequest = useCallback(() => {
-    socketRef.current.emit('sendFriendRequest', { userId, friendId: selectedUserId });
-  }, [userId, selectedUserId]);
+  const handleBackToUserList = () => {
+    setSelectedUserId(null);
+    setBackCount(1);
+    window.history.pushState({ page: 'userlist' }, null, window.location.pathname);
+  };
 
-  const handleUnfriend = useCallback(() => {
-    socketRef.current.emit('unfriend', { userId, friendId: selectedUserId });
-  }, [userId, selectedUserId]);
-
-  const handleReportUser = useCallback(() => {
-    socketRef.current.emit('reportUser', { userId, targetId: selectedUserId });
-  }, [userId, selectedUserId]);
-
-  const handleClearHistory = useCallback(() => {
-    socketRef.current.emit('clearChatHistory', { userId, targetId: selectedUserId });
-  }, [userId, selectedUserId]);
-
-  const handleLogout = useCallback(() => {
+  const handleLogout = () => {
     socketRef.current.emit('logout', userId);
-    localStorage.removeItem('user');
     localStorage.removeItem('anonymousId');
     localStorage.removeItem('anonymousUsername');
+    localStorage.removeItem('user');
     window.location.href = '/';
-  }, [userId]);
+  };
 
-  const handleStayHere = useCallback(() => {
+  const handleStayHere = () => {
     setShowLogoutModal(false);
     setBackCount(0);
-  }, []);
+    window.history.pushState({ page: 'userlist' }, null, window.location.pathname);
+  };
 
-  const handleEndCall = useCallback(() => {
-    console.log('[ChatWindow] Call ended');
-    // Additional cleanup if needed
-  }, []);
+  const handleClearHistory = () => {
+    if (!selectedUserId) return;
+    socketRef.current.emit('clearChatHistory', { userId, targetId: selectedUserId });
+    setMessages([]);
+    setIsDropdownOpen(false);
+  };
+
+  const getUsername = (id) => {
+    if (id === userId) return username;
+    const user = users.find((u) => u.id === id);
+    return user ? user.username : 'Unknown';
+  };
+
+  const handleBlockUser = () => {
+    if (!selectedUserId) return;
+    socketRef.current.emit('blockUser', { userId, targetId: selectedUserId });
+  };
+
+  const handleUnblockUser = () => {
+    if (!selectedUserId) return;
+    socketRef.current.emit('unblockUser', { userId, targetId: selectedUserId });
+  };
+
+  const handleSendFriendRequest = () => {
+    if (!selectedUserId) {
+      setError('Please select a user to send a friend request');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+    if (isAnonymous) {
+      setError('Anonymous users cannot send friend requests');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+    socketRef.current.emit('sendFriendRequest', { userId, friendId: selectedUserId });
+  };
+
+  const handleUnfriend = () => {
+    if (!selectedUserId) return;
+    socketRef.current.emit('unfriend', { userId, friendId: selectedUserId });
+  };
+
+  const handleReportUser = () => {
+    if (!selectedUserId) return;
+    socketRef.current.emit('reportUser', { userId, targetId: selectedUserId });
+  };
+
+  const handleInputFocus = () => {
+    if (window.innerWidth <= 768) {
+      setTimeout(() => {
+        window.scrollTo({
+          top: messageInputRef.current?.offsetTop - 50,
+          behavior: 'smooth',
+        });
+      }, 300);
+    }
+  };
 
   const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { duration: 0.5 } } };
   const chatVariants = { hidden: { opacity: 0, x: 50 }, visible: { opacity: 1, x: 0, transition: { duration: 0.5, ease: 'easeOut' } } };
@@ -536,7 +559,7 @@ const ChatWindow = () => {
                           <p
                             className="text-sm sm:text-base"
                             onMouseEnter={msg.sender === userId ? () => handleHoverStart(msg._id) : null}
-                            onMouseLeave={msg.sender === userId ? () => handleHoverEnd() : null}
+                            onMouseLeave={msg.sender === userId ? () => handleHoverEnd(msg._id) : null}
                             onTouchStart={
                               msg.sender === userId
                                 ? () => handleLongPressStart(msg._id, true)
@@ -583,7 +606,7 @@ const ChatWindow = () => {
                   </motion.p>
                 )}
                 {error && (
-                  <p className={`text-red-400 text-center text-sm sm parabolic:base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
+                  <p className={`text-red-400 text-center text-sm sm:text-base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
                     {error} ⚠️
                   </p>
                 )}
@@ -655,17 +678,6 @@ const ChatWindow = () => {
             </motion.div>
           )}
         </AnimatePresence>
-
-        {selectedUserId && !isAnonymous && (
-          <VoiceCall
-            userId={userId}
-            receiverId={selectedUserId}
-            socket={socketRef.current}
-            onEndCall={handleEndCall}
-            isDarkMode={isDarkMode}
-            startCall={false}
-          />
-        )}
       </div>
     </motion.div>
   );
