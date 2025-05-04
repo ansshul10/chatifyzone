@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaQuestionCircle, FaEnvelope, FaTwitter, FaLinkedin, FaGithub, FaComment, FaCheckCircle, FaDownload, FaBell, FaPaperPlane } from 'react-icons/fa';
+import { FaQuestionCircle, FaTwitter, FaLinkedin, FaGithub, FaComment, FaCheckCircle, FaDownload, FaBell, FaPaperPlane } from 'react-icons/fa';
 import { jsPDF } from 'jspdf';
 import io from 'socket.io-client';
 import axios from 'axios';
+import { trainingData } from '../utils/chatbotData';
+import { loadTensorFlow } from '../utils/loadTensorFlow';
 
 // Initialize WebSocket connection
 const socket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
@@ -19,6 +21,31 @@ const checkMaintenanceStatus = async () => {
     console.error('[Maintenance Status] Fetch error:', error.message);
     throw error;
   }
+};
+
+// Normalize text for chatbot input
+const normalizeText = (text) => {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+};
+
+// Create bag-of-words vocabulary
+const createVocabulary = (data) => {
+  const words = new Set();
+  data.forEach(({ input }) => {
+    normalizeText(input).split(' ').forEach(word => words.add(word));
+  });
+  return Array.from(words);
+};
+
+// Convert text to vector
+const textToVector = (text, vocabulary) => {
+  const words = normalizeText(text).split(' ');
+  const vector = new Array(vocabulary.length).fill(0);
+  words.forEach(word => {
+    const index = vocabulary.indexOf(word);
+    if (index !== -1) vector[index] = 1;
+  });
+  return vector;
 };
 
 const Maintenance = () => {
@@ -39,7 +66,11 @@ const Maintenance = () => {
   const [maintenanceStartTime, setMaintenanceStartTime] = useState(null);
   const [maintenanceDuration, setMaintenanceDuration] = useState(120); // Default 2 hours in minutes
   const [statusLog, setStatusLog] = useState([]);
+  const [isBotTyping, setIsBotTyping] = useState(false);
   const chatRef = useRef(null);
+  const chatbotModel = useRef(null);
+  const vocabulary = useRef(null);
+  const isTraining = useRef(false);
 
   // Maintenance phases for timeline
   const phases = [
@@ -50,7 +81,108 @@ const Maintenance = () => {
     { name: 'Testing & Finalization', progress: 100 },
   ];
 
-  // Fetch maintenance status on mount and periodically
+  // Train chatbot on mount
+  useEffect(() => {
+    const trainChatbot = async () => {
+      if (isTraining.current) {
+        console.log('[Chatbot] Training already in progress, skipping...');
+        return;
+      }
+      isTraining.current = true;
+      console.log('[Chatbot] Starting training...');
+
+      let xsTensor, ysTensor, model;
+      try {
+        // Load TensorFlow.js dynamically
+        const tf = await loadTensorFlow();
+        console.log('[Chatbot] TensorFlow.js loaded:', !!tf);
+
+        // Create vocabulary
+        vocabulary.current = createVocabulary(trainingData);
+        console.log('[Chatbot] Vocabulary size:', vocabulary.current.length);
+
+        // Prepare training data
+        const xs = [];
+        const ys = [];
+        trainingData.forEach(({ input }, index) => {
+          xs.push(textToVector(input, vocabulary.current));
+          const label = new Array(trainingData.length).fill(0);
+          label[index] = 1;
+          ys.push(label);
+        });
+
+        // Convert to tensors
+        xsTensor = tf.tensor2d(xs, [xs.length, vocabulary.current.length]);
+        ysTensor = tf.tensor2d(ys, [ys.length, trainingData.length]);
+
+        // Define model with unique layer names
+        const uniqueId = Date.now();
+        model = tf.sequential();
+        model.add(tf.layers.dense({
+          units: 30,
+          inputShape: [vocabulary.current.length],
+          activation: 'sigmoid',
+          name: `dense_input_${uniqueId}`,
+        }));
+        model.add(tf.layers.dense({
+          units: 20,
+          activation: 'sigmoid',
+          name: `dense_hidden_${uniqueId}`,
+        }));
+        model.add(tf.layers.dense({
+          units: trainingData.length,
+          activation: 'softmax',
+          name: `dense_output_${uniqueId}`,
+        }));
+
+        model.compile({
+          optimizer: tf.train.adam(0.01),
+          loss: 'categoricalCrossentropy',
+          metrics: ['accuracy'],
+        });
+
+        // Train model
+        console.log('[Chatbot] Training model with 300 epochs...');
+        await model.fit(xsTensor, ysTensor, {
+          epochs: 300,
+          batchSize: 32,
+          callbacks: {
+            onEpochEnd: (epoch, logs) => {
+              if (epoch % 10 === 0) {
+                console.log(`[Chatbot] Epoch ${epoch}: Loss = ${logs.loss}, Accuracy = ${logs.acc}`);
+              }
+            },
+          },
+        });
+
+        chatbotModel.current = model;
+        console.log('[Chatbot] Training complete');
+      } catch (error) {
+        console.error('[Chatbot] Training failed:', error.message);
+        chatbotModel.current = null;
+      } finally {
+        // Clean up tensors
+        if (xsTensor) xsTensor.dispose();
+        if (ysTensor) ysTensor.dispose();
+        // Do not dispose model here; keep it for predictions
+        isTraining.current = false;
+      }
+    };
+
+    trainChatbot();
+
+    // Cleanup on unmount
+    return () => {
+      console.log('[Chatbot] Cleaning up...');
+      if (chatbotModel.current) {
+        chatbotModel.current.dispose();
+        chatbotModel.current = null;
+        console.log('[Chatbot] Model disposed');
+      }
+    };
+  }, []);
+
+  // Fetch maintenance status
   useEffect(() => {
     const fetchStatus = async () => {
       try {
@@ -64,7 +196,7 @@ const Maintenance = () => {
           const secondsLeft = Math.max(0, Math.floor((endTime - now) / 1000));
           setTimeLeft(secondsLeft);
         } else {
-          setTimeLeft(7200); // Fallback to 2 hours
+          setTimeLeft(7200);
           setMaintenanceStartTime(null);
           setMaintenanceDuration(120);
         }
@@ -76,11 +208,11 @@ const Maintenance = () => {
       }
     };
     fetchStatus();
-    const interval = setInterval(fetchStatus, 60000); // Refresh every minute
+    const interval = setInterval(fetchStatus, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  // Countdown timer and progress update
+  // Countdown timer and progress
   useEffect(() => {
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -113,7 +245,7 @@ const Maintenance = () => {
       setStatusLog((prev) => [
         ...prev,
         { time: new Date(), message: statusMessage, status: progress < 100 ? 'in-progress' : 'complete' },
-      ].slice(-10)); // Keep last 10 entries
+      ].slice(-10));
     });
     return () => socket.off('maintenance-progress');
   }, []);
@@ -203,7 +335,6 @@ const Maintenance = () => {
     setEmailSuccess(true);
     setEmail('');
     setTimeout(() => setEmailSuccess(false), 3000);
-    // Note: In a real app, send a POST request to /subscribe endpoint
   };
 
   // Feedback submission (simulated)
@@ -216,24 +347,57 @@ const Maintenance = () => {
     setFeedbackSuccess(true);
     setFeedback('');
     setTimeout(() => setFeedbackSuccess(false), 3000);
-    // Note: In a real app, send a POST request to /feedback endpoint
   };
 
-  // Simulated chat responses
-  const handleChatSubmit = () => {
+  // Chatbot response handling
+  const handleChatSubmit = async () => {
     if (!chatInput.trim()) return;
+
     setChatMessages((prev) => [...prev, { sender: 'user', text: chatInput }]);
+    const inputText = normalizeText(chatInput);
+    console.log('[Chatbot] User input:', inputText);
     setChatInput('');
-    setTimeout(() => {
-      const responses = [
-        'Thanks for your question! Check the timer for updates.',
-        'We’re working diligently to complete maintenance.',
-        'For urgent issues, email support@chatifyzone.in.',
-      ];
-      setChatMessages((prev) => [
-        ...prev,
-        { sender: 'bot', text: responses[Math.floor(Math.random() * responses.length)] },
-      ]);
+    setIsBotTyping(true);
+
+    setTimeout(async () => {
+      if (!chatbotModel.current || !vocabulary.current) {
+        console.error('[Chatbot] Model or vocabulary not available');
+        setChatMessages((prev) => [
+          ...prev,
+          { sender: 'bot', text: 'Chatbot is unavailable. Please try again later.' },
+        ]);
+        setIsBotTyping(false);
+        chatRef.current?.scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+
+      try {
+        const tf = await loadTensorFlow();
+        const inputVector = textToVector(inputText, vocabulary.current);
+        const inputTensor = tf.tensor2d([inputVector], [1, vocabulary.current.length]);
+        const prediction = chatbotModel.current.predict(inputTensor);
+        const output = await prediction.data();
+        const maxConfidence = Math.max(...output);
+        const outputIndex = output.indexOf(maxConfidence);
+        console.log('[Chatbot] Prediction confidence:', maxConfidence, 'Index:', outputIndex);
+        const response = maxConfidence > 0.1
+          ? trainingData[outputIndex].output
+          : "I'm not sure, please check the FAQs or email support@chatifyzone.in.";
+
+        setChatMessages((prev) => [
+          ...prev,
+          { sender: 'bot', text: response },
+        ]);
+        inputTensor.dispose();
+        prediction.dispose();
+      } catch (error) {
+        console.error('[Chatbot] Prediction failed:', error.message);
+        setChatMessages((prev) => [
+          ...prev,
+          { sender: 'bot', text: 'An error occurred. Please try again.' },
+        ]);
+      }
+      setIsBotTyping(false);
       chatRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 1000);
   };
@@ -289,7 +453,7 @@ const Maintenance = () => {
                   key={value}
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  transition={{ duration: 0.3 }}
+                  transition={{ duration: 0 }}
                   className="bg-gray-800/40 p-4 sm:p-5 rounded-xl border border-red-500/30 shadow-lg shadow-red-500/20 w-20 sm:w-24"
                 >
                   <span className="text-3xl sm:text-4xl font-mono text-red-500">{value}</span>
@@ -304,7 +468,6 @@ const Maintenance = () => {
         <motion.div variants={itemVariants} className="mb-8 sm:mb-10">
           <h3 className="text-lg sm:text-xl font-semibold text-white text-center mb-4">Maintenance Progress</h3>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-8">
-            {/* Progress Bar */}
             <div className="w-full sm:w-2/3">
               <div className="w-full bg-gray-700/30 rounded-full h-4 overflow-hidden">
                 <motion.div
@@ -318,59 +481,6 @@ const Maintenance = () => {
                 {Math.round(progress)}% - {statusMessage}
               </p>
             </div>
-            {/* Progress Wheel */}
-            <div className="relative w-24 h-24">
-              <svg className="w-full h-full" viewBox="0 0 100 100">
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="45"
-                  fill="none"
-                  stroke="#4B5563"
-                  strokeWidth="10"
-                />
-                <motion.circle
-                  cx="50"
-                  cy="50"
-                  r="45"
-                  fill="none"
-                  stroke="#EF4444"
-                  strokeWidth="10"
-                  strokeDasharray="283"
-                  strokeDashoffset={283 - (283 * progress) / 100}
-                  strokeLinecap="round"
-                  initial={{ strokeDashoffset: 283 }}
-                  animate={{ strokeDashoffset: 283 - (283 * progress) / 100 }}
-                  transition={{ duration: 1 }}
-                />
-              </svg>
-              <p className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-red-500 text-sm font-semibold">
-                {Math.round(progress)}%
-              </p>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Timeline */}
-        <motion.div variants={itemVariants} className="mb-8 sm:mb-10">
-          <h3 className="text-lg sm:text-xl font-semibold text-white mb-4">Maintenance Timeline</h3>
-          <div className="relative flex flex-col sm:flex-row justify-between items-center">
-            <div className="absolute w-full sm:w-[calc(100%-4rem)] h-1 bg-gray-700/50 top-6 sm:top-1/2 transform sm:-translate-y-1/2 left-0 sm:left-8" />
-            {phases.map((phase, index) => (
-              <div key={index} className="relative flex flex-col items-center mb-6 sm:mb-0 z-10">
-                <motion.div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold ${
-                    progress >= phase.progress ? 'bg-red-500' : 'bg-gray-600'
-                  }`}
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ delay: index * 0.2 }}
-                >
-                  {progress >= phase.progress ? <FaCheckCircle /> : index + 1}
-                </motion.div>
-                <p className="text-gray-300 text-xs sm:text-sm mt-2 text-center">{phase.name}</p>
-              </div>
-            ))}
           </div>
         </motion.div>
 
@@ -542,6 +652,17 @@ const Maintenance = () => {
                 </p>
               </motion.div>
             ))}
+            {isBotTyping && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-left mb-4"
+              >
+                <p className="inline-block p-3 rounded-lg text-sm bg-gray-700/50 text-gray-300">
+                  Bot is typing...
+                </p>
+              </motion.div>
+            )}
             <div ref={chatRef} />
           </div>
           <div className="flex mt-4">
@@ -562,26 +683,6 @@ const Maintenance = () => {
               <FaComment />
             </button>
           </div>
-        </motion.div>
-
-        {/* Notifications and Schedule Download */}
-        <motion.div variants={itemVariants} className="mb-8 sm:mb-10 flex flex-col sm:flex-row gap-4 justify-center">
-          <button
-            onClick={handleEnableNotifications}
-            className="p-3 rounded-lg bg-gradient-to-r from-red-500 to-pink-500 text-white font-semibold hover:from-red-600 hover:to-pink-600 transition-colors flex items-center justify-center"
-            aria-label="Enable notifications"
-          >
-            <FaBell className="mr-2" />
-            {notificationsEnabled ? 'Notifications Enabled' : 'Enable Notifications'}
-          </button>
-          <button
-            onClick={generatePDF}
-            className="p-3 rounded-lg bg-gradient-to-r from-red-500 to-pink-500 text-white font-semibold hover:from-red-600 hover:to-pink-600 transition-colors flex items-center justify-center"
-            aria-label="Download schedule"
-          >
-            <FaDownload className="mr-2" />
-            Download Schedule
-          </button>
         </motion.div>
 
         {/* Social Links */}
