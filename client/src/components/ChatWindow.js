@@ -693,7 +693,7 @@ const ChatWindow = () => {
                               <span className="font-bold text-sm sm:text-base">{getUsername(msg.sender)}:</span>
                               <audio
                                 controls
-                                src={`${process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000'}/${msg.audioPath}`}
+                                src={msg.audioPath}
                                 className="mt-1 max-w-full"
                               />
                             </div>
