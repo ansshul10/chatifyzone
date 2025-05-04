@@ -13,9 +13,8 @@ const adminRoutes = require('./routes/admin');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
-const multer = require('multer');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -26,10 +25,10 @@ if (!process.env.MONGO_URI || !process.env.SESSION_SECRET || !process.env.JWT_SE
   process.exit(1);
 }
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
+// Ensure temp directory exists for Cloudinary uploads
+const tempDir = path.join(__dirname, 'temp');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
 }
 
 // Session middleware configuration
@@ -59,7 +58,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(sessionMiddleware);
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Convert session middleware for Socket.IO
 const wrap = middleware => (socket, next) => middleware(socket.request, {}, next);
@@ -483,8 +481,8 @@ io.on('connection', (socket) => {
 
       await User.findByIdAndUpdate(targetId, { $pull: { friends: userId } });
 
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u.toString()));
-      socket.emit('friendsUpdate', user.friends.map(f => f.toString()));
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u._id.toString()));
+      socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
       io.to(targetId).emit('friendRemoved', { friendId: userId });
       socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully' });
 
@@ -505,7 +503,7 @@ io.on('connection', (socket) => {
       user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== targetId);
       await user.save();
 
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u.toString()));
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u._id.toString()));
       socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully' });
 
       await addActivityLog(userId, `Unblocked user ID: ${targetId}`);
