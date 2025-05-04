@@ -15,6 +15,7 @@
     "bad-words": "^3.0.4",
     "bcryptjs": "^3.0.2",
     "chart.js": "^4.4.9",
+    "cloudinary": "^2.6.0",
     "connect-mongo": "^5.1.0",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
