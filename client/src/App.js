@@ -68,29 +68,34 @@ function App() {
     );
   }
 
-  if (maintenanceMode) {
-    return <Maintenance />;
-  }
-
   return (
     <Router>
       <div className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-white">
         <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Register />} />
-          <Route path="/anonymous" element={<AnonymousEntry />} />
-          <Route path="/chat" element={<ChatWindow />} />
-          <Route path="/profile" element={<Profile />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/reset-password/:token" element={<ResetPassword />} />
-          <Route path="/terms" element={<TermsOfService isDarkMode={true} />} />
-          <Route path="/privacy" element={<PrivacyPolicy isDarkMode={true} />} />
-          <Route path="/unsubscribe" element={<Unsubscribe />} />
+          {/* Admin routes that bypass maintenance mode */}
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin/signup" element={<AdminSignup />} />
           <Route path="/admin/panel" element={<AdminPanel />} />
-          <Route path="*" element={<NotFound />} />
+
+          {/* Other routes, affected by maintenance mode */}
+          {maintenanceMode ? (
+            <Route path="*" element={<Maintenance />} />
+          ) : (
+            <>
+              <Route path="/" element={<Home />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/signup" element={<Register />} />
+              <Route path="/anonymous" element={<AnonymousEntry />} />
+              <Route path="/chat" element={<ChatWindow />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password/:token" element={<ResetPassword />} />
+              <Route path="/terms" element={<TermsOfService isDarkMode={true} />} />
+              <Route path="/privacy" element={<PrivacyPolicy isDarkMode={true} />} />
+              <Route path="/unsubscribe" element={<Unsubscribe />} />
+              <Route path="*" element={<NotFound />} />
+            </>
+          )}
         </Routes>
       </div>
     </Router>
