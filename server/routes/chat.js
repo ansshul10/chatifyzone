@@ -9,25 +9,25 @@ const auth = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const cloudinary = require('cloudinary').v2;
 
-
-const anonymousSessionSchema = Joi.object({
-  username: Joi.string().min(3).max(20).required(),
-  country: Joi.string().required(),
-  state: Joi.string().allow('').optional(),
-  age: Joi.number().integer().min(13).max(120).required(),
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, '../Uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+// Ensure temp directory exists
+const tempDir = path.join(__dirname, '../temp');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
 }
 
-// Multer configuration for voice messages
+// Multer configuration for temporary file storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    cb(null, tempDir);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || '.webm';
@@ -53,7 +53,7 @@ const voiceMessageSchema = Joi.object({
   receiver: Joi.string().required(),
 });
 
-// POST /api/chat/voice-message - Upload voice message
+// POST /api/chat/voice-message - Upload voice message to Cloudinary
 router.post('/voice-message', auth, upload.single('audio'), async (req, res) => {
   try {
     // Validate request body
@@ -89,15 +89,22 @@ router.post('/voice-message', auth, upload.single('audio'), async (req, res) => 
       return res.status(400).json({ msg: 'No audio file uploaded' });
     }
 
-    // Construct audioPath relative to the uploads directory
-    const audioPath = `Uploads/${req.file.filename}`;
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      resource_type: 'video', // Cloudinary uses 'video' for audio files
+      folder: 'voice-messages',
+    });
 
-    // Verify file exists
-    if (!fs.existsSync(path.join(__dirname, '../', audioPath))) {
-      return res.status(500).json({ msg: 'Failed to save audio file' });
+    // Delete temporary file
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (unlinkErr) {
+      console.warn('[Chat] Failed to delete temporary file:', unlinkErr.message);
     }
 
-    console.log('[Chat] Voice message uploaded:', { audioPath, sender, receiver });
+    const audioPath = result.secure_url;
+
+    console.log('[Chat] Voice message uploaded to Cloudinary:', { audioPath, sender, receiver });
 
     res.status(200).json({ audioPath });
   } catch (err) {
@@ -106,6 +113,7 @@ router.post('/voice-message', auth, upload.single('audio'), async (req, res) => 
   }
 });
 
+// Existing routes (unchanged)
 router.post('/anonymous-session', async (req, res) => {
   try {
     const { error } = anonymousSessionSchema.validate(req.body);
