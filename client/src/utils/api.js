@@ -6,26 +6,40 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Request interceptor to attach token
+// Request interceptor to attach token or anonymous ID
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
-    if (token) {
+    const anonymousId = localStorage.getItem('anonymousId');
+
+    console.log('[API Interceptor] Headers setup:', { token, anonymousId });
+
+    if (anonymousId) {
+      config.headers['x-anonymous-id'] = anonymousId;
+      delete config.headers['x-auth-token']; // Ensure no token is sent for anonymous users
+      console.log('[API Interceptor] Set x-anonymous-id:', anonymousId);
+    } else if (token) {
       config.headers['x-auth-token'] = token;
+      delete config.headers['x-anonymous-id']; // Ensure no anonymous ID is sent for registered users
+      console.log('[API Interceptor] Set x-auth-token:', token);
     }
+
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    console.error('[API Interceptor] Request error:', error);
+    return Promise.reject(error);
+  }
 );
 
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    console.error('API request error:', error);
+    console.error('[API Interceptor] Response error:', error);
     if (error.response?.status === 401) {
-      console.warn('Unauthorized request, please log in again.');
-      // Optionally trigger logout logic here (see step 3)
+      console.warn('[API Interceptor] Unauthorized request, please log in again.');
+      // Optionally trigger logout logic here (e.g., clear localStorage and redirect)
     }
     return Promise.reject(error);
   }
@@ -37,7 +51,7 @@ export const checkMaintenanceStatus = async () => {
     const response = await api.get('/admin/settings/public');
     return response.data;
   } catch (error) {
-    console.error('Error checking maintenance status:', error);
+    console.error('[API] Error checking maintenance status:', error);
     return { maintenanceMode: false }; // Default to false if error occurs
   }
 };
