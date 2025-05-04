@@ -82,6 +82,10 @@ app.use('/api/admin', adminRoutes);
 const userSocketMap = new Map();
 const INACTIVITY_TIMEOUT = 2 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL = 10 * 60 * 1000;
+const CALL_TIMEOUT = 30 * 1000; // 30 seconds timeout for call requests
+
+// Track active call requests
+const activeCallRequests = new Map();
 
 // Helper to add activity log
 const addActivityLog = async (userId, action) => {
@@ -117,7 +121,7 @@ const getOnlineUsers = async () => {
         console.log('[getOnlineUsers] Anonymous user:', { id: session.anonymousId, username: session.username });
         return {
           id: session.anonymousId,
-          username: session.username, // Use stored username directly
+          username: session.username,
           isAnonymous: true,
           online: session.status === 'online',
           country: session.country,
@@ -165,6 +169,22 @@ setInterval(async () => {
   }
 }, CLEANUP_INTERVAL);
 
+// Periodic cleanup of stalled call requests
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, { timestamp }] of activeCallRequests.entries()) {
+    if (now - timestamp > CALL_TIMEOUT) {
+      console.log('[Socket.IO] Cleanup: Removing stalled call request:', key);
+      const [callerId, receiverId] = key.split(':');
+      io.to(callerId).emit('callEnded', { reason: 'timeout' });
+      io.to(callerId).emit('endCall', { reason: 'timeout' });
+      io.to(receiverId).emit('callEnded', { reason: 'timeout' });
+      io.to(receiverId).emit('endCall', { reason: 'timeout' });
+      activeCallRequests.delete(key);
+    }
+  }
+}, CALL_TIMEOUT / 2);
+
 const handleUserDisconnect = async (userId) => {
   try {
     if (userId.startsWith('anon-')) {
@@ -206,7 +226,7 @@ io.on('connection', (socket) => {
         }
         userData = {
           id: userId,
-          username: session.username, // Use stored username
+          username: session.username,
           isAnonymous: true,
           online: true,
           country: session.country,
@@ -631,6 +651,148 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[Socket.IO] ReportUser error:', err.message);
       socket.emit('error', { msg: 'Failed to report user' });
+    }
+  });
+
+  socket.on('call', async ({ callerId, receiverId, offer }) => {
+    try {
+      console.log('[Socket.IO] call: Received from', callerId, 'to', receiverId, 'offer:', offer);
+      if (callerId.startsWith('anon-')) {
+        console.log('[Socket.IO] call: Rejected - Anonymous user');
+        return socket.emit('callError', { msg: 'Anonymous users cannot make calls' });
+      }
+
+      if (!offer && offer !== null) {
+        console.error('[Socket.IO] call: Invalid offer data');
+        return socket.emit('callError', { msg: 'Invalid offer data' });
+      }
+
+      const caller = await User.findById(callerId);
+      const receiver = await User.findById(receiverId);
+      if (!caller || !receiver) {
+        console.log('[Socket.IO] call: Rejected - User not found');
+        return socket.emit('callError', { msg: 'User not found' });
+      }
+
+      if (receiver.blockedUsers.includes(callerId)) {
+        console.log('[Socket.IO] call: Rejected - Caller is blocked');
+        return socket.emit('callError', { msg: 'You are blocked by this user' });
+      }
+
+      if (caller.blockedUsers.includes(receiverId)) {
+        console.log('[Socket.IO] call: Rejected - Receiver is blocked');
+        return socket.emit('callError', { msg: 'You have blocked this user' });
+      }
+
+      const callKey = `${callerId}:${receiverId}`;
+      activeCallRequests.set(callKey, { timestamp: Date.now() });
+
+      console.log('[Socket.IO] call: Emitting incomingCall to', receiverId);
+      io.to(receiverId).emit('incomingCall', { callerId, offer });
+      io.to(receiverId).emit('callRequest', { callerId, callerName: caller.username, signal: offer });
+      await addActivityLog(callerId, `Initiated voice call to user ID: ${receiverId}`);
+    } catch (err) {
+      console.error('[Socket.IO] Call error:', err.message);
+      socket.emit('callError', { msg: 'Failed to initiate call' });
+    }
+  });
+
+  socket.on('callAnswer', async ({ callerId, receiverId, answer }) => {
+    try {
+      console.log('[Socket.IO] callAnswer: Received from', receiverId, 'for', callerId, 'answer:', answer);
+      if (!answer || typeof answer !== 'object') {
+        console.error('[Socket.IO] callAnswer: Invalid answer data');
+        return socket.emit('callError', { msg: 'Invalid answer data' });
+      }
+
+      const caller = await User.findById(callerId);
+      const receiver = await User.findById(receiverId);
+      if (!caller || !receiver) {
+        console.log('[Socket.IO] callAnswer: Rejected - User not found');
+        return socket.emit('callError', { msg: 'User not found' });
+      }
+
+      const callKey = `${callerId}:${receiverId}`;
+      if (!activeCallRequests.has(callKey)) {
+        console.log('[Socket.IO] callAnswer: Rejected - No active call request');
+        return socket.emit('callError', { msg: 'No active call request' });
+      }
+
+      console.log('[Socket.IO] callAnswer: Emitting callAnswered to', callerId);
+      io.to(callerId).emit('callAnswered', { receiverId, answer });
+      io.to(callerId).emit('callAccepted', { signal: answer });
+      activeCallRequests.delete(callKey);
+      await addActivityLog(receiverId, `Accepted voice call from user ID: ${callerId}`);
+    } catch (err) {
+      console.error('[Socket.IO] CallAnswer error:', err.message);
+      socket.emit('callError', { msg: 'Failed to accept call' });
+    }
+  });
+
+  socket.on('callDeclined', async ({ callerId, receiverId }) => {
+    try {
+      console.log('[Socket.IO] callDeclined: Received from', receiverId, 'for', callerId);
+      const caller = await User.findById(callerId);
+      const receiver = await User.findById(receiverId);
+      if (!caller || !receiver) {
+        console.log('[Socket.IO] callDeclined: Rejected - User not found');
+        return socket.emit('callError', { msg: 'User not found' });
+      }
+
+      const callKey = `${callerId}:${receiverId}`;
+      activeCallRequests.delete(callKey);
+
+      console.log('[Socket.IO] callDeclined: Emitting to', callerId);
+      io.to(callerId).emit('callDeclined');
+      await addActivityLog(receiverId, `Declined voice call from user ID: ${callerId}`);
+    } catch (err) {
+      console.error('[Socket.IO] CallDeclined error:', err.message);
+      socket.emit('callError', { msg: 'Failed to decline call' });
+    }
+  });
+
+  socket.on('endCall', async ({ targetId, reason }) => {
+    try {
+      console.log('[Socket.IO] endCall: Received for', targetId, 'reason:', reason || 'unspecified');
+      const userId = socket.request.session.userId;
+      const target = await User.findById(targetId);
+      if (!target) {
+        console.log('[Socket.IO] endCall: Rejected - Target user not found');
+        return socket.emit('callError', { msg: 'Target user not found' });
+      }
+
+      const callKey = `${userId}:${targetId}`;
+      const reverseCallKey = `${targetId}:${userId}`;
+      activeCallRequests.delete(callKey);
+      activeCallRequests.delete(reverseCallKey);
+
+      console.log('[Socket.IO] endCall: Emitting to', targetId);
+      io.to(targetId).emit('callEnded', { reason: reason || 'unspecified' });
+      io.to(targetId).emit('endCall', { reason: reason || 'unspecified' });
+      if (!userId.startsWith('anon-')) {
+        await addActivityLog(userId, `Ended voice call with user ID: ${targetId} (reason: ${reason || 'unspecified'})`);
+      }
+    } catch (err) {
+      console.error('[Socket.IO] EndCall error:', err.message);
+      socket.emit('callError', { msg: 'Failed to end call' });
+    }
+  });
+
+  socket.on('iceCandidate', async ({ candidate, targetId }) => {
+    try {
+      console.log('[Socket.IO] iceCandidate: Received for', targetId, 'candidate:', candidate);
+      const userId = socket.request.session.userId;
+      const target = await User.findById(targetId);
+      if (!target) {
+        console.log('[Socket.IO] iceCandidate: Rejected - Target user not found');
+        return socket.emit('callError', { msg: 'Target user not found' });
+      }
+
+      console.log('[Socket.IO] iceCandidate: Emitting to', targetId);
+      io.to(targetId).emit('iceCandidate', { candidate });
+    } catch (err) {
+      console.error('[Socket.IO] IceCandidate error:', err.message);
+      socket.emit('callError', { msg: 'Failed to send ICE candidate' });
     }
   });
 
