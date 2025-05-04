@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus, FaTrash } from 'react-icons/fa';
+import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus, FaTrash, FaMicrophone, FaStop, FaPlay, FaTimes } from 'react-icons/fa';
 import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
+import api from '../utils/api';
 
 const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000');
 
@@ -33,6 +34,12 @@ const ChatWindow = () => {
   const longPressTimer = useRef(null);
   const hoverTimeout = useRef(null);
   const typingTimeoutRef = useRef(null);
+
+  // Voice recording state
+  const [recordingStatus, setRecordingStatus] = useState('inactive');
+  const [mediaBlobUrl, setMediaBlobUrl] = useState(null);
+  const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
 
   useEffect(() => {
     if (!userId || !username) {
@@ -174,6 +181,31 @@ const ChatWindow = () => {
       socket.emit('getFriends', userId);
     }
 
+    // Initialize MediaRecorder
+    const setupMediaRecorder = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        mediaRecorderRef.current = mediaRecorder;
+
+        const chunks = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          setMediaBlobUrl(URL.createObjectURL(blob));
+          chunks.length = 0; // Clear chunks
+        };
+      } catch (err) {
+        setError('Failed to access microphone');
+        console.error('MediaRecorder setup error:', err);
+      }
+    };
+
+    setupMediaRecorder();
+
     window.history.pushState({ page: 'chat' }, null, window.location.pathname);
     const handlePopState = (event) => {
       event.preventDefault();
@@ -193,6 +225,9 @@ const ChatWindow = () => {
       socket.disconnect();
       window.removeEventListener('popstate', handlePopState);
       clearTimeout(typingTimeoutRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
     };
   }, [userId, username, isAnonymous]);
 
@@ -236,15 +271,96 @@ const ChatWindow = () => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedUserId) {
       setError('Please type a message and select a user');
+      setTimeout(() => setError(''), 3000);
       return;
     }
     if (blockedUsers.includes(selectedUserId)) {
       setError('You have blocked this user');
+      setTimeout(() => setError(''), 3000);
       return;
     }
-    const messageData = { sender: userId, receiver: selectedUserId, content: newMessage };
+    const messageData = { sender: userId, receiver: selectedUserId, content: newMessage, type: 'text' };
     socketRef.current.emit('sendMessage', messageData);
     setNewMessage('');
+  };
+
+  const handleSendVoiceMessage = async () => {
+    if (!mediaBlobUrl || !selectedUserId) {
+      setError('No recording or user selected');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+    if (blockedUsers.includes(selectedUserId)) {
+      setError('You have blocked this user');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+
+    try {
+      const response = await fetch(mediaBlobUrl);
+      const blob = await response.blob();
+      const formData = new FormData();
+      formData.append('audio', blob, 'voice-message.webm');
+      formData.append('sender', userId);
+      formData.append('receiver', selectedUserId);
+
+      console.log('[ChatWindow] Sending voice message to /chat/voice-message', {
+        sender: userId,
+        receiver: selectedUserId,
+        hasAudio: !!blob,
+      });
+
+      const apiResponse = await api.post('/chat/voice-message', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      console.log('[ChatWindow] Voice message upload response:', apiResponse.data);
+
+      if (!apiResponse.data.audioPath) {
+        throw new Error('No audioPath returned from server');
+      }
+
+      const messageData = {
+        sender: userId,
+        receiver: selectedUserId,
+        audioPath: apiResponse.data.audioPath,
+        type: 'voice',
+      };
+
+      socketRef.current.emit('sendMessage', messageData);
+      console.log('[ChatWindow] Emitted sendMessage:', messageData);
+
+      setMediaBlobUrl(null);
+      URL.revokeObjectURL(mediaBlobUrl);
+    } catch (err) {
+      setError('Failed to send voice message: ' + err.message);
+      console.error('[ChatWindow] Voice message error:', err, {
+        response: err.response?.data,
+        status: err.response?.status,
+      });
+      setTimeout(() => setError(''), 5000);
+    }
+  };
+
+  const startRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
+      mediaRecorderRef.current.start();
+      setRecordingStatus('recording');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      setRecordingStatus('inactive');
+    }
+  };
+
+  const clearBlobUrl = () => {
+    if (mediaBlobUrl) {
+      URL.revokeObjectURL(mediaBlobUrl);
+      setMediaBlobUrl(null);
+    }
   };
 
   const handleTyping = (e) => {
@@ -266,7 +382,7 @@ const ChatWindow = () => {
   const handleLongPressStart = (messageId, isSender) => {
     clearTimeout(longPressTimer.current);
     longPressTimer.current = setTimeout(() => {
-      if (isSender) {
+      if (isSender && messageId) {
         setMenuMessageId((prev) => (prev === messageId ? null : messageId));
       } else {
         setActiveMessageId(messageId);
@@ -300,6 +416,7 @@ const ChatWindow = () => {
     localStorage.removeItem('anonymousId');
     localStorage.removeItem('anonymousUsername');
     localStorage.removeItem('user');
+    localStorage.removeItem('token');
     window.location.href = '/';
   };
 
@@ -556,20 +673,31 @@ const ChatWindow = () => {
                                 : 'bg-gray-400 text-gray-800'
                           }`}
                         >
-                          <p
-                            className="text-sm sm:text-base"
-                            onMouseEnter={msg.sender === userId ? () => handleHoverStart(msg._id) : null}
-                            onMouseLeave={msg.sender === userId ? () => handleHoverEnd(msg._id) : null}
-                            onTouchStart={
-                              msg.sender === userId
-                                ? () => handleLongPressStart(msg._id, true)
-                                : () => handleLongPressStart(msg._id, false)
-                            }
-                            onTouchEnd={handleLongPressEnd}
-                            onTouchMove={handleLongPressEnd}
-                          >
-                            <span className="font-bold">{getUsername(msg.sender)}:</span> {msg.content}
-                          </p>
+                          {msg.type === 'text' ? (
+                            <p
+                              className="text-sm sm:text-base"
+                              onMouseEnter={msg.sender === userId ? () => handleHoverStart(msg._id) : null}
+                              onMouseLeave={msg.sender === userId ? () => handleHoverEnd() : null}
+                              onTouchStart={
+                                msg.sender === userId
+                                  ? () => handleLongPressStart(msg._id, true)
+                                  : () => handleLongPressStart(msg._id, false)
+                              }
+                              onTouchEnd={handleLongPressEnd}
+                              onTouchMove={handleLongPressEnd}
+                            >
+                              <span className="font-bold">{getUsername(msg.sender)}:</span> {msg.content}
+                            </p>
+                          ) : (
+                            <div className="flex flex-col">
+                              <span className="font-bold text-sm sm:text-base">{getUsername(msg.sender)}:</span>
+                              <audio
+                                controls
+                                src={`${process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000'}/${msg.audioPath}`}
+                                className="mt-1 max-w-full"
+                              />
+                            </div>
+                          )}
                           <span className={`text-xs ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} block mt-1`}>
                             {new Date(msg.createdAt).toLocaleTimeString()}
                             {msg.edited && ' (Edited)'}
@@ -577,16 +705,18 @@ const ChatWindow = () => {
                               <> - {msg.readAt ? 'Seen' : msg.deliveredAt ? 'Delivered' : 'Sent'}</>
                             )}
                           </span>
-                          <MessageActions
-                            messageId={msg._id}
-                            content={msg.content}
-                            setMessages={setMessages}
-                            reactions={msg.reactions || {}}
-                            showReactions={activeMessageId === msg._id}
-                            isSender={msg.sender === userId}
-                            showMenu={menuMessageId === msg._id}
-                            userId={userId}
-                          />
+                          {msg.type === 'text' && (
+                            <MessageActions
+                              messageId={msg._id}
+                              content={msg.content}
+                              setMessages={setMessages}
+                              reactions={msg.reactions || {}}
+                              showReactions={activeMessageId === msg._id}
+                              isSender={msg.sender === userId}
+                              showMenu={menuMessageId === msg._id}
+                              userId={userId}
+                            />
+                          )}
                         </div>
                       </motion.div>
                     ))}
@@ -612,35 +742,82 @@ const ChatWindow = () => {
                 )}
               </div>
 
-              <form onSubmit={handleSendMessage} className={`flex items-center p-4 border-t ${isDarkMode ? 'border-gray-600' : 'border-gray-400'} gap-2`}>
-                <motion.div
-                  whileHover="hover"
-                  whileFocus="focus"
-                  variants={inputVariants}
-                  className={`flex-grow flex items-center border ${isDarkMode ? 'border-gray-600 bg-gray-800' : 'border-gray-400 bg-gray-100'} rounded-lg p-2 sm:p-3`}
-                >
-                  <input
-                    ref={messageInputRef}
-                    type="text"
-                    value={newMessage}
-                    onChange={handleTyping}
-                    onFocus={handleInputFocus}
-                    placeholder="Type a message..."
-                    className={`w-full bg-transparent ${isDarkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'} text-sm sm:text-base focus:outline-none`}
-                    disabled={blockedUsers.includes(selectedUserId)}
-                  />
-                </motion.div>
-                <motion.button
-                  type="submit"
-                  whileHover="hover"
-                  whileTap="tap"
-                  variants={buttonVariants}
-                  className={`${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
-                  disabled={!newMessage.trim() || blockedUsers.includes(selectedUserId)}
-                >
-                  <FaPaperPlane className="text-lg sm:text-xl" />
-                </motion.button>
-              </form>
+              <div className={`p-4 border-t ${isDarkMode ? 'border-gray-600' : 'border-gray-400'}`}>
+                {recordingStatus !== 'recording' && !mediaBlobUrl && (
+                  <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                    <motion.div
+                      whileHover="hover"
+                      whileFocus="focus"
+                      variants={inputVariants}
+                      className={`flex-grow flex items-center border ${isDarkMode ? 'border-gray-600 bg-gray-800' : 'border-gray-400 bg-gray-100'} rounded-lg p-2 sm:p-3`}
+                    >
+                      <input
+                        ref={messageInputRef}
+                        type="text"
+                        value={newMessage}
+                        onChange={handleTyping}
+                        onFocus={handleInputFocus}
+                        placeholder="Type a message..."
+                        className={`w-full bg-transparent ${isDarkMode ? 'text-white placeholder-gray-500' : 'text-gray-900 placeholder-gray-400'} text-sm sm:text-base focus:outline-none`}
+                        disabled={blockedUsers.includes(selectedUserId)}
+                      />
+                    </motion.div>
+                    <motion.button
+                      type="submit"
+                      whileHover="hover"
+                      whileTap="tap"
+                      variants={buttonVariants}
+                      className={`${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
+                      disabled={!newMessage.trim() || blockedUsers.includes(selectedUserId)}
+                    >
+                      <FaPaperPlane className="text-lg sm:text-xl" />
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={startRecording}
+                      className={`${isDarkMode ? 'bg-green-600 text-white' : 'bg-green-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
+                      disabled={blockedUsers.includes(selectedUserId)}
+                    >
+                      <FaMicrophone className="text-lg sm:text-xl" />
+                    </motion.button>
+                  </form>
+                )}
+                {recordingStatus === 'recording' && (
+                  <div className="flex items-center gap-2">
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={stopRecording}
+                      className={`${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
+                    >
+                      <FaStop className="text-lg sm:text-xl" />
+                    </motion.button>
+                    <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'} text-sm`}>Recording...</span>
+                  </div>
+                )}
+                {mediaBlobUrl && (
+                  <div className="flex items-center gap-2">
+                    <audio src={mediaBlobUrl} controls className="max-w-[60%]" />
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={handleSendVoiceMessage}
+                      className={`${isDarkMode ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
+                    >
+                      <FaPlay className="text-lg sm:text-xl" />
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={clearBlobUrl}
+                      className={`${isDarkMode ? 'bg-gray-600 text-white' : 'bg-gray-500 text-white'} p-2 sm:p-3 rounded-lg shadow-lg`}
+                    >
+                      <FaTimes className="text-lg sm:text-xl" />
+                    </motion.button>
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
