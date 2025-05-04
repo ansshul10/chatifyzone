@@ -12,7 +12,7 @@ const chatRoutes = require('./routes/chat');
 const Message = require('./models/Message');
 const AnonymousSession = require('./models/AnonymousSession');
 const User = require('./models/User');
-const adminRoutes = require('./routes/admin'); // Add this
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const server = http.createServer(app);
@@ -76,8 +76,7 @@ connectDB().then(() => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
-app.use('/api/admin', adminRoutes); // Add this
-
+app.use('/api/admin', adminRoutes);
 
 // Socket.IO Logic
 const userSocketMap = new Map();
@@ -103,7 +102,7 @@ const addActivityLog = async (userId, action) => {
 const getOnlineUsers = async () => {
   try {
     const registeredUsers = await User.find({}).select('_id username online country gender age isAnonymous');
-    const anonymousUsers = await AnonymousSession.find({}).select('anonymousId username status');
+    const anonymousUsers = await AnonymousSession.find({}).select('anonymousId username status country state age');
     const users = [
       ...registeredUsers.map(user => ({
         id: user._id.toString(),
@@ -114,16 +113,20 @@ const getOnlineUsers = async () => {
         gender: user.gender,
         age: user.age,
       })),
-      ...anonymousUsers.map(session => ({
-        id: session.anonymousId,
-        username: session.username,
-        isAnonymous: true,
-        online: session.status === 'online',
-        country: null,
-        gender: null,
-        age: null,
-      })),
+      ...anonymousUsers.map(session => {
+        console.log('[getOnlineUsers] Anonymous user:', { id: session.anonymousId, username: session.username });
+        return {
+          id: session.anonymousId,
+          username: session.username, // Use stored username directly
+          isAnonymous: true,
+          online: session.status === 'online',
+          country: session.country,
+          gender: null,
+          age: session.age,
+        };
+      }),
     ].filter(user => user.id && user.username);
+    console.log('[getOnlineUsers] Users sent:', users);
     return users;
   } catch (err) {
     console.error('[Server] getOnlineUsers error:', err.message);
@@ -203,13 +206,14 @@ io.on('connection', (socket) => {
         }
         userData = {
           id: userId,
-          username: session.username,
+          username: session.username, // Use stored username
           isAnonymous: true,
           online: true,
-          country: null,
+          country: session.country,
           gender: null,
-          age: null,
+          age: session.age,
         };
+        console.log(`[Socket.IO] Anonymous user joined: ${userId} (${userData.username})`);
       } else {
         const user = await User.findByIdAndUpdate(
           userId,
@@ -269,10 +273,6 @@ io.on('connection', (socket) => {
 
       if (!senderExists || !receiverExists) {
         return socket.emit('error', { msg: 'User not found' });
-      }
-
-      if (senderId.startsWith('anon-') && !receiverId.startsWith('anon-')) {
-        return socket.emit('error', { msg: 'Anonymous users cannot message registered users' });
       }
 
       const receiverUser = receiverId.startsWith('anon-') ? null : await User.findById(receiverId);
