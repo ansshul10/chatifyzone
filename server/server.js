@@ -446,69 +446,50 @@ io.on('connection', (socket) => {
 
   socket.on('voice-call-offer', async ({ receiverId, offer, senderId }) => {
     try {
-      if (!senderId || !receiverId || !offer) {
-        return socket.emit('error', { msg: 'Missing call offer data' });
+      const receiverExists = receiverId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: receiverId })
+        : await User.findById(receiverId);
+      if (!receiverExists) {
+        return socket.emit('error', { msg: 'Receiver not found' });
       }
 
       const senderExists = senderId.startsWith('anon-')
         ? await AnonymousSession.findOne({ anonymousId: senderId })
         : await User.findById(senderId);
-      const receiverExists = receiverId.startsWith('anon-')
-        ? await AnonymousSession.findOne({ anonymousId: receiverId })
-        : await User.findById(receiverId);
-
-      if (!senderExists || !receiverExists) {
-        return socket.emit('error', { msg: 'User not found' });
-      }
-
-      const receiverUser = receiverId.startsWith('anon-') ? null : await User.findById(receiverId);
-      if (receiverUser?.blockedUsers.includes(senderId)) {
-        return socket.emit('error', { msg: 'You are blocked by this user' });
+      if (!senderExists) {
+        return socket.emit('error', { msg: 'Sender not found' });
       }
 
       io.to(receiverId).emit('voice-call-offer', { offer, from: senderId });
       console.log(`[Socket.IO] Voice call offer sent from ${senderId} to ${receiverId}`);
     } catch (err) {
-      console.error('[Socket.IO] VoiceCallOffer error:', err.message);
+      console.error('[Socket.IO] Voice-call-offer error:', err.message);
       socket.emit('error', { msg: 'Failed to send call offer' });
     }
   });
 
   socket.on('voice-call-answer', async ({ receiverId, answer, senderId }) => {
     try {
-      if (!senderId || !receiverId || !answer) {
-        return socket.emit('error', { msg: 'Missing call answer data' });
-      }
-
-      const senderExists = senderId.startsWith('anon-')
-        ? await AnonymousSession.findOne({ anonymousId: senderId })
-        : await User.findById(senderId);
       const receiverExists = receiverId.startsWith('anon-')
         ? await AnonymousSession.findOne({ anonymousId: receiverId })
         : await User.findById(receiverId);
-
-      if (!senderExists || !receiverExists) {
-        return socket.emit('error', { msg: 'User not found' });
+      if (!receiverExists) {
+        return socket.emit('error', { msg: 'Receiver not found' });
       }
 
       io.to(receiverId).emit('voice-call-answer', { answer, from: senderId });
       console.log(`[Socket.IO] Voice call answer sent from ${senderId} to ${receiverId}`);
     } catch (err) {
-      console.error('[Socket.IO] VoiceCallAnswer error:', err.message);
+      console.error('[Socket.IO] Voice-call-answer error:', err.message);
       socket.emit('error', { msg: 'Failed to send call answer' });
     }
   });
 
   socket.on('ice-candidate', async ({ receiverId, candidate }) => {
     try {
-      if (!receiverId || !candidate) {
-        return socket.emit('error', { msg: 'Missing ICE candidate data' });
-      }
-
       const receiverExists = receiverId.startsWith('anon-')
         ? await AnonymousSession.findOne({ anonymousId: receiverId })
         : await User.findById(receiverId);
-
       if (!receiverExists) {
         return socket.emit('error', { msg: 'Receiver not found' });
       }
@@ -516,33 +497,162 @@ io.on('connection', (socket) => {
       io.to(receiverId).emit('ice-candidate', { candidate });
       console.log(`[Socket.IO] ICE candidate sent to ${receiverId}`);
     } catch (err) {
-      console.error('[Socket.IO] IceCandidate error:', err.message);
+      console.error('[Socket.IO] ICE-candidate error:', err.message);
       socket.emit('error', { msg: 'Failed to send ICE candidate' });
     }
   });
 
   socket.on('end-call', async ({ receiverId, senderId }) => {
     try {
-      if (!senderId || !receiverId) {
-        return socket.emit('error', { msg: 'Missing end call data' });
-      }
-
-      const senderExists = senderId.startsWith('anon-')
-        ? await AnonymousSession.findOne({ anonymousId: senderId })
-        : await User.findById(senderId);
       const receiverExists = receiverId.startsWith('anon-')
         ? await AnonymousSession.findOne({ anonymousId: receiverId })
         : await User.findById(receiverId);
-
-      if (!senderExists || !receiverExists) {
-        return socket.emit('error', { msg: 'User not found' });
+      if (!receiverExists) {
+        return socket.emit('error', { msg: 'Receiver not found' });
       }
 
       io.to(receiverId).emit('end-call', { from: senderId });
       console.log(`[Socket.IO] End call signal sent from ${senderId} to ${receiverId}`);
     } catch (err) {
-      console.error('[Socket.IO] EndCall error:', err.message);
+      console.error('[Socket.IO] End-call error:', err.message);
       socket.emit('error', { msg: 'Failed to end call' });
+    }
+  });
+
+  socket.on('callStatusUpdate', async ({ status, from, receiverId }) => {
+    try {
+      const receiverExists = receiverId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: receiverId })
+        : await User.findById(receiverId);
+      if (!receiverExists) {
+        return socket.emit('error', { msg: 'Receiver not found' });
+      }
+
+      io.to(receiverId).emit('callStatusUpdate', { status, from });
+      console.log(`[Socket.IO] Call status update (${status}) sent from ${from} to ${receiverId}`);
+    } catch (err) {
+      console.error('[Socket.IO] CallStatusUpdate error:', err.message);
+      socket.emit('error', { msg: 'Failed to update call status' });
+    }
+  });
+
+  socket.on('blockUser', async ({ userId, targetId }) => {
+    try {
+      if (userId.startsWith('anon-')) {
+        return socket.emit('error', { msg: 'Anonymous users cannot block others' });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
+
+      if (!user.blockedUsers.includes(targetId)) {
+        user.blockedUsers.push(targetId);
+        await user.save();
+        await addActivityLog(userId, `Blocked user ${targetId}`);
+      }
+
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u.toString()));
+      console.log(`[Socket.IO] User ${userId} blocked ${targetId}`);
+    } catch (err) {
+      console.error('[Socket.IO] BlockUser error:', err.message);
+      socket.emit('error', { msg: 'Failed to block user' });
+    }
+  });
+
+  socket.on('unblockUser', async ({ userId, targetId }) => {
+    try {
+      if (userId.startsWith('anon-')) {
+        return socket.emit('error', { msg: 'Anonymous users cannot unblock others' });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
+
+      user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== targetId);
+      await user.save();
+      await addActivityLog(userId, `Unblocked user ${targetId}`);
+
+      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u.toString()));
+      console.log(`[Socket.IO] User ${userId} unblocked ${targetId}`);
+    } catch (err) {
+      console.error('[Socket.IO] UnblockUser error:', err.message);
+      socket.emit('error', { msg: 'Failed to unblock user' });
+    }
+  });
+
+  socket.on('sendFriendRequest', async ({ userId, friendId }) => {
+    try {
+      if (userId.startsWith('anon-')) {
+        return socket.emit('error', { msg: 'Anonymous users cannot send friend requests' });
+      }
+
+      const user = await User.findById(userId);
+      const friend = await User.findById(friendId);
+
+      if (!user || !friend) {
+        return socket.emit('error', { msg: 'User or friend not found' });
+      }
+
+      if (user.friends.includes(friendId) || friend.friendRequests.includes(userId)) {
+        return socket.emit('error', { msg: 'Friend request already sent or user is already a friend' });
+      }
+
+      friend.friendRequests.push(userId);
+      await friend.save();
+      await addActivityLog(userId, `Sent friend request to ${friendId}`);
+
+      io.to(friendId).emit('friendRequestsUpdate', friend.friendRequests.map(r => r.toString()));
+      console.log(`[Socket.IO] Friend request sent from ${userId} to ${friendId}`);
+    } catch (err) {
+      console.error('[Socket.IO] SendFriendRequest error:', err.message);
+      socket.emit('error', { msg: 'Failed to send friend request' });
+    }
+  });
+
+  socket.on('unfriend', async ({ userId, friendId }) => {
+    try {
+      if (userId.startsWith('anon-')) {
+        return socket.emit('error', { msg: 'Anonymous users cannot unfriend others' });
+      }
+
+      const user = await User.findById(userId);
+      const friend = await User.findById(friendId);
+
+      if (!user || !friend) {
+        return socket.emit('error', { msg: 'User or friend not found' });
+      }
+
+      user.friends = user.friends.filter(id => id.toString() !== friendId);
+      friend.friends = friend.friends.filter(id => id.toString() !== userId);
+      await user.save();
+      await friend.save();
+      await addActivityLog(userId, `Unfriended ${friendId}`);
+
+      socket.emit('friendsUpdate', user.friends.map(f => f.toString()));
+      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => f.toString()));
+      console.log(`[Socket.IO] User ${userId} unfriended ${friendId}`);
+    } catch (err) {
+      console.error('[Socket.IO] Unfriend error:', err.message);
+      socket.emit('error', { msg: 'Failed to unfriend' });
+    }
+  });
+
+  socket.on('reportUser', async ({ userId, targetId }) => {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
+
+      await addActivityLog(userId, `Reported user ${targetId}`);
+      console.log(`[Socket.IO] User ${userId} reported ${targetId}`);
+    } catch (err) {
+      console.error('[Socket.IO] ReportUser error:', err.message);
+      socket.emit('error', { msg: 'Failed to report user' });
     }
   });
 
@@ -555,198 +665,12 @@ io.on('connection', (socket) => {
         ],
       });
 
-      socket.emit('actionResponse', {
-        type: 'clearChatHistory',
-        success: true,
-        msg: 'Chat history cleared successfully',
-      });
-
-      if (!userId.startsWith('anon-')) {
-        await addActivityLog(userId, `Cleared chat history with user ID: ${targetId}`);
-      }
+      socket.emit('loadPreviousMessages', []);
+      await addActivityLog(userId, `Cleared chat history with ${targetId}`);
+      console.log(`[Socket.IO] Chat history cleared between ${userId} and ${targetId}`);
     } catch (err) {
       console.error('[Socket.IO] ClearChatHistory error:', err.message);
       socket.emit('error', { msg: 'Failed to clear chat history' });
-    }
-  });
-
-  socket.on('blockUser', async ({ userId, targetId }) => {
-    try {
-      const user = await User.findById(userId);
-      if (!user || user.blockedUsers.includes(targetId)) {
-        return socket.emit('error', { msg: 'User not found or already blocked' });
-      }
-
-      user.blockedUsers.push(targetId);
-      user.friends = user.friends.filter(friend => friend.toString() !== targetId);
-      await user.save();
-
-      await User.findByIdAndUpdate(targetId, { $pull: { friends: userId } });
-
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u._id.toString()));
-      socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
-      io.to(targetId).emit('friendRemoved', { friendId: userId });
-      socket.emit('actionResponse', { type: 'block', success: true, msg: 'User blocked successfully' });
-
-      await addActivityLog(userId, `Blocked user ID: ${targetId}`);
-    } catch (err) {
-      console.error('[Socket.IO] BlockUser error:', err.message);
-      socket.emit('error', { msg: 'Failed to block user' });
-    }
-  });
-
-  socket.on('unblockUser', async ({ userId, targetId }) => {
-    try {
-      const user = await User.findById(userId);
-      if (!user || !user.blockedUsers.includes(targetId)) {
-        return socket.emit('error', { msg: 'User not found or not blocked' });
-      }
-
-      user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== targetId);
-      await user.save();
-
-      socket.emit('blockedUsersUpdate', user.blockedUsers.map(u => u._id.toString()));
-      socket.emit('actionResponse', { type: 'unblock', success: true, msg: 'User unblocked successfully' });
-
-      await addActivityLog(userId, `Unblocked user ID: ${targetId}`);
-    } catch (err) {
-      console.error('[Socket.IO] UnblockUser error:', err.message);
-      socket.emit('error', { msg: 'Failed to unblock user' });
-    }
-  });
-
-  socket.on('sendFriendRequest', async ({ userId, friendId }) => {
-    try {
-      const sender = await User.findById(userId);
-      const receiver = await User.findById(friendId);
-      if (!sender || !receiver) {
-        return socket.emit('error', { msg: 'User not found' });
-      }
-
-      if (receiver.friendRequests.includes(userId) || receiver.friends.includes(userId)) {
-        return socket.emit('error', { msg: 'Friend request already sent or already friends' });
-      }
-
-      if (receiver.blockedUsers.includes(userId)) {
-        return socket.emit('error', { msg: 'You are blocked by this user' });
-      }
-
-      if (!receiver.privacy?.allowFriendRequests) {
-        return socket.emit('error', { msg: 'This user is not accepting friend requests' });
-      }
-
-      receiver.friendRequests.push(userId);
-      await receiver.save();
-
-      socket.emit('actionResponse', { type: 'sendFriendRequest', success: true, msg: 'Friend request sent' });
-      io.to(friendId).emit('friendRequestReceived', { _id: userId, username: sender.username });
-
-      await addActivityLog(userId, `Sent friend request to user ID: ${friendId}`);
-    } catch (err) {
-      console.error('[Socket.IO] SendFriendRequest error:', err.message);
-      socket.emit('error', { msg: 'Failed to send friend request' });
-    }
-  });
-
-  socket.on('acceptFriendRequest', async ({ userId, friendId }) => {
-    try {
-      const user = await User.findByIdAndUpdate(
-        userId,
-        { $pull: { friendRequests: friendId }, $push: { friends: friendId } },
-        { new: true }
-      ).populate('friends friendRequests', 'username');
-
-      const friend = await User.findByIdAndUpdate(
-        friendId,
-        { $push: { friends: userId } },
-        { new: true }
-      ).populate('friends', 'username');
-
-      if (!user || !friend) {
-        return socket.emit('error', { msg: 'User not found' });
-      }
-
-      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => r._id.toString()));
-      socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
-      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => f._id.toString()));
-      socket.emit('actionResponse', { type: 'acceptFriendRequest', success: true, msg: 'Friend request accepted' });
-
-      await addActivityLog(userId, `Accepted friend request from user ID: ${friendId}`);
-      await addActivityLog(friendId, `Friend request accepted by user ID: ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO] AcceptFriendRequest error:', err.message);
-      socket.emit('error', { msg: 'Failed to accept friend request' });
-    }
-  });
-
-  socket.on('declineFriendRequest', async ({ userId, friendId }) => {
-    try {
-      const user = await User.findByIdAndUpdate(
-        userId,
-        { $pull: { friendRequests: friendId } },
-        { new: true }
-      ).populate('friendRequests', 'username');
-
-      if (!user) {
-        return socket.emit('error', { msg: 'User not found' });
-      }
-
-      socket.emit('friendRequestsUpdate', user.friendRequests.map(r => r._id.toString()));
-      socket.emit('actionResponse', { type: 'declineFriendRequest', success: true, msg: 'Friend request declined' });
-
-      await addActivityLog(userId, `Declined friend request from user ID: ${friendId}`);
-    } catch (err) {
-      console.error('[Socket.IO] DeclineFriendRequest error:', err.message);
-      socket.emit('error', { msg: 'Failed to decline friend request' });
-    }
-  });
-
-  socket.on('unfriend', async ({ userId, friendId }) => {
-    try {
-      const user = await User.findByIdAndUpdate(
-        userId,
-        { $pull: { friends: friendId } },
-        { new: true }
-      ).populate('friends', 'username');
-
-      const friend = await User.findByIdAndUpdate(
-        friendId,
-        { $pull: { friends: userId } },
-        { new: true }
-      ).populate('friends', 'username');
-
-      if (!user || !friend) {
-        return socket.emit('error', { msg: 'User not found' });
-      }
-
-      socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
-      io.to(friendId).emit('friendsUpdate', friend.friends.map(f => f._id.toString()));
-      socket.emit('actionResponse', { type: 'unfriend', success: true, msg: 'Friend removed successfully' });
-
-      await addActivityLog(userId, `Unfriended user ID: ${friendId}`);
-      await addActivityLog(friendId, `Unfriended by user ID: ${userId}`);
-    } catch (err) {
-      console.error('[Socket.IO] Unfriend error:', err.message);
-      socket.emit('error', { msg: 'Failed to unfriend user' });
-    }
-  });
-
-  socket.on('reportUser', async ({ userId, targetId }) => {
-    try {
-      const user = await User.findById(userId);
-      const target = await User.findById(targetId) || await AnonymousSession.findOne({ anonymousId: targetId });
-      if (!user || !target) {
-        return socket.emit('error', { msg: 'User not found' });
-      }
-
-      // Implement report logic (e.g., save to a reports collection or notify admins)
-      console.log(`[Socket.IO] User ${userId} reported user ${targetId}`);
-
-      socket.emit('actionResponse', { type: 'reportUser', success: true, msg: 'User reported successfully' });
-      await addActivityLog(userId, `Reported user ID: ${targetId}`);
-    } catch (err) {
-      console.error('[Socket.IO] ReportUser error:', err.message);
-      socket.emit('error', { msg: 'Failed to report user' });
     }
   });
 
@@ -754,28 +678,58 @@ io.on('connection', (socket) => {
     try {
       await handleUserDisconnect(userId);
       socket.request.session.destroy();
-      socket.disconnect();
+      console.log(`[Socket.IO] User logged out: ${userId}`);
     } catch (err) {
       console.error('[Socket.IO] Logout error:', err.message);
       socket.emit('error', { msg: 'Failed to logout' });
     }
   });
 
-  socket.on('disconnect', async () => {
+  socket.on('getFriends', async (userId) => {
     try {
-      const userId = socket.request.session.userId;
-      if (userId) {
-        await handleUserDisconnect(userId);
+      if (userId.startsWith('anon-')) {
+        return socket.emit('friendsUpdate', []);
       }
-      console.log(`[Socket.IO] Socket disconnected: ${socket.id}`);
+
+      const user = await User.findById(userId).populate('friends', '_id username');
+      if (!user) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
+
+      socket.emit('friendsUpdate', user.friends.map(f => f._id.toString()));
+      console.log(`[Socket.IO] Friends list sent to ${userId}`);
     } catch (err) {
-      console.error('[Socket.IO] Disconnect error:', err.message);
+      console.error('[Socket.IO] GetFriends error:', err.message);
+      socket.emit('error', { msg: 'Failed to fetch friends' });
     }
+  });
+
+  socket.on('disconnect', async () => {
+    const userId = socket.request.session.userId;
+    if (userId) {
+      await handleUserDisconnect(userId);
+    }
+    console.log(`[Socket.IO] Socket disconnected: ${socket.id}`);
   });
 });
 
 // Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`[Server] Server running on port ${PORT}`);
+  console.log(`[Server] Running on port ${PORT}`);
+});
+
+// Error handling for server
+server.on('error', (err) => {
+  console.error('[Server] Server error:', err.message);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught Exception:', err.message);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
 });
