@@ -538,8 +538,7 @@ const ChatWindow = () => {
               initial="hidden"
               animate="visible"
               exit="hidden"
-              className={`flex flex-col flex-grow ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'}`}
-            >
+              className={`flex flex-col ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'}`} style={{ height: 'calc(116vh - 200px)' }}            >
               <div className={`flex items-center justify-between border-b ${isDarkMode ? 'border-gray-600' : 'border-gray-400'} p-4`}>
                 <div className="flex items-center space-x-2">
                   <motion.button
