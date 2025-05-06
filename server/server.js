@@ -444,6 +444,108 @@ io.on('connection', (socket) => {
     io.to(receiver).emit('userStoppedTyping', { sender });
   });
 
+  socket.on('voice-call-offer', async ({ receiverId, offer, senderId }) => {
+    try {
+      if (!senderId || !receiverId || !offer) {
+        return socket.emit('error', { msg: 'Missing call offer data' });
+      }
+
+      const senderExists = senderId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: senderId })
+        : await User.findById(senderId);
+      const receiverExists = receiverId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: receiverId })
+        : await User.findById(receiverId);
+
+      if (!senderExists || !receiverExists) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
+
+      const receiverUser = receiverId.startsWith('anon-') ? null : await User.findById(receiverId);
+      if (receiverUser?.blockedUsers.includes(senderId)) {
+        return socket.emit('error', { msg: 'You are blocked by this user' });
+      }
+
+      io.to(receiverId).emit('voice-call-offer', { offer, from: senderId });
+      console.log(`[Socket.IO] Voice call offer sent from ${senderId} to ${receiverId}`);
+    } catch (err) {
+      console.error('[Socket.IO] VoiceCallOffer error:', err.message);
+      socket.emit('error', { msg: 'Failed to send call offer' });
+    }
+  });
+
+  socket.on('voice-call-answer', async ({ receiverId, answer, senderId }) => {
+    try {
+      if (!senderId || !receiverId || !answer) {
+        return socket.emit('error', { msg: 'Missing call answer data' });
+      }
+
+      const senderExists = senderId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: senderId })
+        : await User.findById(senderId);
+      const receiverExists = receiverId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: receiverId })
+        : await User.findById(receiverId);
+
+      if (!senderExists || !receiverExists) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
+
+      io.to(receiverId).emit('voice-call-answer', { answer, from: senderId });
+      console.log(`[Socket.IO] Voice call answer sent from ${senderId} to ${receiverId}`);
+    } catch (err) {
+      console.error('[Socket.IO] VoiceCallAnswer error:', err.message);
+      socket.emit('error', { msg: 'Failed to send call answer' });
+    }
+  });
+
+  socket.on('ice-candidate', async ({ receiverId, candidate }) => {
+    try {
+      if (!receiverId || !candidate) {
+        return socket.emit('error', { msg: 'Missing ICE candidate data' });
+      }
+
+      const receiverExists = receiverId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: receiverId })
+        : await User.findById(receiverId);
+
+      if (!receiverExists) {
+        return socket.emit('error', { msg: 'Receiver not found' });
+      }
+
+      io.to(receiverId).emit('ice-candidate', { candidate });
+      console.log(`[Socket.IO] ICE candidate sent to ${receiverId}`);
+    } catch (err) {
+      console.error('[Socket.IO] IceCandidate error:', err.message);
+      socket.emit('error', { msg: 'Failed to send ICE candidate' });
+    }
+  });
+
+  socket.on('end-call', async ({ receiverId, senderId }) => {
+    try {
+      if (!senderId || !receiverId) {
+        return socket.emit('error', { msg: 'Missing end call data' });
+      }
+
+      const senderExists = senderId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: senderId })
+        : await User.findById(senderId);
+      const receiverExists = receiverId.startsWith('anon-')
+        ? await AnonymousSession.findOne({ anonymousId: receiverId })
+        : await User.findById(receiverId);
+
+      if (!senderExists || !receiverExists) {
+        return socket.emit('error', { msg: 'User not found' });
+      }
+
+      io.to(receiverId).emit('end-call', { from: senderId });
+      console.log(`[Socket.IO] End call signal sent from ${senderId} to ${receiverId}`);
+    } catch (err) {
+      console.error('[Socket.IO] EndCall error:', err.message);
+      socket.emit('error', { msg: 'Failed to end call' });
+    }
+  });
+
   socket.on('clearChatHistory', async ({ userId, targetId }) => {
     try {
       await Message.deleteMany({
