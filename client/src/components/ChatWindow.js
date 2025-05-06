@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus, FaTrash, FaMicrophone, FaStop, FaPlay, FaTimes } from 'react-icons/fa';
+import { FaPaperPlane, FaUser, FaUserSecret, FaArrowLeft, FaEllipsisV, FaBan, FaUserPlus, FaFlag, FaUnlock, FaSun, FaMoon, FaUserMinus, FaTrash, FaMicrophone, FaStop, FaPlay, FaTimes, FaPhone, FaPhoneSlash } from 'react-icons/fa';
 import Navbar from './Navbar';
 import UserList from './UserList';
 import MessageActions from './MessageActions';
@@ -15,6 +15,7 @@ const ChatWindow = () => {
   const [users, setUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [error, setError] = useState('');
+  const [statusType, setStatusType] = useState('info'); // success, error, info
   const [typingUser, setTypingUser] = useState(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState([]);
@@ -25,6 +26,9 @@ const ChatWindow = () => {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [backCount, setBackCount] = useState(0);
   const [friends, setFriends] = useState([]);
+  const [callStatus, setCallStatus] = useState('idle'); // idle, ringing, active, declined
+  const [incomingCall, setIncomingCall] = useState(null); // { from, offer }
+  const [iceServers, setIceServers] = useState([{ urls: 'stun:stun.l.google.com:19302' }]);
   const isAnonymous = !!localStorage.getItem('anonymousId');
   const userId = isAnonymous ? localStorage.getItem('anonymousId') : JSON.parse(localStorage.getItem('user'))?.id;
   const username = isAnonymous ? localStorage.getItem('anonymousUsername') : JSON.parse(localStorage.getItem('user'))?.username;
@@ -34,12 +38,50 @@ const ChatWindow = () => {
   const longPressTimer = useRef(null);
   const hoverTimeout = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const remoteAudioRef = useRef(null);
+  const callTimeoutRef = useRef(null);
 
   // Voice recording state
   const [recordingStatus, setRecordingStatus] = useState('inactive');
   const [mediaBlobUrl, setMediaBlobUrl] = useState(null);
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
+
+  // Fetch TURN server credentials
+  useEffect(() => {
+    const fetchIceServers = async () => {
+      try {
+        const apiKey = process.env.REACT_APP_TURN_API_KEY;
+        if (!apiKey) {
+          throw new Error('TURN API key is missing');
+        }
+        const response = await fetch(
+          `https://chatifyzone.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`
+        );
+        if (!response.ok) {
+          throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        const servers = await response.json();
+        setIceServers([
+          { urls: 'stun:stun.l.google.com:19302' },
+          ...servers
+        ]);
+        console.log('[WebRTC] ICE servers fetched:', servers);
+      } catch (err) {
+        console.error('[WebRTC] Failed to fetch TURN credentials:', err.message);
+        setError('Failed to load TURN server credentials. Using STUN only.');
+        setStatusType('error');
+        setTimeout(() => {
+          setError('');
+          setStatusType('info');
+        }, 5000);
+      }
+    };
+
+    fetchIceServers();
+  }, []);
 
   useEffect(() => {
     if (!userId || !username) {
@@ -144,8 +186,12 @@ const ChatWindow = () => {
 
     socket.on('error', ({ msg }) => {
       setError(msg);
+      setStatusType('error');
       console.error('Socket error:', msg);
-      setTimeout(() => setError(''), 3000);
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
     });
 
     socket.on('blockedUsersUpdate', (blockedList) => {
@@ -158,23 +204,86 @@ const ChatWindow = () => {
       setFriends(validFriends);
     });
 
-    socket.on('actionResponse', ({ type, success, msg }) => {
-      setError(success ? '' : msg);
-      setTimeout(() => setError(''), 3000);
-      if (success && selectedUserId) {
-        if (type === 'block') {
-          setBlockedUsers((prev) => [...prev, selectedUserId.toString()]);
-        } else if (type === 'unblock') {
-          setBlockedUsers((prev) => prev.filter((id) => id !== selectedUserId.toString()));
-        } else if (type === 'acceptFriendRequest') {
-          setFriends((prev) => [...prev, selectedUserId.toString()]);
-        } else if (type === 'unfriend') {
-          setFriends((prev) => prev.filter((id) => id !== selectedUserId.toString()));
-        } else if (type === 'sendFriendRequest') {
-          setError('');
+    socket.on('voice-call-offer', ({ offer, from }) => {
+      if (callStatus === 'idle') {
+        setIncomingCall({ from, offer });
+        setCallStatus('ringing');
+        setError(`Incoming call from ${getUsername(from)}`);
+        setStatusType('info');
+        console.log('[WebRTC] Received call offer from:', from);
+
+        // Set a timeout for unanswered calls (30 seconds)
+        callTimeoutRef.current = setTimeout(() => {
+          if (callStatus === 'ringing') {
+            setIncomingCall(null);
+            setCallStatus('idle');
+            setError('Call timed out');
+            setStatusType('error');
+            socketRef.current.emit('end-call', { receiverId: from, senderId: userId });
+            setTimeout(() => {
+              setError('');
+              setStatusType('info');
+            }, 3000);
+            console.log('[WebRTC] Call offer timed out for:', from);
+          }
+        }, 30000);
+      } else {
+        console.log('[WebRTC] Ignored call offer from:', from, 'due to callStatus:', callStatus);
+      }
+    });
+
+    socket.on('voice-call-answer', async ({ answer, from }) => {
+      if (from === selectedUserId && callStatus === 'ringing') {
+        clearTimeout(callTimeoutRef.current);
+        await handleReceiveAnswer(answer);
+        setCallStatus('active');
+        setError('Connected');
+        setStatusType('success');
+        console.log('[WebRTC] Call answered by:', from);
+      }
+    });
+
+    socket.on('ice-candidate', async ({ candidate }) => {
+      if (peerConnectionRef.current) {
+        try {
+          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log('[WebRTC] Added ICE candidate:', candidate);
+        } catch (error) {
+          console.error('[WebRTC] Error adding ICE candidate:', error);
         }
       }
-      setIsDropdownOpen(false);
+    });
+
+    socket.on('end-call', ({ from }) => {
+      clearTimeout(callTimeoutRef.current);
+      if (from === (incomingCall?.from || selectedUserId)) {
+        if (callStatus === 'ringing') {
+          setError('Call Declined');
+          setStatusType('error');
+          setTimeout(() => {
+            setError('');
+            setStatusType('info');
+          }, 3000);
+        }
+        endCall();
+        console.log('[WebRTC] Call ended by:', from);
+      }
+    });
+
+    socket.on('callStatusUpdate', ({ status, from }) => {
+      if (from === (incomingCall?.from || selectedUserId)) {
+        setError(status === 'accepted' ? 'Connected' : 'Call Declined');
+        setStatusType(status === 'accepted' ? 'success' : 'error');
+        setTimeout(() => {
+          setError('');
+          setStatusType('info');
+        }, 3000);
+        if (status === 'declined') {
+          setCallStatus('idle');
+          setIncomingCall(null);
+        }
+        console.log('[WebRTC] Call status updated:', status, 'from:', from);
+      }
     });
 
     if (!isAnonymous) {
@@ -200,6 +309,7 @@ const ChatWindow = () => {
         };
       } catch (err) {
         setError('Failed to access microphone');
+        setStatusType('error');
         console.error('MediaRecorder setup error:', err);
       }
     };
@@ -225,9 +335,11 @@ const ChatWindow = () => {
       socket.disconnect();
       window.removeEventListener('popstate', handlePopState);
       clearTimeout(typingTimeoutRef.current);
+      clearTimeout(callTimeoutRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
+      endCall();
     };
   }, [userId, username, isAnonymous]);
 
@@ -257,6 +369,260 @@ const ChatWindow = () => {
     }
   }, [selectedUserId, messages, userId]);
 
+  const checkMicrophonePermission = async () => {
+    try {
+      const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+      if (permissionStatus.state === 'denied') {
+        throw new Error('Microphone access denied. Please enable it in your browser settings.');
+      }
+      return permissionStatus.state === 'granted';
+    } catch (error) {
+      console.error('[WebRTC] Permission check error:', error);
+      setError(error.message);
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 5000);
+      return false;
+    }
+  };
+
+  const startCall = async () => {
+    if (!selectedUserId) {
+      setError('Please select a user to call');
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
+      return;
+    }
+    if (blockedUsers.includes(selectedUserId)) {
+      setError('You have blocked this user');
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
+      return;
+    }
+    if (callStatus !== 'idle') {
+      setError('A call is already in progress');
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
+      return;
+    }
+    try {
+      const hasPermission = await checkMicrophonePermission();
+      if (!hasPermission) {
+        throw new Error('Microphone permission required to start a call.');
+      }
+
+      localStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('[WebRTC] Local stream acquired:', localStreamRef.current.getAudioTracks());
+
+      peerConnectionRef.current = new RTCPeerConnection({ iceServers });
+
+      localStreamRef.current.getTracks().forEach((track) => {
+        peerConnectionRef.current.addTrack(track, localStreamRef.current);
+        console.log('[WebRTC] Added track:', track);
+      });
+
+      peerConnectionRef.current.ontrack = (event) => {
+        if (event.streams[0] && remoteAudioRef.current) {
+          console.log('[WebRTC] Remote stream received:', event.streams[0]);
+          remoteAudioRef.current.srcObject = event.streams[0];
+        } else {
+          console.warn('[WebRTC] No remote stream or audio element');
+        }
+      };
+
+      peerConnectionRef.current.onicecandidate = (event) => {
+        if (event.candidate) {
+          socketRef.current.emit('ice-candidate', { receiverId: selectedUserId, candidate: event.candidate });
+          console.log('[WebRTC] Sent ICE candidate:', event.candidate);
+        }
+      };
+
+      peerConnectionRef.current.oniceconnectionstatechange = () => {
+        console.log('[WebRTC] ICE connection state:', peerConnectionRef.current.iceConnectionState);
+        if (peerConnectionRef.current.iceConnectionState === 'failed') {
+          setError('Call connection failed. Please try again.');
+          setStatusType('error');
+          setTimeout(() => {
+            setError('');
+            setStatusType('info');
+          }, 5000);
+          endCall();
+        }
+      };
+
+      const offer = await peerConnectionRef.current.createOffer();
+      await peerConnectionRef.current.setLocalDescription(offer);
+      console.log('[WebRTC] Offer created:', offer);
+      socketRef.current.emit('voice-call-offer', { receiverId: selectedUserId, offer, senderId: userId });
+      setCallStatus('ringing');
+      setError(`Calling ${getUsername(selectedUserId)}...`);
+      setStatusType('info');
+    } catch (error) {
+      setError('Failed to start call: ' + error.message);
+      setStatusType('error');
+      console.error('[WebRTC] Error starting call:', error);
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 5000);
+      endCall();
+    }
+  };
+
+  const acceptCall = async () => {
+    if (!incomingCall) return;
+    try {
+      clearTimeout(callTimeoutRef.current);
+      const { offer, from } = incomingCall;
+
+      // Switch to the caller's chat
+      setSelectedUserId(from);
+
+      const hasPermission = await checkMicrophonePermission();
+      if (!hasPermission) {
+        throw new Error('Microphone permission required to accept a call.');
+      }
+
+      peerConnectionRef.current = new RTCPeerConnection({ iceServers });
+
+      localStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('[WebRTC] Local stream acquired for offer:', localStreamRef.current.getAudioTracks());
+
+      localStreamRef.current.getTracks().forEach((track) => {
+        peerConnectionRef.current.addTrack(track, localStreamRef.current);
+        console.log('[WebRTC] Added track for offer:', track);
+      });
+
+      peerConnectionRef.current.ontrack = (event) => {
+        if (event.streams[0] && remoteAudioRef.current) {
+          console.log('[WebRTC] Remote stream received for offer:', event.streams[0]);
+          remoteAudioRef.current.srcObject = event.streams[0];
+        } else {
+          console.warn('[WebRTC] No remote stream or audio element for offer');
+        }
+      };
+
+      peerConnectionRef.current.onicecandidate = (event) => {
+        if (event.candidate) {
+          socketRef.current.emit('ice-candidate', { receiverId: from, candidate: event.candidate });
+          console.log('[WebRTC] Sent ICE candidate for offer:', event.candidate);
+        }
+      };
+
+      peerConnectionRef.current.oniceconnectionstatechange = () => {
+        console.log('[WebRTC] ICE connection state for offer:', peerConnectionRef.current.iceConnectionState);
+        if (peerConnectionRef.current.iceConnectionState === 'failed') {
+          setError('Call connection failed. Please try again.');
+          setStatusType('error');
+          setTimeout(() => {
+            setError('');
+            setStatusType('info');
+          }, 5000);
+          endCall();
+        }
+      };
+
+      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+      console.log('[WebRTC] Set remote description:', offer);
+      const answer = await peerConnectionRef.current.createAnswer();
+      await peerConnectionRef.current.setLocalDescription(answer);
+      console.log('[WebRTC] Answer created:', answer);
+      socketRef.current.emit('voice-call-answer', { receiverId: from, answer, senderId: userId });
+      socketRef.current.emit('callStatusUpdate', { status: 'accepted', from: userId, receiverId: from });
+      setCallStatus('active');
+      setIncomingCall(null);
+      setError('Connected');
+      setStatusType('success');
+    } catch (error) {
+      setError('Failed to accept call: ' + error.message);
+      setStatusType('error');
+      console.error('[WebRTC] Error accepting call:', error);
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 5000);
+      endCall();
+    }
+  };
+
+  const declineCall = () => {
+    if (!incomingCall) return;
+    clearTimeout(callTimeoutRef.current);
+    socketRef.current.emit('end-call', { receiverId: incomingCall.from, senderId: userId });
+    socketRef.current.emit('callStatusUpdate', { status: 'declined', from: userId, receiverId: incomingCall.from });
+    setIncomingCall(null);
+    setCallStatus('declined');
+    setError('Call Declined');
+    setStatusType('error');
+    setTimeout(() => {
+      setError('');
+      setStatusType('info');
+      setCallStatus('idle');
+    }, 3000);
+    console.log('[WebRTC] Call declined for:', incomingCall.from);
+  };
+
+  const handleReceiveAnswer = async (answer) => {
+    try {
+      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+      console.log('[WebRTC] Set remote description for answer:', answer);
+    } catch (error) {
+      setError('Failed to handle call answer: ' + error.message);
+      setStatusType('error');
+      console.error('[WebRTC] Error handling answer:', error);
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 5000);
+      endCall();
+    }
+  };
+
+  const endCall = () => {
+    clearTimeout(callTimeoutRef.current);
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+      console.log('[WebRTC] Peer connection closed');
+    }
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+      console.log('[WebRTC] Local stream stopped');
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+      console.log('[WebRTC] Remote audio cleared');
+    }
+    if (selectedUserId && callStatus !== 'declined') {
+      socketRef.current.emit('end-call', { receiverId: selectedUserId, senderId: userId });
+      socketRef.current.emit('callStatusUpdate', { status: 'declined', from: userId, receiverId: selectedUserId });
+      setError('Call Declined');
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
+    }
+    setCallStatus('idle');
+    setIncomingCall(null);
+    if (!error) {
+      setError('');
+      setStatusType('info');
+    }
+  };
+
   const updateUnreadMessages = (msgList) => {
     const unread = {};
     msgList.forEach((msg) => {
@@ -271,12 +637,20 @@ const ChatWindow = () => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedUserId) {
       setError('Please type a message and select a user');
-      setTimeout(() => setError(''), 3000);
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
       return;
     }
     if (blockedUsers.includes(selectedUserId)) {
       setError('You have blocked this user');
-      setTimeout(() => setError(''), 3000);
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
       return;
     }
     const messageData = { sender: userId, receiver: selectedUserId, content: newMessage, type: 'text' };
@@ -287,12 +661,20 @@ const ChatWindow = () => {
   const handleSendVoiceMessage = async () => {
     if (!mediaBlobUrl || !selectedUserId) {
       setError('No recording or user selected');
-      setTimeout(() => setError(''), 3000);
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
       return;
     }
     if (blockedUsers.includes(selectedUserId)) {
       setError('You have blocked this user');
-      setTimeout(() => setError(''), 3000);
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
       return;
     }
 
@@ -334,11 +716,15 @@ const ChatWindow = () => {
       URL.revokeObjectURL(mediaBlobUrl);
     } catch (err) {
       setError('Failed to send voice message: ' + err.message);
+      setStatusType('error');
       console.error('[ChatWindow] Voice message error:', err, {
         response: err.response?.data,
         status: err.response?.status,
       });
-      setTimeout(() => setError(''), 5000);
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 5000);
     }
   };
 
@@ -452,12 +838,20 @@ const ChatWindow = () => {
   const handleSendFriendRequest = () => {
     if (!selectedUserId) {
       setError('Please select a user to send a friend request');
-      setTimeout(() => setError(''), 3000);
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
       return;
     }
     if (isAnonymous) {
       setError('Anonymous users cannot send friend requests');
-      setTimeout(() => setError(''), 3000);
+      setStatusType('error');
+      setTimeout(() => {
+        setError('');
+        setStatusType('info');
+      }, 3000);
       return;
     }
     socketRef.current.emit('sendFriendRequest', { userId, friendId: selectedUserId });
@@ -538,7 +932,8 @@ const ChatWindow = () => {
               initial="hidden"
               animate="visible"
               exit="hidden"
-              className={`flex flex-col ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'}`} style={{ height: 'calc(116vh - 200px)' }}            >
+              className={`flex flex-col flex-grow ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'}`}
+            >
               <div className={`flex items-center justify-between border-b ${isDarkMode ? 'border-gray-600' : 'border-gray-400'} p-4`}>
                 <div className="flex items-center space-x-2">
                   <motion.button
@@ -555,14 +950,22 @@ const ChatWindow = () => {
                   </span>
                 </div>
                 <div className="relative flex items-center space-x-2">
-                  <motion.div whileHover={{ scale: 1.1 }}>
-                    <button
-                      onClick={() => setIsDarkMode(!isDarkMode)}
-                      className={`p-2 rounded-full ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-300'}`}
-                    >
-                      {isDarkMode ? <FaSun className="text-yellow-400" /> : <FaMoon className="text-gray-700" />}
-                    </button>
-                  </motion.div>
+                  <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    onClick={() => setIsDarkMode(!isDarkMode)}
+                    className={`p-2 rounded-full ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-300'}`}
+                  >
+                    {isDarkMode ? <FaSun className="text-yellow-400" /> : <FaMoon className="text-gray-700" />}
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={callStatus === 'active' ? endCall : startCall}
+                    className={`${callStatus === 'active' ? 'bg-red-600' : callStatus === 'ringing' ? 'bg-yellow-600' : 'bg-green-600'} text-white p-2 rounded-full`}
+                    disabled={isBlocked || callStatus === 'ringing'}
+                  >
+                    {callStatus === 'active' ? <FaPhoneSlash className="text-lg" /> : <FaPhone className="text-lg" />}
+                  </motion.button>
                   {isAnonymous && (
                     <span className={`text-yellow-400 text-xs sm:text-sm ${isDarkMode ? 'bg-yellow-900' : 'bg-yellow-200'} bg-opacity-30 px-2 py-1 rounded-full`}>
                       Anonymous Mode
@@ -735,13 +1138,37 @@ const ChatWindow = () => {
                   </motion.p>
                 )}
                 {error && (
-                  <p className={`text-red-400 text-center text-sm sm:text-base ${isDarkMode ? 'bg-red-900' : 'bg-red-200'} bg-opacity-20 p-2 rounded`}>
-                    {error} ⚠️
+                  <p
+                    className={`text-center text-sm sm:text-base ${
+                      statusType === 'success'
+                        ? isDarkMode
+                          ? 'bg-green-900 text-green-400'
+                          : 'bg-green-200 text-green-600'
+                        : statusType === 'error'
+                          ? isDarkMode
+                            ? 'bg-red-900 text-red-400'
+                            : 'bg-red-200 text-red-600'
+                          : isDarkMode
+                            ? 'bg-gray-900 text-gray-400'
+                            : 'bg-gray-200 text-gray-600'
+                    } bg-opacity-20 p-2 rounded`}
+                  >
+                    {error} {statusType === 'error' ? '⚠️' : statusType === 'success' ? '📞' : ''}
+                  </p>
+                )}
+                {callStatus === 'active' && !error && (
+                  <p
+                    className={`text-center text-sm sm:text-base ${
+                      isDarkMode ? 'bg-green-900 text-green-400' : 'bg-green-200 text-green-600'
+                    } bg-opacity-20 p-2 rounded`}
+                  >
+                    Connected 📞
                   </p>
                 )}
               </div>
 
               <div className={`p-4 border-t ${isDarkMode ? 'border-gray-600' : 'border-gray-400'}`}>
+                <audio ref={remoteAudioRef} autoPlay muted={false} />
                 {recordingStatus !== 'recording' && !mediaBlobUrl && (
                   <form onSubmit={handleSendMessage} className="flex items-center gap-2">
                     <motion.div
@@ -816,6 +1243,40 @@ const ChatWindow = () => {
                     </motion.button>
                   </div>
                 )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {incomingCall && callStatus === 'ringing' && (
+            <motion.div
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              variants={modalVariants}
+              className={`fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50`}
+            >
+              <div className={`p-6 rounded-lg ${isDarkMode ? 'bg-gray-800 text-white' : 'bg-gray-200 text-black'} shadow-lg`}>
+                <p className="text-lg mb-4">Incoming call from {getUsername(incomingCall.from)}</p>
+                <div className="flex space-x-4">
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={acceptCall}
+                    className={`px-4 py-2 rounded ${isDarkMode ? 'bg-green-600 text-white' : 'bg-green-500 text-white'}`}
+                  >
+                    Accept
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={declineCall}
+                    className={`px-4 py-2 rounded ${isDarkMode ? 'bg-red-600 text-white' : 'bg-red-500 text-white'}`}
+                  >
+                    Decline
+                  </motion.button>
+                </div>
               </div>
             </motion.div>
           )}
