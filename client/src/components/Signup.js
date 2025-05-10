@@ -12,10 +12,9 @@ import {
   FaMoon,
   FaGoogle,
   FaApple,
-  FaFingerprint,
   FaTimes,
+  FaKey,
 } from 'react-icons/fa';
-import { startRegistration } from '@simplewebauthn/browser';
 import ReactMarkdown from 'react-markdown';
 import { Country, State } from 'country-state-city';
 import api from '../utils/api';
@@ -60,9 +59,11 @@ const Signup = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [signupMethod, setSignupMethod] = useState('password');
   const [isLoading, setIsLoading] = useState(false);
-  const [isWebAuthnSupported, setIsWebAuthnSupported] = useState(false);
   const [states, setStates] = useState([]);
-  const [isRegistrationEnabled, setIsRegistrationEnabled] = useState(true); // New state for registration status
+  const [isRegistrationEnabled, setIsRegistrationEnabled] = useState(true);
+  const [otp, setOtp] = useState('');
+  const [showOtpForm, setShowOtpForm] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const navigate = useNavigate();
 
   // Generate age options (18 to 120)
@@ -83,28 +84,9 @@ const Signup = () => {
     console.log('[Signup] States updated for country', country, ':', newStates);
   }, [country]);
 
-  // Check WebAuthn support and registration status on component mount
+  // Check registration status on component mount
   useEffect(() => {
-    console.log('[Signup] Checking WebAuthn support and registration status');
-    const checkWebAuthnSupport = async () => {
-      try {
-        if (window.PublicKeyCredential) {
-          const isSupported = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-          console.log('[Signup] WebAuthn support check result:', isSupported);
-          setIsWebAuthnSupported(isSupported);
-          if (!isSupported) {
-            console.warn('[Signup] WebAuthn is not supported on this device');
-          }
-        } else {
-          console.warn('[Signup] WebAuthn API not available in this browser');
-          setIsWebAuthnSupported(false);
-        }
-      } catch (err) {
-        console.error('[Signup] Error checking WebAuthn support:', err.message);
-        setIsWebAuthnSupported(false);
-      }
-    };
-
+    console.log('[Signup] Checking registration status');
     const checkRegistrationStatus = async () => {
       try {
         const response = await api.get('/admin/settings/public');
@@ -119,134 +101,21 @@ const Signup = () => {
       }
     };
 
-    checkWebAuthnSupport();
     checkRegistrationStatus();
   }, []);
 
-  const handleFingerprintSignup = async () => {
-    if (!isRegistrationEnabled) {
-      setError('Registration is currently disabled. Please contact support.');
-      return;
+  // Handle resend OTP cooldown
+  useEffect(() => {
+    let timer;
+    if (resendCooldown > 0) {
+      timer = setInterval(() => {
+        setResendCooldown((prev) => prev - 1);
+      }, 1000);
     }
-    console.log('[Fingerprint Signup] Starting fingerprint signup process');
-    setError('');
-    setSuccess(false);
-    setIsLoading(true);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
-    try {
-      if (!isWebAuthnSupported) {
-        setError('Fingerprint authentication is not supported on this device or browser.');
-        setIsLoading(false);
-        return;
-      }
-
-      if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        setError('Please enter a valid email address');
-        setIsLoading(false);
-        return;
-      }
-      if (!username.trim() || username.length < 3 || username.length > 30) {
-        setError('Please enter a valid username (3-30 characters)');
-        setIsLoading(false);
-        return;
-      }
-      if (!country) {
-        setError('Please select a country');
-        setIsLoading(false);
-        return;
-      }
-      if (states.length > 0 && !state) {
-        setError('Please select a state');
-        setIsLoading(false);
-        return;
-      }
-      if (!age || age < 18 || age > 120) {
-        setError('You must be 18 or older to sign up');
-        setIsLoading(false);
-        return;
-      }
-      if (!gender) {
-        setError('Please select a gender');
-        setIsLoading(false);
-        return;
-      }
-      if (!termsAccepted) {
-        setError('You must agree to the Terms and Conditions');
-        setIsLoading(false);
-        return;
-      }
-
-      let beginResponse;
-      try {
-        beginResponse = await api.post('/auth/webauthn/register/begin', { email, username, country, state, age, gender });
-      } catch (apiError) {
-        setError(apiError.response?.data?.msg || 'Failed to start fingerprint registration. Please check your connection and try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      const { publicKey, challenge, userID, email: responseEmail, username: responseUsername } = beginResponse.data;
-      if (!publicKey || !publicKey.rp || !publicKey.user || !publicKey.challenge) {
-        setError('Invalid server response: missing or malformed WebAuthn options');
-        setIsLoading(false);
-        return;
-      }
-      if (!challenge || !userID || responseEmail !== email || responseUsername !== username) {
-        setError('Server returned incorrect email or username');
-        setIsLoading(false);
-        return;
-      }
-
-      let credential;
-      try {
-        credential = await startRegistration(publicKey);
-      } catch (webauthnError) {
-        if (webauthnError.name === 'NotSupportedError') {
-          setError('Your device does not support fingerprint authentication.');
-        } else if (webauthnError.name === 'NotAllowedError') {
-          setError('Fingerprint registration was cancelled or not allowed. Please try again.');
-        } else if (webauthnError.name === 'SecurityError') {
-          setError('Security error: Ensure you’re using a secure connection (HTTPS) and try again.');
-        } else if (webauthnError.name === 'InvalidStateError') {
-          setError('A credential already exists for this device. Try logging in or using a different device.');
-        } else {
-          setError(`Failed to register fingerprint: ${webauthnError.message}. Please try again.`);
-        }
-        setIsLoading(false);
-        return;
-      }
-
-      let completeResponse;
-      try {
-        completeResponse = await api.post('/auth/webauthn/register/complete', {
-          email,
-          username,
-          country,
-          state,
-          age,
-          gender,
-          credential,
-          challenge,
-          userID,
-        });
-      } catch (completeError) {
-        setError(completeError.response?.data?.msg || 'Failed to complete fingerprint registration. Please try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      localStorage.setItem('token', completeResponse.data.token);
-      localStorage.setItem('user', JSON.stringify(completeResponse.data.user));
-      api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
-
-      setSuccess(true);
-      setTimeout(() => navigate('/'), 2000);
-    } catch (unexpectedError) {
-      setError('An unexpected error occurred during fingerprint signup. Please try again.');
-      setIsLoading(false);
-    }
-  };
-
+  // Handle initial signup form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!isRegistrationEnabled) {
@@ -300,14 +169,63 @@ const Signup = () => {
     }
 
     try {
-      const { data } = await api.post('/auth/register', { email, username, password, country, state, age, gender });
+      await api.post('/auth/register/init', {
+        email,
+        username,
+        password,
+        country,
+        state,
+        age,
+        gender,
+      });
+      setShowOtpForm(true);
+      setResendCooldown(60); // 60-second cooldown for resend OTP
+      setIsLoading(false);
+    } catch (err) {
+      setError(err.response?.data?.msg || 'Failed to initiate signup. Please try again.');
+      setIsLoading(false);
+    }
+  };
+
+  // Handle OTP verification
+  const handleOtpSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess(false);
+    setIsLoading(true);
+
+    if (!otp.trim()) {
+      setError('Please enter the OTP');
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const { data } = await api.post('/auth/register/verify-otp', { email, otp });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
       setSuccess(true);
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
-      setError(err.response?.data?.msg || 'Password registration failed. Please try again.');
+      setError(err.response?.data?.msg || 'Invalid or expired OTP. Please try again.');
+      setIsLoading(false);
+    }
+  };
+
+  // Handle OTP resend
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0) return;
+    setError('');
+    setIsLoading(true);
+
+    try {
+      await api.post('/auth/register/resend-otp', { email });
+      setResendCooldown(60);
+      setError('OTP resent successfully. Check your email.');
+    } catch (err) {
+      setError(err.response?.data?.msg || 'Failed to resend OTP. Please try again.');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -317,7 +235,7 @@ const Signup = () => {
       setError('Registration is currently disabled. Please contact support.');
       return;
     }
-    setError('Google signup is not implemented. Please use email and password or fingerprint.');
+    setError('Google signup is not implemented. Please use email and password.');
   };
 
   const handleAppleSignup = () => {
@@ -325,7 +243,7 @@ const Signup = () => {
       setError('Registration is currently disabled. Please contact support.');
       return;
     }
-    setError('Apple signup is not implemented. Please use email and password or fingerprint.');
+    setError('Apple signup is not implemented. Please use email and password.');
   };
 
   const containerVariants = {
@@ -353,7 +271,7 @@ const Signup = () => {
     visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } },
   };
 
-  // Terms and Conditions content
+  // Terms and Conditions content (unchanged)
   const termsAndConditions = `
 # Terms and Conditions
 
@@ -460,242 +378,286 @@ By checking the box during signup, you acknowledge that you have read, understoo
           <motion.div variants={formVariants} className="w-full lg:w-1/2 flex items-start justify-center px-4 sm:px-0">
             <div className={`bg-opacity-80 backdrop-blur-lg p-6 sm:p-8 rounded-xl shadow-2xl border ${isDarkMode ? 'bg-black border-gray-800' : 'bg-gray-200 border-gray-400'} w-full max-w-md`}>
               <h2 className={`text-2xl sm:text-3xl font-bold mb-6 sm:mb-8 text-center ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                Create Your Account
+                {showOtpForm ? 'Verify OTP' : 'Create Your Account'}
               </h2>
-              <div className="flex justify-center space-x-4 mb-6">
-                <button
-                  onClick={() => setSignupMethod('password')}
-                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={isLoading || !isRegistrationEnabled}
-                >
-                  Password
-                </button>
-                <button
-                  onClick={() => setSignupMethod('webauthn')}
-                  className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} ${(!isWebAuthnSupported || !isRegistrationEnabled) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={isLoading || !isWebAuthnSupported || !isRegistrationEnabled}
-                  title={!isWebAuthnSupported ? 'Fingerprint signup is not supported on this device' : !isRegistrationEnabled ? 'Registration is disabled' : ''}
-                >
-                  Fingerprint
-                </button>
-              </div>
-              <form onSubmit={handleSubmit} className="space-y-4 mb-4">
-                <div className="relative">
-                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                    <FaEnvelope className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="Your Email"
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      required
-                      disabled={isLoading || !isRegistrationEnabled}
-                    />
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                    <FaUser className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
-                    <input
-                      type="text"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder="Your Username"
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      required
-                      disabled={isLoading || !isRegistrationEnabled}
-                    />
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                    <select
-                      value={country}
-                      onChange={(e) => {
-                        setCountry(e.target.value);
-                        setState('');
-                        console.log('[Signup] Country selected:', e.target.value);
-                      }}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      required
+              {!showOtpForm ? (
+                <>
+                  <div className="flex justify-center space-x-4 mb-6">
+                    <button
+                      onClick={() => setSignupMethod('password')}
+                      className={`px-4 py-2 rounded-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                       disabled={isLoading || !isRegistrationEnabled}
                     >
-                      <option value="">Select Country</option>
-                      {countryList.map((c) => (
-                        <option key={c.iso2} value={c.iso2}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
+                      Password
+                    </button>
                   </div>
-                </div>
-                <div className="relative">
-                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                    <select
-                      value={state}
-                      onChange={(e) => {
-                        setState(e.target.value);
-                        console.log('[Signup] State selected:', e.target.value);
-                      }}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      disabled={isLoading || !isRegistrationEnabled}
-                    >
-                      <option value="">Select State</option>
-                      {states.length > 0 ? (
-                        states.map((s) => (
-                          <option key={s.iso2} value={s.name}>
-                            {s.name}
-                          </option>
-                        ))
-                      ) : (
-                        <option value="">No states available</option>
-                      )}
-                    </select>
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                    <select
-                      value={age}
-                      onChange={(e) => setAge(e.target.value)}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      required
-                      disabled={isLoading || !isRegistrationEnabled}
-                    >
-                      <option value="">Select Age</option>
-                      {ageOptions.map((ageValue) => (
-                        <option key={ageValue} value={ageValue}>
-                          {ageValue}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                    <select
-                      value={gender}
-                      onChange={(e) => setGender(e.target.value)}
-                      className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      required
-                      disabled={isLoading || !isRegistrationEnabled}
-                    >
-                      <option value="">Select Gender</option>
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                    </select>
-                  </div>
-                </div>
-                {signupMethod === 'password' && (
-                  <div className="relative">
-                    <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                      <FaLock className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
+                  <form onSubmit={handleSubmit} className="space-y-4 mb-4">
+                    <div className="relative">
+                      <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                        <FaEnvelope className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="Your Email"
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          required
+                          disabled={isLoading || !isRegistrationEnabled}
+                        />
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                        <FaUser className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
+                        <input
+                          type="text"
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value)}
+                          placeholder="Your Username"
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          required
+                          disabled={isLoading || !isRegistrationEnabled}
+                        />
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                        <select
+                          value={country}
+                          onChange={(e) => {
+                            setCountry(e.target.value);
+                            setState('');
+                            console.log('[Signup] Country selected:', e.target.value);
+                          }}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          required
+                          disabled={isLoading || !isRegistrationEnabled}
+                        >
+                          <option value="">Select Country</option>
+                          {countryList.map((c) => (
+                            <option key={c.iso2} value={c.iso2}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                        <select
+                          value={state}
+                          onChange={(e) => {
+                            setState(e.target.value);
+                            console.log('[Signup] State selected:', e.target.value);
+                          }}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          disabled={isLoading || !isRegistrationEnabled}
+                        >
+                          <option value="">Select State</option>
+                          {states.length > 0 ? (
+                            states.map((s) => (
+                              <option key={s.iso2} value={s.name}>
+                                {s.name}
+                              </option>
+                            ))
+                          ) : (
+                            <option value="">No states available</option>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                        <select
+                          value={age}
+                          onChange={(e) => setAge(e.target.value)}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          required
+                          disabled={isLoading || !isRegistrationEnabled}
+                        >
+                          <option value="">Select Age</option>
+                          {ageOptions.map((ageValue) => (
+                            <option key={ageValue} value={ageValue}>
+                              {ageValue}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                        <select
+                          value={gender}
+                          onChange={(e) => setGender(e.target.value)}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          required
+                          disabled={isLoading || !isRegistrationEnabled}
+                        >
+                          <option value="">Select Gender</option>
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                        </select>
+                      </div>
+                    </div>
+                    {signupMethod === 'password' && (
+                      <div className="relative">
+                        <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                          <FaLock className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
+                          <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="Your Password"
+                            className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            required
+                            disabled={isLoading || !isRegistrationEnabled}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center space-x-2">
                       <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Your Password"
-                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        type="checkbox"
+                        checked={termsAccepted}
+                        onChange={(e) => setTermsAccepted(e.target.checked)}
+                        className="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
                         required
                         disabled={isLoading || !isRegistrationEnabled}
+                        id="termsCheckbox"
+                      />
+                      <label htmlFor="termsCheckbox" className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                        I agree to the{' '}
+                        <button
+                          type="button"
+                          onClick={() => setShowTermsModal(true)}
+                          className="text-red-500 hover:underline"
+                        >
+                          Terms and Conditions
+                        </button>
+                      </label>
+                    </div>
+                    <AnimatePresence>
+                      {error && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="text-red-500 text-sm text-center"
+                        >
+                          {error}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                    <AnimatePresence>
+                      {success && (
+                        <motion.div
+                          variants={successVariants}
+                          initial="hidden"
+                          animate="visible"
+                          exit="hidden"
+                          className="text-green-500 text-sm text-center flex items-center justify-center space-x-2"
+                        >
+                          <FaCheckCircle />
+                          <span>Signup successful! Redirecting...</span>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                    {signupMethod === 'password' && (
+                      <button
+                        type="submit"
+                        className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        disabled={isLoading || success || !isRegistrationEnabled}
+                      >
+                        <span>{isLoading ? 'Submitting...' : 'Sign Up'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleGoogleSignup}
+                      className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      disabled={isLoading || !isRegistrationEnabled}
+                    >
+                      <FaGoogle />
+                      <span>Sign Up with Google</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAppleSignup}
+                      className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      disabled={isLoading || !isRegistrationEnabled}
+                    >
+                      <FaApple />
+                      <span>Sign Up with Apple</span>
+                    </button>
+                  </form>
+                  <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Already have an account?{' '}
+                    <a href="/login" className="text-red-500 hover:underline">
+                      Log in
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <form onSubmit={handleOtpSubmit} className="space-y-4 mb-4">
+                  <div className="relative">
+                    <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
+                      <FaKey className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
+                      <input
+                        type="text"
+                        value={otp}
+                        onChange={(e) => setOtp(e.target.value)}
+                        placeholder="Enter OTP"
+                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        required
+                        disabled={isLoading}
                       />
                     </div>
                   </div>
-                )}
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={termsAccepted}
-                    onChange={(e) => setTermsAccepted(e.target.checked)}
-                    className="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
-                    required
-                    disabled={isLoading || !isRegistrationEnabled}
-                    id="termsCheckbox"
-                  />
-                  <label htmlFor="termsCheckbox" className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    I agree to the{' '}
-                    <button
-                      type="button"
-                      onClick={() => setShowTermsModal(true)}
-                      className="text-red-500 hover:underline"
-                    >
-                      Terms and Conditions
-                    </button>
-                  </label>
-                </div>
-                <AnimatePresence>
-                  {error && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className="text-red-500 text-sm text-center"
-                    >
-                      {error}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                <AnimatePresence>
-                  {success && (
-                    <motion.div
-                      variants={successVariants}
-                      initial="hidden"
-                      animate="visible"
-                      exit="hidden"
-                      className="text-green-500 text-sm text-center flex items-center justify-center space-x-2"
-                    >
-                      <FaCheckCircle />
-                      <span>Signup successful! Redirecting...</span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                {signupMethod === 'password' && (
+                  <AnimatePresence>
+                    {error && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="text-red-500 text-sm text-center"
+                      >
+                        {error}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <AnimatePresence>
+                    {success && (
+                      <motion.div
+                        variants={successVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="hidden"
+                        className="text-green-500 text-sm text-center flex items-center justify-center space-x-2"
+                      >
+                        <FaCheckCircle />
+                        <span>Signup successful! Redirecting...</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                   <button
                     type="submit"
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    disabled={isLoading || success || !isRegistrationEnabled}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    disabled={isLoading || success}
                   >
-                    <span>{isLoading ? 'Signing Up...' : 'Sign Up Now'}</span>
+                    <span>{isLoading ? 'Verifying...' : 'Verify OTP'}</span>
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleGoogleSignup}
-                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={isLoading || !isRegistrationEnabled}
-                >
-                  <FaGoogle />
-                  <span>Sign Up with Google</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAppleSignup}
-                  className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={isLoading || !isRegistrationEnabled}
-                >
-                  <FaApple />
-                  <span>Sign Up with Apple</span>
-                </button>
-                {signupMethod === 'webauthn' && (
                   <button
                     type="button"
-                    onClick={handleFingerprintSignup}
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${(!isWebAuthnSupported || !isRegistrationEnabled) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    disabled={isLoading || !isWebAuthnSupported || !isRegistrationEnabled}
-                    title={!isWebAuthnSupported ? 'Fingerprint signup is not supported on this device' : !isRegistrationEnabled ? 'Registration is disabled' : ''}
+                    onClick={handleResendOtp}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-gray-700 text-white' : 'bg-gray-400 text-gray-900'} flex items-center justify-center space-x-2 ${resendCooldown > 0 || isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    disabled={resendCooldown > 0 || isLoading}
                   >
-                    <FaFingerprint />
-                    <span>{isLoading ? 'Processing...' : 'Sign Up with Fingerprint'}</span>
+                    <span>
+                      {resendCooldown > 0 ? `Resend OTP in ${resendCooldown}s` : 'Resend OTP'}
+                    </span>
                   </button>
-                )}
-              </form>
-              <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                Already have an account?{' '}
-                <a href="/login" className="text-red-500 hover:underline">
-                  Log in
-                </a>
-              </div>
+                </form>
+              )}
             </div>
           </motion.div>
         </div>
