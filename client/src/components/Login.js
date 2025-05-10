@@ -2,8 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaGoogle, FaApple, FaFingerprint } from 'react-icons/fa';
-import { startAuthentication } from '@simplewebauthn/browser';
+import { FaEnvelope, FaLock, FaArrowRight, FaCheckCircle, FaGoogle, FaApple } from 'react-icons/fa';
 import io from 'socket.io-client';
 import api from '../utils/api';
 import Navbar from './Navbar';
@@ -16,7 +15,6 @@ const Login = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [loginMethod, setLoginMethod] = useState('password');
   const [isLoading, setIsLoading] = useState(false);
-  const [isWebAuthnSupported, setIsWebAuthnSupported] = useState(false);
   const navigate = useNavigate();
 
   // Initialize Socket.IO
@@ -29,29 +27,9 @@ const Login = () => {
     reconnectionDelay: 1000,
   });
 
-  // Check WebAuthn support and handle logout event
+  // Handle logout event
   useEffect(() => {
-    console.log('[Login] Component mounted, checking WebAuthn support');
-    const checkWebAuthnSupport = async () => {
-      try {
-        console.log('[Login] Verifying WebAuthn availability');
-        if (window.PublicKeyCredential) {
-          const isSupported = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-          console.log('[Login] WebAuthn support check result:', isSupported);
-          setIsWebAuthnSupported(isSupported);
-          if (!isSupported) {
-            console.warn('[Login] WebAuthn is not supported on this device');
-          }
-        } else {
-          console.warn('[Login] WebAuthn API not available in this browser');
-          setIsWebAuthnSupported(false);
-        }
-      } catch (err) {
-        console.error('[Login] Error checking WebAuthn support:', err.message);
-        setIsWebAuthnSupported(false);
-      }
-    };
-    checkWebAuthnSupport();
+    console.log('[Login] Component mounted');
 
     // Handle logout event from server
     socket.on('logout', ({ reason }) => {
@@ -102,191 +80,6 @@ const Login = () => {
       socket.disconnect();
     };
   }, [navigate, socket]);
-
-  const handleBiometricLogin = async () => {
-    console.log('[Fingerprint Login] Starting fingerprint login process');
-    if (isLoading || success) {
-      console.warn('[Fingerprint Login] Login already in progress or completed, aborting');
-      return;
-    }
-    setError('');
-    setSuccess(false);
-    setIsLoading(true);
-
-    try {
-      // Step 1: Check WebAuthn support
-      console.log('[Fingerprint Login Step 1] Checking WebAuthn support');
-      if (!window.PublicKeyCredential) {
-        console.error('[Fingerprint Login Step 1 Error] WebAuthn not supported in this browser');
-        setError('Fingerprint authentication is not supported in this browser.');
-        setIsLoading(false);
-        return;
-      }
-      console.log('[Fingerprint Login Step 1] WebAuthn API available');
-      let isPlatformAuthenticatorAvailable;
-      try {
-        isPlatformAuthenticatorAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-        console.log('[Fingerprint Login Step 1] Platform authenticator availability:', isPlatformAuthenticatorAvailable);
-      } catch (platformError) {
-        console.error('[Fingerprint Login Step 1 Error] Failed to check platform authenticator:', platformError.message);
-        setError('Failed to verify fingerprint authentication support.');
-        setIsLoading(false);
-        return;
-      }
-      if (!isPlatformAuthenticatorAvailable) {
-        console.error('[Fingerprint Login Step 1 Error] Platform authenticator not available');
-        setError('Your device does not support fingerprint authentication.');
-        setIsLoading(false);
-        return;
-      }
-      console.log('[Fingerprint Login Step 1] WebAuthn support verified');
-
-      // Step 2: Validate input fields
-      console.log('[Fingerprint Login Step 2] Validating input fields:', { email });
-      if (!email.trim()) {
-        console.error('[Fingerprint Login Step 2 Error] Email is empty');
-        setError('Please enter your email address');
-        setIsLoading(false);
-        return;
-      }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        console.error('[Fingerprint Login Step 2 Error] Invalid email format');
-        setError('Please enter a valid email address');
-        setIsLoading(false);
-        return;
-      }
-      console.log('[Fingerprint Login Step 2] Input validation passed');
-
-      // Step 3: Send request to /webauthn/login/begin
-      console.log('[Fingerprint Login Step 3] Sending request to /auth/webauthn/login/begin:', { email });
-      let beginResponse;
-      try {
-        beginResponse = await api.post('/auth/webauthn/login/begin', { email });
-        console.log('[Fingerprint Login Step 3] Response from /auth/webauthn/login/begin:', beginResponse.data);
-      } catch (apiError) {
-        console.error('[Fingerprint Login Step 3 Error] Failed to fetch authentication options:', apiError.message);
-        console.error('[Fingerprint Login Step 3 Error] API error details:', {
-          status: apiError.response?.status,
-          data: apiError.response?.data,
-        });
-        setError(apiError.response?.data?.msg || 'Failed to initiate fingerprint login. Please check your connection and try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 4: Validate WebAuthn authentication options
-      console.log('[Fingerprint Login Step 4] Validating WebAuthn authentication options');
-      const { challenge, allowCredentials } = beginResponse.data;
-      console.log('[Fingerprint Login Step 4] Extracted options:', { challenge, allowCredentials });
-      if (!challenge || !allowCredentials) {
-        console.error('[Fingerprint Login Step 4 Error] Invalid authentication options:', beginResponse.data);
-        setError('Invalid server response: missing or malformed authentication options');
-        setIsLoading(false);
-        return;
-      }
-      console.log('[Fingerprint Login Step 4] WebAuthn options validation passed');
-
-      // Step 5: Start WebAuthn authentication
-      console.log('[Fingerprint Login Step 5] Starting WebAuthn authentication');
-      let credential;
-      try {
-        credential = await startAuthentication({
-          challenge,
-          allowCredentials,
-          rpId: 'chatify-10.vercel.app',
-          userVerification: 'required',
-        });
-        console.log('[Fingerprint Login Step 5] WebAuthn credential retrieved:', credential);
-      } catch (webauthnError) {
-        console.error('[Fingerprint Login Step 5 Error] Failed to authenticate with WebAuthn:', webauthnError.message);
-        console.error('[Fingerprint Login Step 5 Error] WebAuthn error details:', webauthnError);
-        if (webauthnError.name === 'NotSupportedError') {
-          setError('Your device does not support fingerprint authentication.');
-        } else if (webauthnError.name === 'NotAllowedError') {
-          setError('Fingerprint authentication was cancelled or not allowed. Please try again.');
-        } else if (webauthnError.name === 'SecurityError') {
-          setError('Security error: Ensure you’re using a secure connection (HTTPS) and try again.');
-        } else if (webauthnError.name === 'InvalidStateError') {
-          setError('Invalid state: Please try again or use password login.');
-        } else {
-          setError(`Failed to authenticate with fingerprint: ${webauthnError.message}`);
-        }
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 6: Send request to /webauthn/login/complete
-      console.log('[Fingerprint Login Step 6] Sending request to /auth/webauthn/login/complete:', { email });
-      let completeResponse;
-      try {
-        completeResponse = await api.post('/auth/webauthn/login/complete', {
-          email,
-          credential,
-        });
-        console.log('[Fingerprint Login Step 6] Fingerprint login successful:', {
-          token: completeResponse.data.token ? completeResponse.data.token.substring(0, 20) + '...' : 'None',
-          user: completeResponse.data.user,
-        });
-      } catch (completeError) {
-        console.error('[Fingerprint Login Step 6 Error] Failed to complete fingerprint authentication:', completeError.message);
-        console.error('[Fingerprint Login Step 6 Error] API error details:', {
-          status: completeError.response?.status,
-          data: completeError.response?.data,
-        });
-        setError(completeError.response?.data?.msg || 'Failed to complete fingerprint authentication. Please try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 7: Validate and store token and user data
-      console.log('[Fingerprint Login Step 7] Validating response data');
-      if (!completeResponse.data.token || !completeResponse.data.user) {
-        console.error('[Fingerprint Login Step 7 Error] Invalid response data:', completeResponse.data);
-        setError('Invalid server response: missing token or user data.');
-        setIsLoading(false);
-        return;
-      }
-      console.log('[Fingerprint Login Step 7] Response data valid, storing authentication data');
-      try {
-        localStorage.setItem('token', completeResponse.data.token);
-        localStorage.setItem('user', JSON.stringify(completeResponse.data.user));
-        console.log('[Fingerprint Login Step 7] Token and user data saved to localStorage:', {
-          token: completeResponse.data.token.substring(0, 20) + '...',
-          user: completeResponse.data.user,
-        });
-        // Verify token was saved
-        const savedToken = localStorage.getItem('token');
-        if (!savedToken) {
-          console.error('[Fingerprint Login Step 7 Error] Token not found in localStorage after saving');
-          setError('Failed to save authentication token. Please check your browser settings (e.g., disable incognito mode).');
-          setIsLoading(false);
-          return;
-        }
-        console.log('[Fingerprint Login Step 7] Token verified in localStorage:', savedToken.substring(0, 20) + '...');
-        api.defaults.headers.common['x-auth-token'] = completeResponse.data.token;
-        console.log('[Fingerprint Login Step 7] Set x-auth-token header:', completeResponse.data.token.substring(0, 20) + '...');
-      } catch (storageError) {
-        console.error('[Fingerprint Login Step 7 Error] Failed to store authentication data:', storageError.message);
-        setError('Failed to save authentication data. Your browser may be blocking localStorage (e.g., incognito mode). Please check your settings.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 8: Update UI and redirect
-      console.log('[Fingerprint Login Step 8] Setting success state');
-      setSuccess(true);
-      console.log('[Fingerprint Login Step 8] Redirecting to home page in 2 seconds');
-      setTimeout(() => {
-        console.log('[Fingerprint Login Step 8] Navigating to home page');
-        navigate('/');
-      }, 2000);
-    } catch (unexpectedError) {
-      console.error('[Fingerprint Login Error] Unexpected error during fingerprint login:', unexpectedError.message);
-      console.error('[Fingerprint Login Error] Full error details:', unexpectedError);
-      setError('An unexpected error occurred during fingerprint login. Please try again.');
-      setIsLoading(false);
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -381,12 +174,12 @@ const Login = () => {
 
   const handleGoogleLogin = () => {
     console.log('[Google Login] Attempting Google login');
-    setError('Google login is not implemented. Please use email and password or fingerprint.');
+    setError('Google login is not implemented. Please use email and password.');
   };
 
   const handleAppleLogin = () => {
     console.log('[Apple Login] Attempting Apple login');
-    setError('Apple login is not implemented. Please use email and password or fingerprint.');
+    setError('Apple login is not implemented. Please use email and password.');
   };
 
   const containerVariants = {
@@ -480,19 +273,6 @@ const Login = () => {
                   disabled={isLoading}
                 >
                   Password
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => {
-                    console.log('[Login Method] Switching to fingerprint login');
-                    setLoginMethod('webauthn');
-                  }}
-                  className={`px-4 py-2 rounded-lg ${loginMethod === 'webauthn' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'} ${!isWebAuthnSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={isLoading || !isWebAuthnSupported}
-                  title={!isWebAuthnSupported ? 'Fingerprint login is not supported on this device' : ''}
-                >
-                  Fingerprint
                 </motion.button>
               </div>
               <form onSubmit={handleSubmit} className="space-y-4 mb-4">
@@ -604,21 +384,6 @@ const Login = () => {
                   <FaApple />
                   <span>Log In with Apple</span>
                 </motion.button>
-                {loginMethod === 'webauthn' && (
-                  <motion.button
-                    type="button"
-                    whileHover="hover"
-                    whileTap="tap"
-                    variants={buttonVariants}
-                    onClick={handleBiometricLogin}
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${!isWebAuthnSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    disabled={isLoading || !isWebAuthnSupported}
-                    title={!isWebAuthnSupported ? 'Fingerprint login is not supported on this device' : ''}
-                  >
-                    <FaFingerprint />
-                    <span>{isLoading ? 'Processing...' : 'Log In with Fingerprint'}</span>
-                  </motion.button>
-                )}
               </form>
               <div className={`mt-6 text-center text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                 Don't have an account?{' '}
