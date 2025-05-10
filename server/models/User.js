@@ -8,6 +8,9 @@ const userSchema = new mongoose.Schema({
   online: { type: Boolean, default: false },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date },
+  resetOtp: { type: String }, // Field for password reset OTP
+  resetOtpExpires: { type: Date }, // Field for password reset OTP expiration
+  resetOtpAttempts: { type: Number, default: 0 }, // Field for tracking OTP attempts
   createdAt: { type: Date, default: Date.now },
   lastActive: { type: Date, default: Date.now },
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
@@ -31,16 +34,6 @@ const userSchema = new mongoose.Schema({
     {
       action: { type: String, required: true },
       timestamp: { type: Date, default: Date.now },
-    },
-  ],
-  webauthnUserID: { type: String },
-  webauthnCredentials: [
-    {
-      credentialID: { type: String, required: true },
-      publicKey: { type: String, required: true },
-      counter: { type: Number, required: true },
-      deviceName: { type: String },
-      authenticatorType: { type: String, default: 'fingerprint' },
     },
   ],
 });
