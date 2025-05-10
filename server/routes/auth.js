@@ -9,16 +9,6 @@ const Subscriber = require('../models/Subscriber');
 const Setting = require('../models/Setting');
 const auth = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
-const {
-  generateRegistrationOptions,
-  verifyRegistrationResponse,
-  generateAuthenticationOptions,
-  verifyAuthenticationResponse,
-} = require('@simplewebauthn/server');
-
-const rpID = process.env.WEBAUTHN_RP_ID || 'https://chatifyzone.vercel.app';
-const rpName = 'Chatify';
-const expectedOrigin = process.env.CLIENT_URL || 'https://chatifyzone.vercel.app';
 
 // Validation schemas
 const loginSchema = Joi.object({
@@ -45,52 +35,9 @@ const registerSchema = Joi.object({
   gender: Joi.string().valid('male', 'female', null).optional(),
 });
 
-const webauthnRegisterBeginSchema = Joi.object({
+const otpSchema = Joi.object({
   email: Joi.string().email().required(),
-  username: Joi.string().min(3).max(30).required(),
-  country: Joi.string().allow('').optional(),
-  state: Joi.string().allow('').optional(),
-  age: Joi.string()
-    .pattern(/^\d+$/)
-    .custom((value, helpers) => {
-      const num = parseInt(value, 10);
-      if (isNaN(num) || num < 18 || num > 120) {
-        return helpers.error('any.invalid');
-      }
-      return num.toString();
-    }, 'age validation')
-    .optional(),
-  gender: Joi.string().valid('male', 'female', null).optional(),
-});
-
-const webauthnRegisterCompleteSchema = Joi.object({
-  email: Joi.string().email().required(),
-  username: Joi.string().min(3).max(30).required(),
-  country: Joi.string().allow('').optional(),
-  state: Joi.string().allow('').optional(),
-  age: Joi.string()
-    .pattern(/^\d+$/)
-    .custom((value, helpers) => {
-      const num = parseInt(value, 10);
-      if (isNaN(num) || num < 18 || num > 120) {
-        return helpers.error('any.invalid');
-      }
-      return num.toString();
-    }, 'age validation')
-    .optional(),
-  gender: Joi.string().valid('male', 'female', null).optional(),
-  credential: Joi.object().required(),
-  challenge: Joi.string().required(),
-  userID: Joi.string().required(),
-});
-
-const webauthnLoginBeginSchema = Joi.object({
-  email: Joi.string().email().required(),
-});
-
-const webauthnLoginCompleteSchema = Joi.object({
-  email: Joi.string().email().required(),
-  credential: Joi.object().required(),
+  otp: Joi.string().length(6).required(),
 });
 
 const forgotPasswordSchema = Joi.object({
@@ -128,7 +75,6 @@ const updateProfileSchema = Joi.object({
   profileVisibility: Joi.string().valid('Public', 'Friends', 'Private').optional(),
 });
 
-// Admin registration schema
 const adminRegisterSchema = Joi.object({
   email: Joi.string().email().required(),
   username: Joi.string().min(3).max(30).required(),
@@ -149,7 +95,6 @@ const adminRegisterSchema = Joi.object({
   gender: Joi.string().valid('male', 'female', null).optional(),
 });
 
-// Admin login schema
 const adminLoginSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
@@ -197,6 +142,122 @@ const addActivityLog = async (userId, action) => {
   }
 };
 
+// Generate OTP
+const generateOtp = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+};
+
+// Send OTP email
+const sendOtpEmail = async (email, username, otp, subject = 'ChatifyZone OTP Verification') => {
+  const message = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${subject}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
+        .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+        .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+        .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
+        .content { padding: 20px 0; }
+        .content p { margin-bottom: 15px; font-size: 16px; }
+        .otp { font-size: 24px; font-weight: 700; color: #FF0000; text-align: center; margin: 20px 0; }
+        .warning { color: rgba(255, 255, 255, 0.7); font-size: 14px; margin-top: 20px; }
+        .footer { text-align: center; padding-top: 30px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+        .highlight { color: #FF0000; font-weight: 600; }
+        a { color: #FF0000; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        @media only screen and (max-width: 600px) {
+          .container { margin: 20px; padding: 20px; }
+          .header h1 { font-size: 22px; }
+          .content p { font-size: 14px; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>${subject}</h1>
+        </div>
+        <div class="content">
+          <p>Hello <span class="highlight">${username}</span>,</p>
+          <p>Please use the following OTP to proceed with your password reset request:</p>
+          <div class="otp">${otp}</div>
+          <p class="warning">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
+        </div>
+        <div class="footer">
+          <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
+          <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  await sendEmail(email, subject, message);
+};
+
+// Send security alert email
+const sendSecurityAlertEmail = async (email, username, locationDetails) => {
+  const message = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>ChatifyZone Security Alert</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
+        .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+        .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+        .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
+        .content { padding: 20px 0; }
+        .content p { margin-bottom: 15px; font-size: 16px; }
+        .details { background: rgba(255, 255, 255, 0.1); padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .details p { margin-bottom: 10px; }
+        .warning { color: rgba(255, 255, 255, 0.7); font-size: 14px; margin-top: 20px; }
+        .footer { text-align: center; padding-top: 30px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+        .highlight { color: #FF0000; font-weight: 600; }
+        a { color: #FF0000; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        @media only screen and (max-width: 600px) {
+          .container { margin: 20px; padding: 20px; }
+          .header h1 { font-size: 22px; }
+          .content p { font-size: 14px; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Security Alert</h1>
+        </div>
+        <div class="content">
+          <p>Hello <span class="highlight">${username}</span>,</p>
+          <p>We detected multiple unsuccessful attempts to verify a password reset OTP for your ChatifyZone account. This may indicate unauthorized access attempts.</p>
+          <div class="details">
+            <p><strong>Details of the Attempt:</strong></p>
+            <p>IP Address: ${locationDetails.ip || 'Unknown'}</p>
+            <p>Location: ${locationDetails.city || 'Unknown'}, ${locationDetails.country || 'Unknown'}</p>
+            <p>Time: ${new Date().toLocaleString()}</p>
+          </div>
+          <p>If this was not you, please secure your account by changing your password or contacting support.</p>
+          <p class="warning">If you initiated this request, please ignore this email.</p>
+        </div>
+        <div class="footer">
+          <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
+          <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  await sendEmail(email, 'ChatifyZone Security Alert', message);
+};
+
 // Check maintenance status
 router.get('/maintenance-status', async (req, res) => {
   try {
@@ -226,21 +287,19 @@ router.post('/subscribe', async (req, res) => {
     const { email } = req.body;
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Check if already subscribed
     const existingSubscriber = await Subscriber.findOne({ email: normalizedEmail });
     if (existingSubscriber) {
       console.error('[Subscribe] Email already subscribed:', normalizedEmail);
       return res.status(400).json({ msg: 'This email is already subscribed' });
     }
 
-    // Save subscriber with unsubscribe token
     const subscriber = new Subscriber({ email: normalizedEmail });
     await subscriber.save();
 
-    // Generate unsubscribe link
-    const unsubscribeLink = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/unsubscribe?token=${subscriber.unsubscribeToken}`;
+    const unsubscribeLink = `${
+      process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'
+    }/unsubscribe?token=${subscriber.unsubscribeToken}`;
 
-    // Send confirmation email with advanced UI
     const message = `
       <!DOCTYPE html>
       <html lang="en">
@@ -335,10 +394,8 @@ router.get('/unsubscribe', async (req, res) => {
       return res.status(404).send('Subscriber not found or already unsubscribed');
     }
 
-    // Remove subscriber
     await Subscriber.deleteOne({ unsubscribeToken: token });
 
-    // Send unsubscription confirmation email with advanced UI
     const message = `
       <!DOCTYPE html>
       <html lang="en">
@@ -442,7 +499,7 @@ router.get('/profile', auth, async (req, res) => {
   try {
     console.log('[Get Profile] Fetching profile for user ID:', req.user);
     const user = await User.findById(req.user)
-      .select('-password -webauthnCredentials -webauthnUserID')
+      .select('-password')
       .populate('friends', 'username')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
@@ -486,7 +543,7 @@ router.get('/profile/:userId', auth, async (req, res) => {
     }
 
     const user = await User.findById(req.params.userId)
-      .select('-password -webauthnCredentials -webauthnUserID')
+      .select('-password')
       .populate('friends', 'username')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
@@ -555,7 +612,7 @@ router.put('/profile', auth, async (req, res) => {
       req.user,
       { $set: updateData },
       { new: true, runValidators: true }
-    ).select('-password -webauthnCredentials -webauthnUserID');
+    ).select('-password');
 
     if (!user) {
       console.error('[Update Profile] User not found:', req.user);
@@ -606,8 +663,8 @@ router.post('/change-password', auth, async (req, res) => {
     }
 
     if (!user.password) {
-      console.error('[Change Password] Account uses biometric login only:', user.email);
-      return res.status(400).json({ msg: 'This account uses biometric login.' });
+      console.error('[Change Password] Account uses password-less login only:', user.email);
+      return res.status(400).json({ msg: 'This account does not use password-based login.' });
     }
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
@@ -675,9 +732,9 @@ router.post('/block-user', auth, async (req, res) => {
 
     user.blockedUsers.push(userToBlock.id);
     if (user.friends.includes(userToBlock.id)) {
-      user.friends = user.friends.filter(friendId => friendId.toString() !== userToBlock.id);
+      user.friends = user.friends.filter((friendId) => friendId.toString() !== userToBlock.id);
       const blockedUser = await User.findById(userToBlock.id);
-      blockedUser.friends = blockedUser.friends.filter(friendId => friendId.toString() !== req.user);
+      blockedUser.friends = blockedUser.friends.filter((friendId) => friendId.toString() !== req.user);
       await blockedUser.save();
     }
     await user.save();
@@ -688,309 +745,6 @@ router.post('/block-user', auth, async (req, res) => {
     res.json({ msg: `User ${username} blocked successfully` });
   } catch (err) {
     console.error('[Block User] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// WebAuthn registration: Begin
-router.post('/webauthn/register/begin', async (req, res) => {
-  try {
-    console.log('[WebAuthn Register Begin] Deployed Version: Buffer Fix 2025-04-26 v2');
-    console.log('[WebAuthn Register Begin] Step 1: Received request:', req.body);
-
-    // Check if registration is enabled
-    let settings = await Setting.findOne();
-    if (!settings) {
-      settings = new Setting();
-      await settings.save();
-    }
-    if (!settings.registrationEnabled) {
-      console.error('[WebAuthn Register Begin] Registration is disabled');
-      return res.status(403).json({ msg: 'Registration is currently disabled' });
-    }
-
-    console.log('[WebAuthn Register Begin] Step 2: Validating request body');
-    const { error } = webauthnRegisterBeginSchema.validate(req.body);
-    if (error) {
-      console.error('[WebAuthn Register Begin] Step 2 Error: Validation failed:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-    console.log('[WebAuthn Register Begin] Step 2: Validation passed');
-
-    const { username, email, country, state, age, gender } = req.body;
-    console.log('[WebAuthn Register Begin] Step 3: Checking for existing user:', { email, username });
-    let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
-      console.error('[WebAuthn Register Begin] Step 3 Error: User already exists:', {
-        email: user.email,
-        username: user.username,
-        userId: user._id,
-      });
-      return res.status(400).json({ msg: 'User already exists with this email or username' });
-    }
-    console.log('[WebAuthn Register Begin] Step 3: No existing user found');
-
-    console.log('[WebAuthn Register Begin] Step 4: Generating WebAuthn registration options');
-    const userID = crypto.randomBytes(32);
-    console.log('[WebAuthn Register Begin] Step 4: Generated userID (Buffer length):', userID.length);
-    let options;
-    try {
-      options = await generateRegistrationOptions({
-        rpName,
-        rpID,
-        userID,
-        userName: username,
-        userDisplayName: username,
-        attestationType: 'none',
-        authenticatorSelection: {
-          authenticatorAttachment: 'platform',
-          userVerification: 'required',
-        },
-        excludeCredentials: [],
-        supportedAlgorithmIDs: [-8, -7, -257],
-      });
-      console.log('[WebAuthn Register Begin] Step 4: Options generated successfully');
-    } catch (webauthnError) {
-      console.error('[WebAuthn Register Begin] Step 4 Error: Failed to generate WebAuthn options:', webauthnError.message);
-      return res.status(500).json({ msg: 'Failed to generate WebAuthn registration options' });
-    }
-
-    console.log('[WebAuthn Register Begin] Step 5: Preparing response');
-    const response = {
-      publicKey: options,
-      challenge: options.challenge,
-      userID: userID.toString('base64'),
-      email,
-      username,
-      country,
-      state,
-      age,
-      gender,
-    };
-
-    console.log('[WebAuthn Register Begin] Step 6: Verifying response structure');
-    if (!response.publicKey || !response.challenge || !response.userID) {
-      console.error('[WebAuthn Register Begin] Step 6 Error: Invalid response structure');
-      return res.status(500).json({ msg: 'Server failed to prepare WebAuthn response' });
-    }
-    console.log('[WebAuthn Register Begin] Step 6: Response structure valid');
-
-    console.log('[WebAuthn Register Begin] Step 7: Sending response');
-    res.json(response);
-  } catch (err) {
-    console.error('[WebAuthn Register Begin] Step 8 Error: Unexpected server error:', err.message);
-    res.status(500).json({ msg: 'Unexpected server error' });
-  }
-});
-
-// WebAuthn registration: Complete
-router.post('/webauthn/register/complete', async (req, res) => {
-  try {
-    console.log('[WebAuthn Register Complete] Received request:', req.body);
-
-    // Check if registration is enabled
-    let settings = await Setting.findOne();
-    if (!settings) {
-      settings = new Setting();
-      await settings.save();
-    }
-    if (!settings.registrationEnabled) {
-      console.error('[WebAuthn Register Complete] Registration is disabled');
-      return res.status(403).json({ msg: 'Registration is currently disabled' });
-    }
-
-    const { error } = webauthnRegisterCompleteSchema.validate(req.body);
-    if (error) {
-      console.error('[WebAuthn Register Complete] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { email, username, country, state, age, gender, credential, challenge, userID } = req.body;
-    if (!challenge || !userID) {
-      console.error('[WebAuthn Register Complete] Missing challenge or userID');
-      return res.status(400).json({ msg: 'Missing challenge or userID' });
-    }
-
-    let verification;
-    try {
-      verification = await verifyRegistrationResponse({
-        response: credential,
-        expectedChallenge: challenge,
-        expectedOrigin,
-        expectedRPID: rpID,
-      });
-    } catch (verifyError) {
-      console.error('[WebAuthn Register Complete] Verification error:', verifyError.message);
-      return res.status(400).json({ msg: 'Fingerprint registration verification failed' });
-    }
-
-    if (!verification.verified) {
-      console.error('[WebAuthn Register Complete] Verification failed for:', email);
-      return res.status(400).json({ msg: 'Fingerprint registration failed' });
-    }
-
-    const registrationInfo = verification.registrationInfo || {};
-    const credentialData = registrationInfo.credential || {};
-    const credentialID = credentialData.id;
-    const publicKey = credentialData.publicKey;
-    const counter = credentialData.counter;
-
-    if (!credentialID || !publicKey || counter === undefined) {
-      console.error('[WebAuthn Register Complete] Missing credential fields');
-      return res.status(500).json({ msg: 'Invalid credential data from server' });
-    }
-
-    const user = new User({
-      email,
-      username,
-      country,
-      state,
-      age,
-      gender,
-      webauthnUserID: userID,
-      webauthnCredentials: [{
-        credentialID: Buffer.from(credentialID).toString('base64'),
-        publicKey: Buffer.from(publicKey).toString('base64'),
-        counter,
-        deviceName: 'Fingerprint Authenticator',
-        authenticatorType: 'fingerprint',
-      }],
-      activityLog: [{ action: 'Account created', timestamp: new Date() }],
-    });
-
-    await user.save();
-    await addActivityLog(user.id, 'Account created');
-
-    const payload = { userId: user.id };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
-
-    console.log(`[WebAuthn Register Complete] User registered: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
-  } catch (err) {
-    console.error('[WebAuthn Register Complete] Server error:', err.message);
-    res.status(500).json({ msg: `Server error: ${err.message}` });
-  }
-});
-
-// WebAuthn login begin
-router.post('/webauthn/login/begin', async (req, res) => {
-  try {
-    console.log('[WebAuthn Login Begin] Received request for email:', req.body.email);
-    const { error } = webauthnLoginBeginSchema.validate(req.body);
-    if (error) {
-      console.error('[WebAuthn Login Begin] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { email } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      console.error('[WebAuthn Login Begin] User not found for email:', email);
-      return res.status(400).json({ msg: 'User not found' });
-    }
-
-    // Check if user is banned
-    if (user.isBanned) {
-      console.error('[WebAuthn Login Begin] Attempted login by banned user:', email);
-      return res.status(403).json({ msg: 'Your account is banned. Please contact support.' });
-    }
-
-    const options = await generateAuthenticationOptions({
-      rpID,
-      userVerification: 'required',
-      allowCredentials: user.webauthnCredentials.map((cred) => ({
-        id: Buffer.from(cred.credentialID, 'base64'),
-        type: 'public-key',
-      })),
-    });
-
-    // Store challenge in database for verification
-    user.webauthnChallenge = options.challenge;
-    await user.save();
-
-    console.log('[WebAuthn Login Begin] Authentication options generated for:', email);
-    res.json({ publicKey: options, challenge: options.challenge });
-  } catch (err) {
-    console.error('[WebAuthn Login Begin] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// WebAuthn login complete
-router.post('/webauthn/login/complete', async (req, res) => {
-  try {
-    console.log('[WebAuthn Login Complete] Received request for email:', req.body.email);
-    const { error } = webauthnLoginCompleteSchema.validate(req.body);
-    if (error) {
-      console.error('[WebAuthn Login Complete] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { email, credential } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      console.error('[WebAuthn Login Complete] User not found for email:', email);
-      return res.status(400).json({ msg: 'User not found' });
-    }
-
-    // Check if user is banned
-    if (user.isBanned) {
-      console.error('[WebAuthn Login Complete] Attempted login by banned user:', email);
-      return res.status(403).json({ msg: 'Your account is banned. Please contact support.' });
-    }
-
-    const authenticator = user.webauthnCredentials.find(
-      (cred) => cred.credentialID === Buffer.from(credential.rawId).toString('base64')
-    );
-    if (!authenticator) {
-      console.error('[WebAuthn Login Complete] No matching authenticator found for:', email);
-      return res.status(400).json({ msg: 'Invalid credential' });
-    }
-
-    let verification;
-    try {
-      verification = await verifyAuthenticationResponse({
-        response: credential,
-        expectedChallenge: user.webauthnChallenge,
-        expectedOrigin,
-        expectedRPID: rpID,
-        authenticator: {
-          credentialID: Buffer.from(authenticator.credentialID, 'base64'),
-          credentialPublicKey: Buffer.from(authenticator.publicKey, 'base64'),
-          counter: authenticator.counter,
-        },
-      });
-    } catch (verifyError) {
-      console.error('[WebAuthn Login Complete] Verification error:', verifyError.message);
-      return res.status(400).json({ msg: 'Authentication verification failed' });
-    }
-
-    if (!verification.verified) {
-      console.error('[WebAuthn Login Complete] Verification failed for:', email);
-      return res.status(400).json({ msg: 'Authentication failed' });
-    }
-
-    // Update counter
-    authenticator.counter = verification.authenticationInfo.newCounter;
-    user.webauthnChallenge = null;
-    await user.save();
-
-    const payload = { user: { id: user.id, username: user.username } };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    await addActivityLog(user.id, 'Logged in with WebAuthn');
-
-    console.log(`[WebAuthn Login Complete] User logged in: ${user.username} (ID: ${user.id})`);
-    res.json({
-      token,
-      user: { id: user.id, username: user.username, email: user.email },
-    });
-  } catch (err) {
-    console.error('[WebAuthn Login Complete] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -1012,15 +766,14 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid credentials' });
     }
 
-    // Check if user is banned
     if (user.isBanned) {
       console.error('[Login] Attempted login by banned user:', email);
       return res.status(403).json({ msg: 'Your account is banned. Please contact support.' });
     }
 
     if (!user.password) {
-      console.error('[Login] Account uses biometric login only:', email);
-      return res.status(400).json({ msg: 'This account uses biometric login.' });
+      console.error('[Login] Account uses password-less login only:', email);
+      return res.status(400).json({ msg: 'This account does not use password-based login.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -1045,32 +798,31 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Password-based registration
-router.post('/register', async (req, res) => {
+// Initiate password-based registration with OTP
+router.post('/register/init', async (req, res) => {
   try {
-    console.log('[Password Register] Received registration request:', req.body.email);
+    console.log('[Register Init] Received registration request:', req.body.email);
 
-    // Check if registration is enabled
     let settings = await Setting.findOne();
     if (!settings) {
       settings = new Setting();
       await settings.save();
     }
     if (!settings.registrationEnabled) {
-      console.error('[Password Register] Registration is disabled');
+      console.error('[Register Init] Registration is disabled');
       return res.status(403).json({ msg: 'Registration is currently disabled' });
     }
 
     const { error } = registerSchema.validate(req.body);
     if (error) {
-      console.error('[Password Register] Validation error:', error.details[0].message);
+      console.error('[Register Init] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { email, username, password, country, state, age, gender } = req.body;
     let user = await User.findOne({ $or: [{ email }, { username }] });
     if (user) {
-      console.error('[Password Register] User already exists:', { email, username });
+      console.error('[Register Init] User already exists:', { email, username });
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
@@ -1082,62 +834,221 @@ router.post('/register', async (req, res) => {
       state,
       age,
       gender,
-      activityLog: [{ action: 'Account created', timestamp: new Date() }],
+      activityLog: [{ action: 'Account creation initiated', timestamp: new Date() }],
     });
 
+    const otp = generateOtp();
+    user.otp = otp;
+    user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
     await user.save();
-    await addActivityLog(user.id, 'Account created');
 
-    const payload = { userId: user.id };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+    await sendOtpEmail(email, username, otp);
+    await addActivityLog(user.id, 'OTP sent for registration');
 
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
-
-    console.log(`[Password Register] User registered: ${user.username} (ID: ${user.id})`);
-    res.json({ token, user: { id: user.id, email: user.email, username: user.username, country: user.country, state: user.state, age: user.age, gender: user.gender } });
+    console.log(`[Register Init] OTP sent to: ${email}`);
+    res.json({ msg: 'OTP sent to your email. Please verify to complete registration.' });
   } catch (err) {
-    console.error('[Password Register] Server error:', err.message);
+    console.error('[Register Init] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
 
-// Forgot password
-router.post('/forgot-password', async (req, res) => {
+// Verify OTP and complete registration
+router.post('/register/verify-otp', async (req, res) => {
   try {
-    console.log('[Forgot Password] Received request for email:', req.body.email);
-    const { error } = forgotPasswordSchema.validate(req.body);
+    console.log('[Verify OTP] Received OTP verification request for email:', req.body.email);
+    const { error } = otpSchema.validate(req.body);
     if (error) {
-      console.error('[Forgot Password] Validation error:', error.details[0].message);
+      console.error('[Verify OTP] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email, otp } = req.body;
+    const user = await User.findOne({
+      email,
+      otp,
+      otpExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      console.error('[Verify OTP] Invalid or expired OTP for email:', email);
+      return res.status(400).json({ msg: 'Invalid or expired OTP' });
+    }
+
+    user.otp = undefined;
+    user.otpExpires = undefined;
+    await user.save();
+
+    const payload = { user: { id: user.id, username: user.username } };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    await addActivityLog(user.id, 'Account created');
+
+    console.log(`[Verify OTP] User registered: ${user.username} (ID: ${user.id})`);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        country: user.country,
+        state: user.state,
+        age: user.age,
+        gender: user.gender,
+      },
+    });
+  } catch (err) {
+    console.error('[Verify OTP] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Resend OTP for registration
+router.post('/register/resend-otp', async (req, res) => {
+  try {
+    console.log('[Resend OTP] Received resend OTP request for email:', req.body.email);
+    const { error } = Joi.object({
+      email: Joi.string().email().required(),
+    }).validate(req.body);
+    if (error) {
+      console.error('[Resend OTP] Validation error:', error.details[0].message);
       return res.status(400).json({ msg: error.details[0].message });
     }
 
     const { email } = req.body;
     const user = await User.findOne({ email });
     if (!user) {
-      console.error('[Forgot Password] User not found for email:', email);
+      console.error('[Resend OTP] User not found:', email);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    if (!user.otp || !user.otpExpires) {
+      console.error('[Resend OTP] No pending OTP verification for:', email);
+      return res.status(400).json({ msg: 'No pending OTP verification' });
+    }
+
+    const otp = generateOtp();
+    user.otp = otp;
+    user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    await user.save();
+
+    await sendOtpEmail(email, user.username, otp);
+    await addActivityLog(user.id, 'OTP resent for registration');
+
+    console.log(`[Resend OTP] OTP resent to: ${email}`);
+    res.json({ msg: 'OTP resent to your email.' });
+  } catch (err) {
+    console.error('[Resend OTP] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Initiate forgot password with OTP
+router.post('/forgot-password/init', async (req, res) => {
+  try {
+    console.log('[Forgot Password Init] Received request for email:', req.body.email);
+    const { error } = forgotPasswordSchema.validate(req.body);
+    if (error) {
+      console.error('[Forgot Password Init] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      console.error('[Forgot Password Init] User not found:', email);
       return res.status(404).json({ msg: 'User not found' });
     }
 
     if (!user.password) {
-      console.error('[Forgot Password] Account uses biometric login only:', email);
-      return res.status(400).json({ msg: 'This account uses biometric login.' });
+      console.error('[Forgot Password Init] Account uses password-less login only:', email);
+      return res.status(400).json({ msg: 'This account does not use password-based login.' });
     }
 
+    const otp = generateOtp();
+    user.resetOtp = otp;
+    user.resetOtpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    user.resetOtpAttempts = 0; // Reset attempts counter
+    await user.save();
+
+    await sendOtpEmail(email, user.username, otp, 'ChatifyZone Password Reset OTP');
+    await addActivityLog(user.id, 'OTP sent for password reset');
+
+    console.log(`[Forgot Password Init] OTP sent to: ${email}`);
+    res.json({ msg: 'OTP sent to your email. Please verify to proceed with password reset.' });
+  } catch (err) {
+    console.error('[Forgot Password Init] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Verify OTP for forgot password
+router.post('/forgot-password/verify-otp', async (req, res) => {
+  try {
+    console.log('[Forgot Password Verify OTP] Received OTP verification request for email:', req.body.email);
+    const { error } = otpSchema.validate(req.body);
+    if (error) {
+      console.error('[Forgot Password Verify OTP] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email, otp } = req.body;
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      console.error('[Forgot Password Verify OTP] User not found:', email);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    if (!user.resetOtp || !user.resetOtpExpires || user.resetOtpExpires < Date.now()) {
+      console.error('[Forgot Password Verify OTP] Invalid or expired OTP for email:', email);
+      return res.status(400).json({ msg: 'Invalid or expired OTP' });
+    }
+
+    if (user.resetOtp !== otp) {
+      user.resetOtpAttempts = (user.resetOtpAttempts || 0) + 1;
+      await user.save();
+
+      if (user.resetOtpAttempts >= 5) {
+        const locationDetails = {
+          ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'Unknown',
+          city: req.headers['x-geo-city'] || 'Unknown',
+          country: req.headers['x-geo-country'] || 'Unknown',
+        };
+        await sendSecurityAlertEmail(email, user.username, locationDetails);
+        user.resetOtp = undefined;
+        user.resetOtpExpires = undefined;
+        user.resetOtpAttempts = 0;
+        await user.save();
+        await addActivityLog(user.id, 'Security alert sent due to multiple failed OTP attempts');
+        console.error('[Forgot Password Verify OTP] Too many incorrect OTP attempts for:', email);
+        return res.status(429).json({ msg: 'Too many incorrect OTP attempts. A security alert has been sent to your email.' });
+      }
+
+      await addActivityLog(user.id, 'Failed OTP attempt for password reset');
+      console.error('[Forgot Password Verify OTP] Incorrect OTP for email:', email);
+      return res.status(400).json({ msg: 'Incorrect OTP', attemptsLeft: 5 - user.resetOtpAttempts });
+    }
+
+    // OTP is correct, generate reset token
     const resetToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = resetToken;
     user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
+    user.resetOtp = undefined;
+    user.resetOtpExpires = undefined;
+    user.resetOtpAttempts = 0;
     await user.save();
 
-    const resetLink = `${process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'}/reset-password?token=${resetToken}`;
+    const resetLink = `${
+      process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'
+    }/reset-password/${resetToken}`;
     const message = `
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Reset Your ChatifyZone Password</title>
+        <title>ChatifyZone Password Reset</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
@@ -1157,23 +1068,23 @@ router.post('/forgot-password', async (req, res) => {
           @media only screen and (max-width: 600px) {
             .container { margin: 20px; padding: 20px; }
             .header h1 { font-size: 22px; }
-            .button { display: block; width: 100%; }
             .content p { font-size: 14px; }
+            .button { display: block; width: 100%; }
           }
         </style>
       </head>
       <body>
         <div class="container">
           <div class="header">
-            <h1>Password Reset Request</h1>
+            <h1>Reset Your Password</h1>
           </div>
           <div class="content">
             <p>Hello <span class="highlight">${user.username}</span>,</p>
-            <p>We received a request to reset your ChatifyZone password. Click the button below to reset it:</p>
+            <p>Your OTP has been verified. Click the button below to reset your ChatifyZone password:</p>
             <div class="button-container">
               <a href="${resetLink}" class="button">Reset Password</a>
             </div>
-            <p class="warning">This link will expire in 1 hour. If you did not request a password reset, please ignore this email.</p>
+            <p class="warning">This link is valid for 1 hour. If you did not request a password reset, please contact support immediately.</p>
           </div>
           <div class="footer">
             <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
@@ -1183,21 +1094,62 @@ router.post('/forgot-password', async (req, res) => {
       </body>
       </html>
     `;
+    await sendEmail(email, 'ChatifyZone Password Reset', message);
 
-    await sendEmail(user.email, 'Reset Your ChatifyZone Password', message);
+    await addActivityLog(user.id, 'OTP verified for password reset');
 
-    console.log(`[Forgot Password] Password reset email sent to: ${user.email}`);
-    res.json({ msg: 'Password reset email sent' });
+    console.log(`[Forgot Password Verify OTP] Password reset link sent to: ${email}`);
+    res.json({ msg: 'OTP verified. Password reset link sent to your email.' });
   } catch (err) {
-    console.error('[Forgot Password] Server error:', err.message);
+    console.error('[Forgot Password Verify OTP] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Resend OTP for forgot password
+router.post('/forgot-password/resend-otp', async (req, res) => {
+  try {
+    console.log('[Forgot Password Resend OTP] Received resend OTP request for email:', req.body.email);
+    const { error } = Joi.object({
+      email: Joi.string().email().required(),
+    }).validate(req.body);
+    if (error) {
+      console.error('[Forgot Password Resend OTP] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      console.error('[Forgot Password Resend OTP] User not found:', email);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    if (!user.resetOtp || !user.resetOtpExpires) {
+      console.error('[Forgot Password Resend OTP] No pending OTP verification for:', email);
+      return res.status(400).json({ msg: 'No pending OTP verification' });
+    }
+
+    const otp = generateOtp();
+    user.resetOtp = otp;
+    user.resetOtpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    await user.save();
+
+    await sendOtpEmail(email, user.username, otp, 'ChatifyZone Password Reset OTP');
+    await addActivityLog(user.id, 'OTP resent for password reset');
+
+    console.log(`[Forgot Password Resend OTP] OTP resent to: ${email}`);
+    res.json({ msg: 'OTP resent to your email.' });
+  } catch (err) {
+    console.error('[Forgot Password Resend OTP] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
 
 // Reset password
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password/:token', async (req, res) => {
   try {
-    console.log('[Reset Password] Received request with token:', req.query.token);
+    console.log('[Reset Password] Received reset request for token:', req.params.token);
     const { error } = resetPasswordSchema.validate(req.body);
     if (error) {
       console.error('[Reset Password] Validation error:', error.details[0].message);
@@ -1205,15 +1157,14 @@ router.post('/reset-password', async (req, res) => {
     }
 
     const { password } = req.body;
-    const { token } = req.query;
-
+    const { token } = req.params;
     const user = await User.findOne({
       resetPasswordToken: token,
       resetPasswordExpires: { $gt: Date.now() },
     });
 
     if (!user) {
-      console.error('[Reset Password] Invalid or expired reset token:', token);
+      console.error('[Reset Password] Invalid or expired reset token');
       return res.status(400).json({ msg: 'Invalid or expired reset token' });
     }
 
@@ -1228,196 +1179,6 @@ router.post('/reset-password', async (req, res) => {
     res.json({ msg: 'Password reset successfully' });
   } catch (err) {
     console.error('[Reset Password] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Unblock user
-router.post('/unblock-user', auth, async (req, res) => {
-  try {
-    console.log('[Unblock User] Unblocking user for user ID:', req.user);
-    const { error } = unblockUserSchema.validate(req.body);
-    if (error) {
-      console.error('[Unblock User] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { userId } = req.body;
-    const user = await User.findById(req.user);
-    if (!user) {
-      console.error('[Unblock User] User not found:', req.user);
-      return res.status(404).json({ msg: 'User not found' });
-    }
-
-    if (!user.blockedUsers.includes(userId)) {
-      console.error('[Unblock User] User not in blocked list:', userId);
-      return res.status(400).json({ msg: 'User is not blocked' });
-    }
-
-    user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== userId);
-    await user.save();
-
-    await addActivityLog(req.user, `Unblocked user ID: ${userId}`);
-
-    console.log(`[Unblock User] User unblocked: ${userId} by ${user.username}`);
-    res.json({ msg: 'User unblocked successfully' });
-  } catch (err) {
-    console.error('[Unblock User] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-// Admin registration
-router.post('/admin/register', async (req, res) => {
-  try {
-    console.log('[Admin Register] Received registration request:', req.body.email);
-
-    // Check if registration is enabled
-    let settings = await Setting.findOne();
-    if (!settings) {
-      settings = new Setting();
-      await settings.save();
-    }
-    if (!settings.registrationEnabled) {
-      console.error('[Admin Register] Registration is disabled');
-      return res.status(403).json({ msg: 'Registration is currently disabled' });
-    }
-
-    const { error } = adminRegisterSchema.validate(req.body);
-    if (error) {
-      console.error('[Admin Register] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { email, username, password, adminSecret, country, state, age, gender } = req.body;
-
-    // Verify admin secret key
-    if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
-      console.error('[Admin Register] Invalid admin secret key for:', email);
-      return res.status(403).json({ msg: 'Invalid admin secret key' });
-    }
-
-    // Check for existing user
-    let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
-      console.error('[Admin Register] User already exists:', { email, username });
-      return res.status(400).json({ msg: 'User already exists with this email or username' });
-    }
-
-    // Create new admin user
-    user = new User({
-      email,
-      username,
-      password,
-      country,
-      state,
-      age,
-      gender,
-      isAdmin: true,
-      activityLog: [{ action: 'Admin account created', timestamp: new Date() }],
-    });
-
-    await user.save();
-    await addActivityLog(user.id, 'Admin account created');
-
-    // Generate JWT token
-    const payload = { userId: user.id };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    // Set session data
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
-
-    console.log(`[Admin Register] Admin registered: ${user.username} (ID: ${user.id})`);
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        country: user.country,
-        state: user.state,
-        age: user.age,
-        gender: user.gender,
-        isAdmin: user.isAdmin,
-      },
-    });
-  } catch (err) {
-    console.error('[Admin Register] Server error:', err.message);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-router.post('/admin/login', async (req, res) => {
-  try {
-    console.log('[Admin Login] Received login request:', req.body.email);
-    const { error } = adminLoginSchema.validate(req.body);
-    if (error) {
-      console.error('[Admin Login] Validation error:', error.details[0].message);
-      return res.status(400).json({ msg: error.details[0].message });
-    }
-
-    const { email, password, adminSecret } = req.body;
-
-    // Verify admin secret key
-    if (adminSecret !== process.env.ADMIN_SECRET_KEY) {
-      console.error('[Admin Login] Invalid admin secret key for:', email);
-      return res.status(403).json({ msg: 'Invalid admin secret key' });
-    }
-
-    // Find user
-    const user = await User.findOne({ email }).select('+password');
-    if (!user) {
-      console.error('[Admin Login] User not found for email:', email);
-      return res.status(400).json({ msg: 'Invalid credentials' });
-    }
-
-    // Verify admin status
-    if (!user.isAdmin) {
-      console.error('[Admin Login] User is not an admin:', email);
-      return res.status(403).json({ msg: 'Admin access required' });
-    }
-
-    // Verify password
-    if (!user.password) {
-      console.error('[Admin Login] Account uses biometric login only:', email);
-      return res.status(400).json({ msg: 'This account uses biometric login.' });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      console.error('[Admin Login] Password mismatch for email:', email);
-      return res.status(400).json({ msg: 'Invalid credentials' });
-    }
-
-    // Generate JWT token with adminId and isAdmin
-    const payload = { adminId: user.id, isAdmin: true };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    // Set session data
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    await req.session.save();
-
-    await addActivityLog(user.id, 'Logged in as admin');
-
-    console.log(`[Admin Login] Admin logged in: ${user.username} (ID: ${user.id})`);
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        country: user.country,
-        state: user.state,
-        age: user.age,
-        gender: user.gender,
-        isAdmin: user.isAdmin,
-      },
-    });
-  } catch (err) {
-    console.error('[Admin Login] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
