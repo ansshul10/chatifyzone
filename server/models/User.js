@@ -4,13 +4,13 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   username: { type: String, required: true, unique: true, minlength: 3, maxlength: 20 },
-  password: { type: String },
+  password: { type: String, required: true },
   online: { type: Boolean, default: false },
   resetPasswordToken: { type: String },
   resetPasswordExpires: { type: Date },
   resetOtp: { type: String }, // Field for password reset OTP
   resetOtpExpires: { type: Date }, // Field for password reset OTP expiration
-  resetOtpAttempts: { type: Number, default: 0 }, // Field for tracking OTP attempts
+  resetOtpAttempts: { type: Number, default: 0 }, // Field for tracking reset OTP attempts
   createdAt: { type: Date, default: Date.now },
   lastActive: { type: Date, default: Date.now },
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
