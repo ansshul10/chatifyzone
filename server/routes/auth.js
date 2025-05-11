@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const Joi = require('joi');
 const User = require('../models/User');
+const PendingUser = require('../models/PendingUser');
 const Subscriber = require('../models/Subscriber');
 const Setting = require('../models/Setting');
 const auth = require('../middleware/auth');
@@ -37,7 +38,7 @@ const registerSchema = Joi.object({
 
 const otpSchema = Joi.object({
   email: Joi.string().email().required(),
-  otp: Joi.string().length(6).required(),
+  otp: Joi.string().length(6).pattern(/^\d+$/).required(),
 });
 
 const forgotPasswordSchema = Joi.object({
@@ -148,7 +149,7 @@ const generateOtp = () => {
 };
 
 // Send OTP email
-const sendOtpEmail = async (email, username, otp, subject = 'ChatifyZone OTP Verification') => {
+const sendOtpEmail = async (email, username, otp, subject = 'Chatify OTP Verification') => {
   const message = `
     <!DOCTYPE html>
     <html lang="en">
@@ -184,13 +185,13 @@ const sendOtpEmail = async (email, username, otp, subject = 'ChatifyZone OTP Ver
         </div>
         <div class="content">
           <p>Hello <span class="highlight">${username}</span>,</p>
-          <p>Please use the following OTP to proceed with your password reset request:</p>
+          <p>Please use the following OTP to complete your registration:</p>
           <div class="otp">${otp}</div>
-          <p class="warning">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
+          <p class="warning">This OTP is valid for 15 minutes. Do not share it with anyone.</p>
         </div>
         <div class="footer">
-          <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
-          <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
+          <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
+          <p>Need help? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
         </div>
       </div>
     </body>
@@ -207,7 +208,7 @@ const sendSecurityAlertEmail = async (email, username, locationDetails) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>ChatifyZone Security Alert</title>
+      <title>Chatify Security Alert</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
@@ -237,7 +238,7 @@ const sendSecurityAlertEmail = async (email, username, locationDetails) => {
         </div>
         <div class="content">
           <p>Hello <span class="highlight">${username}</span>,</p>
-          <p>We detected multiple unsuccessful attempts to verify a password reset OTP for your ChatifyZone account. This may indicate unauthorized access attempts.</p>
+          <p>We detected multiple unsuccessful attempts to verify an OTP for your Chatify account. This may indicate unauthorized access attempts.</p>
           <div class="details">
             <p><strong>Details of the Attempt:</strong></p>
             <p>IP Address: ${locationDetails.ip || 'Unknown'}</p>
@@ -248,14 +249,14 @@ const sendSecurityAlertEmail = async (email, username, locationDetails) => {
           <p class="warning">If you initiated this request, please ignore this email.</p>
         </div>
         <div class="footer">
-          <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
-          <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
+          <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
+          <p>Need help? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
         </div>
       </div>
     </body>
     </html>
   `;
-  await sendEmail(email, 'ChatifyZone Security Alert', message);
+  await sendEmail(email, 'Chatify Security Alert', message);
 };
 
 // Check maintenance status
@@ -270,6 +271,22 @@ router.get('/maintenance-status', async (req, res) => {
     res.json({ maintenanceMode: settings.maintenanceMode });
   } catch (err) {
     console.error('[Maintenance Status] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Check registration status
+router.get('/admin/settings/public', async (req, res) => {
+  try {
+    console.log('[Public Settings] Fetching public settings');
+    let settings = await Setting.findOne();
+    if (!settings) {
+      settings = new Setting();
+      await settings.save();
+    }
+    res.json({ registrationEnabled: settings.registrationEnabled });
+  } catch (err) {
+    console.error('[Public Settings] Server error:', err.message);
     res.status(500).json({ msg: 'Server error' });
   }
 });
@@ -297,7 +314,7 @@ router.post('/subscribe', async (req, res) => {
     await subscriber.save();
 
     const unsubscribeLink = `${
-      process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'
+      process.env.CLIENT_URL || 'http://localhost:3000'
     }/unsubscribe?token=${subscriber.unsubscribeToken}`;
 
     const message = `
@@ -306,13 +323,12 @@ router.post('/subscribe', async (req, res) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Welcome to ChatifyZone Newsletter</title>
+        <title>Welcome to Chatify Newsletter</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
           .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
           .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
-          .header img { max-width: 150px; margin-bottom: 15px; }
           .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
           .content { padding: 20px 0; }
           .content p { margin-bottom: 15px; font-size: 16px; }
@@ -329,7 +345,6 @@ router.post('/subscribe', async (req, res) => {
           @media only screen and (max-width: 600px) {
             .container { margin: 20px; padding: 20px; }
             .header h1 { font-size: 22px; }
-            .header img { max-width: 120px; }
             .button { display: block; width: 100%; }
             .content p { font-size: 14px; }
           }
@@ -338,11 +353,11 @@ router.post('/subscribe', async (req, res) => {
       <body>
         <div class="container">
           <div class="header">
-            <h1>Welcome to ChatifyZone</h1>
+            <h1>Welcome to Chatify</h1>
           </div>
           <div class="content">
             <p>Hello <span class="highlight">${normalizedEmail}</span>,</p>
-            <p>Thank you for subscribing to the ChatifyZone Newsletter! You're now part of our vibrant community, and we're thrilled to have you on board.</p>
+            <p>Thank you for subscribing to the Chatify Newsletter! You're now part of our vibrant community, and we're thrilled to have you on board.</p>
             <p>Here's what you can expect from us:</p>
             <ul>
               <li>Real-time chat feature updates</li>
@@ -351,7 +366,7 @@ router.post('/subscribe', async (req, res) => {
               <li>Community highlights and stories</li>
             </ul>
             <div class="button-container">
-              <a href="https://chatifyzone.vercel.app" class="button">Explore ChatifyZone Now</a>
+              <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}" class="button">Explore Chatify Now</a>
             </div>
             <p class="warning">If you did not subscribe or wish to stop receiving our emails, you can unsubscribe at any time:</p>
             <div class="button-container">
@@ -359,15 +374,14 @@ router.post('/subscribe', async (req, res) => {
             </div>
           </div>
           <div class="footer">
-            <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
-            <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
-            <p>Follow us: <a href="https://x.com/chatifyzone">X</a> | <a href="https://instagram.com/chatifyzone">Instagram</a></p>
+            <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
+            <p>Need help? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
           </div>
         </div>
       </body>
       </html>
     `;
-    await sendEmail(normalizedEmail, 'ChatifyZone Newsletter Subscription', message);
+    await sendEmail(normalizedEmail, 'Chatify Newsletter Subscription', message);
 
     console.log(`[Subscribe] Subscription successful for: ${normalizedEmail}`);
     res.json({ msg: 'Subscribed successfully! Check your email for confirmation.' });
@@ -402,13 +416,12 @@ router.get('/unsubscribe', async (req, res) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Unsubscribed from ChatifyZone Newsletter</title>
+        <title>Unsubscribed from Chatify Newsletter</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
           .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #2A2A2A 0%, #1A1A1A 100%); border-radius: 12px; padding: 40px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
           .header { text-align: center; padding-bottom: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
-          .header img { max-width: 150px; margin-bottom: 15px; }
           .header h1 { font-size: 28px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 1px; }
           .content { padding: 20px 0; }
           .content p { margin-bottom: 15px; font-size: 16px; }
@@ -423,7 +436,6 @@ router.get('/unsubscribe', async (req, res) => {
           @media only screen and (max-width: 600px) {
             .container { margin: 20px; padding: 20px; }
             .header h1 { font-size: 22px; }
-            .header img { max-width: 120px; }
             .button { display: block; width: 100%; }
             .content p { font-size: 14px; }
           }
@@ -436,22 +448,21 @@ router.get('/unsubscribe', async (req, res) => {
           </div>
           <div class="content">
             <p>Hello <span class="highlight">${subscriber.email}</span>,</p>
-            <p>You have successfully unsubscribed from the ChatifyZone Newsletter. We're sorry to see you go!</p>
+            <p>You have successfully unsubscribed from the Chatify Newsletter. We're sorry to see you go!</p>
             <p>If this was a mistake or you'd like to rejoin our community, you can resubscribe anytime.</p>
             <div class="button-container">
-              <a href="https://chatifyzone.vercel.app" class="button">Resubscribe Now</a>
+              <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}" class="button">Resubscribe Now</a>
             </div>
           </div>
           <div class="footer">
-            <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
-            <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
-            <p>Follow us: <a href="https://x.com/chatifyzone">X</a> | <a href="https://instagram.com/chatifyzone">Instagram</a></p>
+            <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
+            <p>Need help? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
           </div>
         </div>
       </body>
       </html>
     `;
-    await sendEmail(subscriber.email, 'Unsubscribed from ChatifyZone Newsletter', message);
+    await sendEmail(subscriber.email, 'Unsubscribed from Chatify Newsletter', message);
 
     console.log(`[Unsubscribe] Successfully unsubscribed: ${subscriber.email}`);
     res.send(`
@@ -481,9 +492,9 @@ router.get('/unsubscribe', async (req, res) => {
       <body>
         <div class="container">
           <h1>Unsubscribed Successfully</h1>
-          <p>You have been removed from the ChatifyZone Newsletter.</p>
-          <p>Want to rejoin? <a href="https://chatifyzone.vercel.app">Resubscribe here</a>.</p>
-          <a href="https://chatifyzone.vercel.app" class="button">Return to ChatifyZone</a>
+          <p>You have been removed from the Chatify Newsletter.</p>
+          <p>Want to rejoin? <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}">Resubscribe here</a>.</p>
+          <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}" class="button">Return to Chatify</a>
         </div>
       </body>
       </html>
@@ -499,7 +510,7 @@ router.get('/profile', auth, async (req, res) => {
   try {
     console.log('[Get Profile] Fetching profile for user ID:', req.user);
     const user = await User.findById(req.user)
-      .select('-password')
+      .select('-password -otp -otpExpires')
       .populate('friends', 'username')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
@@ -543,7 +554,7 @@ router.get('/profile/:userId', auth, async (req, res) => {
     }
 
     const user = await User.findById(req.params.userId)
-      .select('-password')
+      .select('-password -otp -otpExpires')
       .populate('friends', 'username')
       .populate('friendRequests', 'username')
       .populate('blockedUsers', 'username');
@@ -612,7 +623,7 @@ router.put('/profile', auth, async (req, res) => {
       req.user,
       { $set: updateData },
       { new: true, runValidators: true }
-    ).select('-password');
+    ).select('-password -otp -otpExpires');
 
     if (!user) {
       console.error('[Update Profile] User not found:', req.user);
@@ -749,6 +760,41 @@ router.post('/block-user', auth, async (req, res) => {
   }
 });
 
+// Unblock user
+router.post('/unblock-user', auth, async (req, res) => {
+  try {
+    console.log('[Unblock User] Unblocking user for user ID:', req.user);
+    const { error } = unblockUserSchema.validate(req.body);
+    if (error) {
+      console.error('[Unblock User] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { userId } = req.body;
+    const user = await User.findById(req.user);
+    const userToUnblock = await User.findById(userId);
+    if (!userToUnblock) {
+      console.error('[Unblock User] User to unblock not found:', userId);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    if (!user.blockedUsers.includes(userId)) {
+      console.error('[Unblock User] User not blocked:', userId);
+      return res.status(400).json({ msg: 'User is not blocked' });
+    }
+
+    user.blockedUsers = user.blockedUsers.filter((id) => id.toString() !== userId);
+    await user.save();
+
+    await addActivityLog(req.user, `Unblocked user: ${userToUnblock.username}`);
+
+    console.log(`[Unblock User] User unblocked: ${userToUnblock.username} by ${user.username}`);
+    res.json({ msg: `User ${userToUnblock.username} unblocked successfully` });
+  } catch (err) {
+    console.error('[Unblock User] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 // Password login
 router.post('/login', async (req, res) => {
   try {
@@ -798,6 +844,110 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// Admin registration
+router.post('/admin/register', async (req, res) => {
+  try {
+    console.log('[Admin Register] Received admin registration request:', req.body.email);
+    const { error } = adminRegisterSchema.validate(req.body);
+    if (error) {
+      console.error('[Admin Register] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email, username, password, adminSecret, country, state, age, gender } = req.body;
+    if (adminSecret !== process.env.ADMIN_SECRET) {
+      console.error('[Admin Register] Invalid admin secret for email:', email);
+      return res.status(400).json({ msg: 'Invalid admin secret' });
+    }
+
+    let user = await User.findOne({ $or: [{ email }, { username }] });
+    if (user) {
+      console.error('[Admin Register] User already exists:', { email, username });
+      return res.status(400).json({ msg: 'User already exists with this email or username' });
+    }
+
+    user = new User({
+      email,
+      username,
+      password,
+      country,
+      state,
+      age,
+      gender,
+      isAdmin: true,
+      activityLog: [{ action: 'Admin account created', timestamp: new Date() }],
+    });
+
+    await user.save();
+
+    const payload = { user: { id: user.id, username: user.username } };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    console.log(`[Admin Register] Admin registered: ${user.username} (ID: ${user.id})`);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        isAdmin: user.isAdmin,
+      },
+    });
+  } catch (err) {
+    console.error('[Admin Register] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Admin login
+router.post('/admin/login', async (req, res) => {
+  try {
+    console.log('[Admin Login] Received admin login request for email:', req.body.email);
+    const { error } = adminLoginSchema.validate(req.body);
+    if (error) {
+      console.error('[Admin Login] Validation error:', error.details[0].message);
+      return res.status(400).json({ msg: error.details[0].message });
+    }
+
+    const { email, password, adminSecret } = req.body;
+    if (adminSecret !== process.env.ADMIN_SECRET) {
+      console.error('[Admin Login] Invalid admin secret for email:', email);
+      return res.status(400).json({ msg: 'Invalid admin secret' });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    if (!user || !user.isAdmin) {
+      console.error('[Admin Login] Admin not found for email:', email);
+      return res.status(400).json({ msg: 'Invalid admin credentials' });
+    }
+
+    if (user.isBanned) {
+      console.error('[Admin Login] Attempted login by banned admin:', email);
+      return res.status(403).json({ msg: 'Your account is banned. Please contact support.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      console.error('[Admin Login] Invalid password for email:', email);
+      return res.status(400).json({ msg: 'Invalid admin credentials' });
+    }
+
+    const payload = { user: { id: user.id, username: user.username } };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    await addActivityLog(user.id, 'Admin logged in');
+
+    console.log(`[Admin Login] Admin logged in: ${user.username} (ID: ${user.id})`);
+    res.json({
+      token,
+      user: { id: user.id, username: user.username, email: user.email, isAdmin: user.isAdmin },
+    });
+  } catch (err) {
+    console.error('[Admin Login] Server error:', err.message);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 // Initiate password-based registration with OTP
 router.post('/register/init', async (req, res) => {
   try {
@@ -820,32 +970,41 @@ router.post('/register/init', async (req, res) => {
     }
 
     const { email, username, password, country, state, age, gender } = req.body;
-    let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
-      console.error('[Register Init] User already exists:', { email, username });
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedUsername = username.trim();
+
+    // Check if user exists in User or PendingUser
+    const existingUser = await User.findOne({ $or: [{ email: normalizedEmail }, { username: normalizedUsername }] });
+    const existingPendingUser = await PendingUser.findOne({ $or: [{ email: normalizedEmail }, { username: normalizedUsername }] });
+    if (existingUser || existingPendingUser) {
+      console.error('[Register Init] User already exists:', { email: normalizedEmail, username: normalizedUsername });
       return res.status(400).json({ msg: 'User already exists with this email or username' });
     }
 
-    user = new User({
-      email,
-      username,
-      password,
+    const otp = generateOtp();
+    const otpExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const pendingUser = new PendingUser({
+      email: normalizedEmail,
+      username: normalizedUsername,
+      password: hashedPassword,
       country,
       state,
       age,
       gender,
-      activityLog: [{ action: 'Account creation initiated', timestamp: new Date() }],
+      otp,
+      otpExpires,
+      otpAttempts: 0,
     });
 
-    const otp = generateOtp();
-    user.otp = otp;
-    user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
-    await user.save();
+    await pendingUser.save();
+    await sendOtpEmail(normalizedEmail, normalizedUsername, otp);
 
-    await sendOtpEmail(email, username, otp);
-    await addActivityLog(user.id, 'OTP sent for registration');
-
-    console.log(`[Register Init] OTP sent to: ${email}`);
+    console.log(`[Register Init] OTP sent to: ${normalizedEmail}`);
     res.json({ msg: 'OTP sent to your email. Please verify to complete registration.' });
   } catch (err) {
     console.error('[Register Init] Server error:', err.message);
@@ -864,20 +1023,54 @@ router.post('/register/verify-otp', async (req, res) => {
     }
 
     const { email, otp } = req.body;
-    const user = await User.findOne({
-      email,
-      otp,
-      otpExpires: { $gt: Date.now() },
-    });
+    const normalizedEmail = email.trim().toLowerCase();
 
-    if (!user) {
-      console.error('[Verify OTP] Invalid or expired OTP for email:', email);
+    const pendingUser = await PendingUser.findOne({ email: normalizedEmail });
+    if (!pendingUser) {
+      console.error('[Verify OTP] Pending user not found:', normalizedEmail);
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    if (!pendingUser.otp || !pendingUser.otpExpires || pendingUser.otpExpires < Date.now()) {
+      console.error('[Verify OTP] Invalid or expired OTP for email:', normalizedEmail);
+      await PendingUser.deleteOne({ email: normalizedEmail });
       return res.status(400).json({ msg: 'Invalid or expired OTP' });
     }
 
-    user.otp = undefined;
-    user.otpExpires = undefined;
+    if (pendingUser.otp !== otp) {
+      pendingUser.otpAttempts = (pendingUser.otpAttempts || 0) + 1;
+      await pendingUser.save();
+
+      if (pendingUser.otpAttempts >= 5) {
+        const locationDetails = {
+          ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'Unknown',
+          city: req.headers['x-geo-city'] || 'Unknown',
+          country: req.headers['x-geo-country'] || 'Unknown',
+        };
+        await sendSecurityAlertEmail(normalizedEmail, pendingUser.username, locationDetails);
+        await PendingUser.deleteOne({ email: normalizedEmail });
+        console.error('[Verify OTP] Too many incorrect OTP attempts for:', normalizedEmail);
+        return res.status(429).json({ msg: 'Too many incorrect OTP attempts. A security alert has been sent to your email.' });
+      }
+
+      console.error('[Verify OTP] Incorrect OTP for email:', normalizedEmail);
+      return res.status(400).json({ msg: 'Incorrect OTP', attemptsLeft: 5 - pendingUser.otpAttempts });
+    }
+
+    // Create permanent user
+    const user = new User({
+      email: pendingUser.email,
+      username: pendingUser.username,
+      password: pendingUser.password,
+      country: pendingUser.country,
+      state: pendingUser.state,
+      age: pendingUser.age,
+      gender: pendingUser.gender,
+      activityLog: [{ action: 'Account created', timestamp: new Date() }],
+    });
+
     await user.save();
+    await PendingUser.deleteOne({ email: normalizedEmail });
 
     const payload = { user: { id: user.id, username: user.username } };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -916,26 +1109,22 @@ router.post('/register/resend-otp', async (req, res) => {
     }
 
     const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) {
-      console.error('[Resend OTP] User not found:', email);
+    const normalizedEmail = email.trim().toLowerCase();
+    const pendingUser = await PendingUser.findOne({ email: normalizedEmail });
+    if (!pendingUser) {
+      console.error('[Resend OTP] Pending user not found:', normalizedEmail);
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    if (!user.otp || !user.otpExpires) {
-      console.error('[Resend OTP] No pending OTP verification for:', email);
-      return res.status(400).json({ msg: 'No pending OTP verification' });
-    }
-
     const otp = generateOtp();
-    user.otp = otp;
-    user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
-    await user.save();
+    pendingUser.otp = otp;
+    pendingUser.otpExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
+    pendingUser.otpAttempts = 0; // Reset attempts
+    await pendingUser.save();
 
-    await sendOtpEmail(email, user.username, otp);
-    await addActivityLog(user.id, 'OTP resent for registration');
+    await sendOtpEmail(normalizedEmail, pendingUser.username, otp);
 
-    console.log(`[Resend OTP] OTP resent to: ${email}`);
+    console.log(`[Resend OTP] OTP resent to: ${normalizedEmail}`);
     res.json({ msg: 'OTP resent to your email.' });
   } catch (err) {
     console.error('[Resend OTP] Server error:', err.message);
@@ -954,14 +1143,15 @@ router.post('/forgot-password/init', async (req, res) => {
     }
 
     const { email } = req.body;
-    const user = await User.findOne({ email });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
-      console.error('[Forgot Password Init] User not found:', email);
+      console.error('[Forgot Password Init] User not found:', normalizedEmail);
       return res.status(404).json({ msg: 'User not found' });
     }
 
     if (!user.password) {
-      console.error('[Forgot Password Init] Account uses password-less login only:', email);
+      console.error('[Forgot Password Init] Account uses password-less login only:', normalizedEmail);
       return res.status(400).json({ msg: 'This account does not use password-based login.' });
     }
 
@@ -971,10 +1161,10 @@ router.post('/forgot-password/init', async (req, res) => {
     user.resetOtpAttempts = 0; // Reset attempts counter
     await user.save();
 
-    await sendOtpEmail(email, user.username, otp, 'ChatifyZone Password Reset OTP');
+    await sendOtpEmail(normalizedEmail, user.username, otp, 'Chatify Password Reset OTP');
     await addActivityLog(user.id, 'OTP sent for password reset');
 
-    console.log(`[Forgot Password Init] OTP sent to: ${email}`);
+    console.log(`[Forgot Password Init] OTP sent to: ${normalizedEmail}`);
     res.json({ msg: 'OTP sent to your email. Please verify to proceed with password reset.' });
   } catch (err) {
     console.error('[Forgot Password Init] Server error:', err.message);
@@ -993,15 +1183,16 @@ router.post('/forgot-password/verify-otp', async (req, res) => {
     }
 
     const { email, otp } = req.body;
-    const user = await User.findOne({ email });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
-      console.error('[Forgot Password Verify OTP] User not found:', email);
+      console.error('[Forgot Password Verify OTP] User not found:', normalizedEmail);
       return res.status(404).json({ msg: 'User not found' });
     }
 
     if (!user.resetOtp || !user.resetOtpExpires || user.resetOtpExpires < Date.now()) {
-      console.error('[Forgot Password Verify OTP] Invalid or expired OTP for email:', email);
+      console.error('[Forgot Password Verify OTP] Invalid or expired OTP for email:', normalizedEmail);
       return res.status(400).json({ msg: 'Invalid or expired OTP' });
     }
 
@@ -1015,18 +1206,18 @@ router.post('/forgot-password/verify-otp', async (req, res) => {
           city: req.headers['x-geo-city'] || 'Unknown',
           country: req.headers['x-geo-country'] || 'Unknown',
         };
-        await sendSecurityAlertEmail(email, user.username, locationDetails);
+        await sendSecurityAlertEmail(normalizedEmail, user.username, locationDetails);
         user.resetOtp = undefined;
         user.resetOtpExpires = undefined;
         user.resetOtpAttempts = 0;
         await user.save();
         await addActivityLog(user.id, 'Security alert sent due to multiple failed OTP attempts');
-        console.error('[Forgot Password Verify OTP] Too many incorrect OTP attempts for:', email);
+        console.error('[Forgot Password Verify OTP] Too many incorrect OTP attempts for:', normalizedEmail);
         return res.status(429).json({ msg: 'Too many incorrect OTP attempts. A security alert has been sent to your email.' });
       }
 
       await addActivityLog(user.id, 'Failed OTP attempt for password reset');
-      console.error('[Forgot Password Verify OTP] Incorrect OTP for email:', email);
+      console.error('[Forgot Password Verify OTP] Incorrect OTP for email:', normalizedEmail);
       return res.status(400).json({ msg: 'Incorrect OTP', attemptsLeft: 5 - user.resetOtpAttempts });
     }
 
@@ -1040,7 +1231,7 @@ router.post('/forgot-password/verify-otp', async (req, res) => {
     await user.save();
 
     const resetLink = `${
-      process.env.CLIENT_URL || 'https://chatifyzone.vercel.app'
+      process.env.CLIENT_URL || 'http://localhost:3000'
     }/reset-password/${resetToken}`;
     const message = `
       <!DOCTYPE html>
@@ -1048,7 +1239,7 @@ router.post('/forgot-password/verify-otp', async (req, res) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>ChatifyZone Password Reset</title>
+        <title>Chatify Password Reset</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { background-color: #1A1A1A; font-family: 'Arial', sans-serif; color: white; line-height: 1.6; }
@@ -1080,25 +1271,25 @@ router.post('/forgot-password/verify-otp', async (req, res) => {
           </div>
           <div class="content">
             <p>Hello <span class="highlight">${user.username}</span>,</p>
-            <p>Your OTP has been verified. Click the button below to reset your ChatifyZone password:</p>
+            <p>Your OTP has been verified. Click the button below to reset your Chatify password:</p>
             <div class="button-container">
               <a href="${resetLink}" class="button">Reset Password</a>
             </div>
             <p class="warning">This link is valid for 1 hour. If you did not request a password reset, please contact support immediately.</p>
           </div>
           <div class="footer">
-            <p>© ${new Date().getFullYear()} ChatifyZone. All rights reserved.</p>
-            <p>Need help? Contact us at <a href="mailto:support@chatifyzone.in">support@chatifyzone.in</a></p>
+            <p>© ${new Date().getFullYear()} Chatify. All rights reserved.</p>
+            <p>Need help? Contact us at <a href="mailto:support@chatify.com">support@chatify.com</a></p>
           </div>
         </div>
       </body>
       </html>
     `;
-    await sendEmail(email, 'ChatifyZone Password Reset', message);
+    await sendEmail(normalizedEmail, 'Chatify Password Reset', message);
 
     await addActivityLog(user.id, 'OTP verified for password reset');
 
-    console.log(`[Forgot Password Verify OTP] Password reset link sent to: ${email}`);
+    console.log(`[Forgot Password Verify OTP] Password reset link sent to: ${normalizedEmail}`);
     res.json({ msg: 'OTP verified. Password reset link sent to your email.' });
   } catch (err) {
     console.error('[Forgot Password Verify OTP] Server error:', err.message);
@@ -1119,26 +1310,28 @@ router.post('/forgot-password/resend-otp', async (req, res) => {
     }
 
     const { email } = req.body;
-    const user = await User.findOne({ email });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
-      console.error('[Forgot Password Resend OTP] User not found:', email);
+      console.error('[Forgot Password Resend OTP] User not found:', normalizedEmail);
       return res.status(404).json({ msg: 'User not found' });
     }
 
     if (!user.resetOtp || !user.resetOtpExpires) {
-      console.error('[Forgot Password Resend OTP] No pending OTP verification for:', email);
+      console.error('[Forgot Password Resend OTP] No pending OTP verification for:', normalizedEmail);
       return res.status(400).json({ msg: 'No pending OTP verification' });
     }
 
     const otp = generateOtp();
     user.resetOtp = otp;
     user.resetOtpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    user.resetOtpAttempts = 0; // Reset attempts
     await user.save();
 
-    await sendOtpEmail(email, user.username, otp, 'ChatifyZone Password Reset OTP');
+    await sendOtpEmail(normalizedEmail, user.username, otp, 'Chatify Password Reset OTP');
     await addActivityLog(user.id, 'OTP resent for password reset');
 
-    console.log(`[Forgot Password Resend OTP] OTP resent to: ${email}`);
+    console.log(`[Forgot Password Resend OTP] OTP resent to: ${normalizedEmail}`);
     res.json({ msg: 'OTP resent to your email.' });
   } catch (err) {
     console.error('[Forgot Password Resend OTP] Server error:', err.message);
