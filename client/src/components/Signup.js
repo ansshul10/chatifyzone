@@ -1,5 +1,5 @@
 /* eslint-disable no-undef */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -61,9 +61,10 @@ const Signup = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [states, setStates] = useState([]);
   const [isRegistrationEnabled, setIsRegistrationEnabled] = useState(true);
-  const [otp, setOtp] = useState('');
+  const [otp, setOtp] = useState(['', '', '', '', '', '']); // Array for 6 OTP digits
   const [showOtpForm, setShowOtpForm] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const otpRefs = useRef([]); // Refs for OTP input fields
   const navigate = useNavigate();
 
   // Generate age options (18 to 120)
@@ -114,6 +115,38 @@ const Signup = () => {
     }
     return () => clearInterval(timer);
   }, [resendCooldown]);
+
+  // Handle OTP input change
+  const handleOtpChange = (index, value) => {
+    if (!/^\d?$/.test(value)) return; // Allow only single digit or empty
+    const newOtp = [...otp];
+    newOtp[index] = value;
+    setOtp(newOtp);
+
+    // Move to next input if digit is entered
+    if (value && index < 5) {
+      otpRefs.current[index + 1].focus();
+    }
+    // Move to previous input if backspace is pressed on empty field
+    if (!value && index > 0 && event.key === 'Backspace') {
+      otpRefs.current[index - 1].focus();
+    }
+  };
+
+  // Handle OTP paste
+  const handleOtpPaste = (e) => {
+    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (pastedData.length === 6) {
+      setOtp(pastedData.split(''));
+      otpRefs.current[5].focus();
+    }
+  };
+
+  // Clear OTP input
+  const clearOtp = () => {
+    setOtp(['', '', '', '', '', '']);
+    otpRefs.current[0].focus();
+  };
 
   // Handle initial signup form submission
   const handleSubmit = async (e) => {
@@ -179,7 +212,7 @@ const Signup = () => {
         gender,
       });
       setShowOtpForm(true);
-      setResendCooldown(60); // 60-second cooldown for resend OTP
+      setResendCooldown(60);
       setIsLoading(false);
     } catch (err) {
       setError(err.response?.data?.msg || 'Failed to initiate signup. Please try again.');
@@ -194,21 +227,34 @@ const Signup = () => {
     setSuccess(false);
     setIsLoading(true);
 
-    if (!otp.trim()) {
-      setError('Please enter the OTP');
+    const otpString = otp.join('');
+    console.log('[handleOtpSubmit] Verifying OTP for email:', email, 'OTP:', otpString);
+
+    if (!otpString.match(/^\d{6}$/)) {
+      setError('Please enter a valid 6-digit OTP');
       setIsLoading(false);
       return;
     }
 
     try {
-      const { data } = await api.post('/auth/register/verify-otp', { email, otp });
+      const { data } = await api.post('/auth/register/verify-otp', { email, otp: otpString });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       api.defaults.headers.common['x-auth-token'] = data.token;
       setSuccess(true);
+      setError('Signup successful! Redirecting...');
       setTimeout(() => navigate('/'), 2000);
     } catch (err) {
-      setError(err.response?.data?.msg || 'Invalid or expired OTP. Please try again.');
+      clearOtp();
+      const errorMsg = err.response?.data?.msg || 'Failed to verify OTP. Please try again.';
+      if (errorMsg === 'Incorrect OTP') {
+        setError(`Incorrect OTP. ${err.response.data.attemptsLeft} attempts remaining.`);
+      } else if (errorMsg === 'Too many incorrect OTP attempts. A security alert has been sent to your email.') {
+        setError('Too many incorrect attempts. Please resend a new OTP.');
+        setResendCooldown(0);
+      } else {
+        setError(errorMsg);
+      }
       setIsLoading(false);
     }
   };
@@ -218,11 +264,12 @@ const Signup = () => {
     if (resendCooldown > 0) return;
     setError('');
     setIsLoading(true);
+    clearOtp();
 
     try {
       await api.post('/auth/register/resend-otp', { email });
       setResendCooldown(60);
-      setError('OTP resent successfully. Check your email.');
+      setError('A new OTP has been sent to your email. Please use the latest OTP.');
     } catch (err) {
       setError(err.response?.data?.msg || 'Failed to resend OTP. Please try again.');
     } finally {
@@ -271,7 +318,13 @@ const Signup = () => {
     visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } },
   };
 
-  // Terms and Conditions content (unchanged)
+  const otpInputVariants = {
+    empty: { scale: 1, borderColor: isDarkMode ? '#4B5563' : '#9CA3AF' },
+    filled: { scale: 1.05, borderColor: '#EF4444', transition: { duration: 0.2 } },
+    focused: { scale: 1.05, borderColor: '#EF4444', boxShadow: '0 0 0 2px rgba(239, 68, 68, 0.3)', transition: { duration: 0.2 } },
+  };
+
+  // Terms and Conditions content
   const termsAndConditions = `
 # Terms and Conditions
 
@@ -400,7 +453,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
                           placeholder="Your Email"
-                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-gray-400' : 'bg-gray-300 text-gray-900 placeholder-gray-600'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                           required
                           disabled={isLoading || !isRegistrationEnabled}
                         />
@@ -414,7 +467,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                           value={username}
                           onChange={(e) => setUsername(e.target.value)}
                           placeholder="Your Username"
-                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-gray-400' : 'bg-gray-300 text-gray-900 placeholder-gray-600'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                           required
                           disabled={isLoading || !isRegistrationEnabled}
                         />
@@ -429,7 +482,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                             setState('');
                             console.log('[Signup] Country selected:', e.target.value);
                           }}
-                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-gray-900'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                           required
                           disabled={isLoading || !isRegistrationEnabled}
                         >
@@ -450,7 +503,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                             setState(e.target.value);
                             console.log('[Signup] State selected:', e.target.value);
                           }}
-                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-gray-900'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                           disabled={isLoading || !isRegistrationEnabled}
                         >
                           <option value="">Select State</option>
@@ -471,7 +524,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                         <select
                           value={age}
                           onChange={(e) => setAge(e.target.value)}
-                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-gray-900'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                           required
                           disabled={isLoading || !isRegistrationEnabled}
                         >
@@ -489,7 +542,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                         <select
                           value={gender}
                           onChange={(e) => setGender(e.target.value)}
-                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-white'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white' : 'bg-gray-300 text-gray-900'} focus:outline-none rounded-md ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                           required
                           disabled={isLoading || !isRegistrationEnabled}
                         >
@@ -508,7 +561,7 @@ By checking the box during signup, you acknowledge that you have read, understoo
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             placeholder="Your Password"
-                            className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-gray-400' : 'bg-gray-300 text-gray-900 placeholder-gray-600'} focus:outline-none ${isLoading || !isRegistrationEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                             required
                             disabled={isLoading || !isRegistrationEnabled}
                           />
@@ -598,20 +651,36 @@ By checking the box during signup, you acknowledge that you have read, understoo
                   </div>
                 </>
               ) : (
-                <form onSubmit={handleOtpSubmit} className="space-y-4 mb-4">
-                  <div className="relative">
-                    <div className={`flex items-center border rounded-lg p-3 ${isDarkMode ? 'bg-[#1A1A1A] border-gray-700' : 'bg-gray-300 border-gray-400'}`}>
-                      <FaKey className={`${isDarkMode ? 'text-red-600' : 'text-red-500'} mr-3`} />
-                      <input
+                <form onSubmit={handleOtpSubmit} className="space-y-6 mb-4">
+                  <div className="flex justify-center space-x-2">
+                    {otp.map((digit, index) => (
+                      <motion.input
+                        key={index}
                         type="text"
-                        value={otp}
-                        onChange={(e) => setOtp(e.target.value)}
-                        placeholder="Enter OTP"
-                        className={`w-full ${isDarkMode ? 'bg-[#1A1A1A] text-white placeholder-white' : 'bg-gray-300 text-white placeholder-white'} focus:outline-none ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        required
+                        maxLength="1"
+                        value={digit}
+                        onChange={(e) => handleOtpChange(index, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Backspace' && !digit && index > 0) {
+                            handleOtpChange(index, '');
+                            otpRefs.current[index - 1].focus();
+                          }
+                        }}
+                        onPaste={index === 0 ? handleOtpPaste : null}
+                        ref={(el) => (otpRefs.current[index] = el)}
+                        className={`w-12 h-12 text-center text-lg font-semibold rounded-lg border-2 focus:outline-none ${
+                          isDarkMode
+                            ? 'bg-[#1A1A1A] text-white border-gray-600 focus:border-red-500'
+                            : 'bg-gray-300 text-gray-900 border-gray-400 focus:border-red-500'
+                        } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        variants={otpInputVariants}
+                        animate={digit ? 'filled' : otpRefs.current[index]?.matches(':focus') ? 'focused' : 'empty'}
                         disabled={isLoading}
                       />
-                    </div>
+                    ))}
+                  </div>
+                  <div className="text-center text-sm text-green-500">
+                    Enter the 6-digit code sent to <span className="font-semibold">{email}</span>. Check your spam folder if you don’t see it.
                   </div>
                   <AnimatePresence>
                     {error && (
@@ -641,15 +710,22 @@ By checking the box during signup, you acknowledge that you have read, understoo
                   </AnimatePresence>
                   <button
                     type="submit"
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-300 text-red-500'} flex items-center justify-center space-x-2 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    disabled={isLoading || success}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg transition-colors ${
+                      otp.every((digit) => digit)
+                        ? 'bg-[#1A1A1A] text-red-600'
+                        : 'bg-[#1A1A1A] text-red-600 cursor-not-allowed'
+                    } flex items-center justify-center space-x-2 ${isLoading || success ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    disabled={isLoading || success || !otp.every((digit) => digit)}
                   >
-                    <span>{isLoading ? 'Verifying...' : 'Verify OTP'}</span>
+                    <span>{isLoading ? 'Verifying...' : 'Continue'}</span>
+                    <FaArrowRight />
                   </button>
                   <button
                     type="button"
                     onClick={handleResendOtp}
-                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${isDarkMode ? 'bg-gray-700 text-white' : 'bg-gray-400 text-gray-900'} flex items-center justify-center space-x-2 ${resendCooldown > 0 || isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`w-full p-4 rounded-lg font-semibold shadow-lg ${
+                      isDarkMode ? 'bg-[#1A1A1A] text-red-600' : 'bg-gray-400 text-red-900'
+                    } flex items-center justify-center space-x-2 ${resendCooldown > 0 || isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                     disabled={resendCooldown > 0 || isLoading}
                   >
                     <span>
