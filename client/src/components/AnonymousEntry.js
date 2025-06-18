@@ -115,7 +115,7 @@ const AnonymousEntry = () => {
     }
 
     try {
-      const { data } = await api.post('/anonymous-session', { username, country, state, age });
+      const { data } = await api.post('/chat/anonymous-session', { username, country, state, age });
       localStorage.setItem('anonymousId', data.anonymousId);
       localStorage.setItem('anonymousUsername', username);
       localStorage.setItem('anonymousUser', JSON.stringify({ username, country, state, age }));
