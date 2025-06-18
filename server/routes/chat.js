@@ -53,6 +53,13 @@ const voiceMessageSchema = Joi.object({
   receiver: Joi.string().required(),
 });
 
+const anonymousSessionSchema = Joi.object({
+  username: Joi.string().required().min(1).max(20),
+  country: Joi.string().required(),
+  state: Joi.string().allow('', null), // Allow empty string or null for state
+  age: Joi.number().integer().min(18).max(120).required(),
+});
+
 // POST /api/chat/voice-message - Upload voice message to Cloudinary
 router.post('/voice-message', auth, upload.single('audio'), async (req, res) => {
   try {
